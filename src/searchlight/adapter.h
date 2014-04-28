@@ -1,5 +1,4 @@
-/*
- * Copyright 2014, Brown University, Providence, RI.
+/* Copyright 2014, Brown University, Providence, RI.
  *
  *                         All Rights Reserved
  *
@@ -22,35 +21,42 @@
  */
 
 /**
- * @file array_desc.cpp
- * The implementation of the array descriptor.
+ * @file adapter.h
+ * A class that represent the main access point to the search array.
+ * Depending on the situation (i.e., the mode of work) it might be
+ * beneficial to access either the sample or the data itself. This class
+ * does exactly that.
  *
  * @author Alexander Kalinin
  */
 
+#ifndef SEARCHLIGHT_ADAPTER_H_
+#define SEARCHLIGHT_ADAPTER_H_
+
+#include "scidb_inc.h"
 #include "array_desc.h"
 
 namespace searchlight {
 
-AttributeID SearchArrayDesc::RegisterAttribute(const std::string &attr_name) {
-    const ArrayDesc &desc = array_.getArrayDesc();
-    const Attributes &attrs = desc.getAttributes(true);
-
-    AttributeID orig_id;
-    if (!SearchArrayDesc::FindAttributeId(attrs, attr_name, orig_id)) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Cannot find the attribute in the array: array="
-                << desc.getName() << ", attr=" << attr_name;
-    }
-
-    AttributeID search_id = search_orig_ids_.size();
-    search_orig_ids_.push_back(orig_id);
-
-    // load the sample
-    sampler_.LoadSampleForAttribute(orig_id, search_id);
-
-    return search_id;
-}
-
-
+/**
+ * This class allows users to access search data. For example, fetching
+ * an element by the coordinates or an entire interval/region. It also allows
+ * to iterate via elements of a region or call a callback on them. Note, that
+ * "data" might either correspond to a sample or the real array. The type
+ * of access is determined by the adapter's mode. This class is exposed to
+ * the library users for all search data access purposes.
+ */
+class Adapter {
+public:
+    /**
+     * Creates an adapter for a SciDb array.
+     *
+     * @param array the SciDb data array
+     */
+    Adapter(const SearchArrayDesc &array) : array_desc_(array) {}
+private:
+    // The search array descriptor
+    const SearchArrayDesc &array_desc_;
+};
 } /* namespace searchlight */
+#endif /* SEARCHLIGHT_ADAPTER_H_ */

@@ -1,5 +1,4 @@
-/*
- * Copyright 2014, Brown University, Providence, RI.
+/* Copyright 2014, Brown University, Providence, RI.
  *
  *                         All Rights Reserved
  *
@@ -22,27 +21,36 @@
  */
 
 /**
- * @file scidb_inc.h
- * This is common file for other sources using SciDb. It contains
- * common definitions and includes from SciDb.
+ * @file array_access.h
+ * A class that allows accessing a SciDb data array.
  *
  * @author Alexander Kalinin
  */
 
-#ifndef SEARCHLIGHT_SCIDB_INC_H_
-#define SEARCHLIGHT_SCIDB_INC_H_
+#ifndef SEARCHLIGHT_ARRAY_ACCESS_H_
+#define SEARCHLIGHT_ARRAY_ACCESS_H_
 
-#include <array/Metadata.h>
-#include <array/Array.h>
+#include "scidb_inc.h"
 
-using scidb::SystemCatalog;
-using scidb::ArrayDesc;
-using scidb::Array;
-using scidb::Attributes;
-using scidb::AttributeID;
-using scidb::ConstItemIterator;
-using scidb::Coordinate;
-using scidb::Coordinates;
-using scidb::Value;
+namespace searchlight {
 
-#endif /* SEARCHLIGHT_SCIDB_INC_H_ */
+/**
+ * This class allows users to access SciDb arrays. For example, fetching
+ * an element by the coordinates or an entire interval/region. It also allows
+ * to iterate via elements of a region or call a callback on them. An
+ * instance of this class corresponds to a single SciDb array.
+ */
+class ArrayAccess {
+public:
+    /**
+     * Creates an accessor for a SciDb array.
+     *
+     * @param array the SciDb data array
+     */
+    ArrayAccess(const Array &array) : data_array_(array) {}
+private:
+    // The data array
+    const Array &data_array_;
+};
+} /* namespace searchlight */
+#endif /* SEARCHLIGHT_ARRAY_ACCESS_H_ */

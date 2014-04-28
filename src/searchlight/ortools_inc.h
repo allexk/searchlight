@@ -22,27 +22,18 @@
  */
 
 /**
- * @file scidb_inc.h
- * This is common file for other sources using SciDb. It contains
- * common definitions and includes from SciDb.
+ * @file ortools_inc.h
+ * This is common file for other sources using Google's or-too;s. It contains
+ * common definitions and includes from or-tools.
  *
  * @author Alexander Kalinin
  */
 
-#ifndef SEARCHLIGHT_SCIDB_INC_H_
-#define SEARCHLIGHT_SCIDB_INC_H_
+#ifndef SEARCHLIGHT_ORTOOLS_INC_H_
+#define SEARCHLIGHT_ORTOOLS_INC_H_
 
-#include <array/Metadata.h>
-#include <array/Array.h>
+#include <constraint_solver/constraint_solver.h>
 
-using scidb::SystemCatalog;
-using scidb::ArrayDesc;
-using scidb::Array;
-using scidb::Attributes;
-using scidb::AttributeID;
-using scidb::ConstItemIterator;
-using scidb::Coordinate;
-using scidb::Coordinates;
-using scidb::Value;
+using operations_research::Solver;
 
-#endif /* SEARCHLIGHT_SCIDB_INC_H_ */
+#endif /* SEARCHLIGHT_ORTOOLS_INC_H_ */

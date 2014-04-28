@@ -32,8 +32,9 @@
 #ifndef SEARCHLIGHT_ARRAY_DESC_H_
 #define SEARCHLIGHT_ARRAY_DESC_H_
 
-#include "searchlight/base.h"
-#include "searchlight/scidb_inc.h"
+#include "base.h"
+#include "scidb_inc.h"
+#include "array_access.h"
 
 namespace searchlight {
 
@@ -42,13 +43,37 @@ namespace searchlight {
  * dimensions (names and intervals), attributes and other schema info. It also
  * contains pointers to the samples for individual arrays and the real data
  * fetched from the DBMS.
+ *
+ * It also contains a number of useful utility functions to deal with SciDb
+ * arrays.
  */
 class SearchArrayDesc {
 public:
     /**
+     * Creates a search array descriptor.
+     *
+     * @param array the scidb's original array
+     * @param sample the sample array
+     */
+    SearchArrayDesc(const Array &array, const Array &sample) :
+        array_(array),
+        sampler_(sample, array.getArrayDesc()),
+        data_accessor_(array) {}
+
+    /**
+     * Registers a search attribute with the descriptor. The sample for this
+     * attribute is also loaded. This function returns the access id, and
+     * all future attribute accesses via other SL classes should use this id.
+     *
+     * @param attr_name the name of the attribute to register
+     * @return the access id for the attribute
+     */
+    AttributeID RegisterAttribute(const std::string &attr_name);
+
+    /**
      * Returns the id of the specified attribute in the given vector. Note,
-     * the attribute's id and the vector's id are not the same. The id
-     * returned corresponds to the metadata.
+     * the attribute's id and the vector's id are not necessarily the same.
+     * The id returned corresponds to the array's descriptor.
      *
      * @param attrs a vector of attributes
      * @param name the name of the attribute
@@ -65,6 +90,22 @@ public:
         }
         return false;
     }
+
+private:
+    // The data array
+    const Array &array_;
+
+    /*
+     *  Maps attribute names to search attribute IDs (might be different
+     *  from the original attribute IDs).
+     */
+    std::vector<AttributeID> search_orig_ids_;
+
+    // The sampler
+    Sampler sampler_;
+
+    // The data accessor
+    ArrayAccess &data_accessor_;
 };
 
 } /* namespace searchlight */

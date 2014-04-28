@@ -22,7 +22,7 @@
  */
 
 /**
- * @file smapler.h
+ * @file sampler.h
  * This is a sampler. It allows access to an array sample stored in memory.
  *
  * @author Alexander Kalinin
@@ -58,7 +58,10 @@ namespace searchlight {
 class Sampler {
 public:
     /**
-     * Creates a sampler and load sample chunks from an array.
+     * Creates a sampler and loads the info about the sample. The info
+     * includes the number of chunks, the starting point, chunk
+     * attribute ids.
+     *
      * The array is  supposed to have two dimensions:
      *   first -- [0, number_of_chunks),
      *   second -- [0, original_attribute_ids). It also
@@ -67,13 +70,24 @@ public:
      *   second -- max value for the chunk
      *
      * @param array the sample array
+     * @param data_desc the descriptor of the data array
      */
-    Sampler(const Array &array);
+    Sampler(const Array &array, const ArrayDesc &data_desc);
+
+    /**
+     * Loads the sample for the particular attribute. It is assumed that the
+     * sample array's attribute ids correspond to the data array ones.
+     *
+     * @param attr_orig_id the attribute id as of the data array
+     * @param attr_search_id the internal attribute id for the search
+     */
+    void LoadSampleForAttribute(AttributeID attr_orig_id,
+            AttributeID attr_search_id);
 
 private:
     /*
      *  Parses chunk sizes out of the string. The string is suppposed to
-     *  have the format "x_size,y_size".
+     *  have the format "x_size,y_size,...".
      */
     void SetChunkSizes(const std::string &size_param);
 
@@ -84,13 +98,24 @@ private:
 
         Chunk(int64_t min, int64_t max) : min_(min), max_(max) {}
     };
+    typedef std::vector<Chunk> ChunkVector;
+
+    // Attribute IDs for min/max elements in the sample array
+    AttributeID min_id_, max_id_;
+
+    // The numnber of sample chunks
+    Coordinate chunks_num_;
+
+    // The sampple array
+    const Array &sample_array_;
 
     // Sample chunks as a linearized array (multiple attributes)
-    std::vector<std::vector<Chunk> > sample_chunks_;
+    std::vector<ChunkVector> sample_chunks_;
 
     // The size of a chunk (one per dimension)
-    int chunk_sizes_[2];
+    Coordinates chunk_sizes_;
 
+    // The starting point of the sample
     Coordinates sample_start_;
 };
 } /* namespace searchlight */

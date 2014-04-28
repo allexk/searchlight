@@ -29,56 +29,81 @@
  */
 
 #include "sampler.h"
-
 #include "array_desc.h"
+
+#include <boost/lexical_cast.hpp>
 
 namespace searchlight {
 
-Sampler::Sampler(const Array &array) {
+Sampler::Sampler(const Array &array, const ArrayDesc &data_desc) :
+        sample_array_(array),
+        chunk_sizes_(data_desc.getDimensions().size()),
+        sample_start_(data_desc.getDimensions().size()){
     const ArrayDesc &sample_desc = array.getArrayDesc();
 
     // by convenience we store sizes in the comment :)
     const std::string &sample_config = sample_desc.getComment();
     SetChunkSizes(sample_config);
-    if (chunk_sizes_[0] == -1 || chunk_sizes_[1] == -1) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Cannot determine sample chunk sizes: sample="
-                << sample_desc.getName();
+
+    // The start of the sample corresponds to the start of the data array
+    for (size_t i = 0; i < data_desc.getDimensions().size(); i++) {
+        sample_start_[i] = data_desc.getDimensions()[i].getCurrStart();
     }
 
-    // now, retrieve sample chunks for all attributes
+    // find min/max ids (not necessary, unless the array has the empty bitmap)
     const Attributes &attrs = sample_desc.getAttributes(true);
-    AttributeID min_id, max_id;
-    if (!SearchArrayDesc::FindAttributeId(attrs, std::string("min"), min_id) ||
-         !SearchArrayDesc::FindAttributeId(attrs, std::string("max"), max_id)) {
+    if (!SearchArrayDesc::FindAttributeId(attrs, std::string("min"), min_id_) ||
+        !SearchArrayDesc::FindAttributeId(attrs, std::string("max"), max_id_)) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << "Cannot find min/max attribute in the sample: sample="
                 << sample_desc.getName();
     }
+
+    if (sample_desc.getDimensions()[0].getCurrStart() != 0) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << "Chunk coordinate should start from 0: sample="
+                << sample_desc.getName();
+    }
+    chunks_num_ = sample_desc.getDimensions()[0].getCurrEnd();
+}
+
+void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,
+        AttributeID attr_search_id) {
+
     boost::shared_ptr<ConstItemIterator> min_iterator =
-            array.getItemIterator(min_id);
+            sample_array_.getItemIterator(min_id_);
     boost::shared_ptr<ConstItemIterator> max_iterator =
-            array.getItemIterator(max_id);
+            sample_array_.getItemIterator(max_id_);
 
     // Sample: first dimension -- region, second -- the original attribute
-    Coordinate chunk_end = sample_desc.getDimensions()[0].getCurrEnd();
-    Coordinate attr_end = sample_desc.getDimensions()[1].getCurrEnd();
+    sample_chunks_.push_back(ChunkVector());
+    if (sample_chunks_.size() != attr_search_id) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << "Sampler and descriptor inconsistency: sample aid="
+                << sample_chunks_.size() << ", desc id=" << attr_search_id;
+    }
+    ChunkVector &chunks = sample_chunks_.back();
+    chunks.reserve(chunks_num_);
     Coordinates pos(2);
-    sample_chunks_.resize(chunk_end);
-    for (pos[0] = 0; pos[0] < chunk_end; pos[0]++) {
-        for (pos[1] = 0; pos[1] < attr_end; pos[1]++) {
-            min_iterator->setPosition(pos);
-            max_iterator->setPosition(pos);
-            const int64_t minv = min_iterator->getItem().getInt64();
-            const int64_t maxv = max_iterator->getItem().getInt64();
-            sample_chunks_[pos[0]].push_back(Chunk(minv, maxv));
-        }
+    pos[1] = attr_orig_id;
+    for (pos[0] = 0; pos[0] < chunks_num_; pos[0]++) {
+        min_iterator->setPosition(pos);
+        max_iterator->setPosition(pos);
+        const int64_t minv = min_iterator->getItem().getInt64();
+        const int64_t maxv = max_iterator->getItem().getInt64();
+        chunks.push_back(Chunk(minv, maxv));
     }
 }
 
 void Sampler::SetChunkSizes(const std::string &size_param) {
-    chunk_sizes_[0] = chunk_sizes_[1] = -1;
-    sscanf(size_param.c_str(), "%d,%d", &chunk_sizes_[0], &chunk_sizes_[1]);
-}
+    typedef boost::tokenizer<boost::char_separator<char> > tokenizer_t;
+    boost::char_separator<char> sep(",| ");
+    tokenizer_t tokenizer(size_param, sep);
 
+    int i = 0;
+    for (tokenizer_t::const_iterator cit = tokenizer.begin();
+            cit != tokenizer.end(); cit++) {
+        chunk_sizes_[i++] = boost::lexical_cast<Coordinate>(cit->c_str());
+    }
+}
 } /* namespace searchlight */
