@@ -45,18 +45,53 @@ namespace searchlight {
  * "data" might either correspond to a sample or the real array. The type
  * of access is determined by the adapter's mode. This class is exposed to
  * the library users for all search data access purposes.
+ *
+ * Note that data access functions return intervals, instead of single
+ * values. This is done to make user's lives easier. An exact value is just
+ * an interval of length 0. For example, asking for a(i, j) might give you
+ * an exact value from the array, an approximate value generated from a sample
+ * or an exact interval that contains a(i, j). This depends on the mode
+ * of work, which can be selected explicitly, but is chosen automatically
+ * by default depending on the situation.
  */
 class Adapter {
 public:
+    /**
+     * This is the mode of work of the adapter, which determines what
+     * results it returns.
+     */
+    enum class Mode {
+        /** The adapter gives the exact results from the real data */
+        EXACT,
+        /** The adapter gives approximate values generated from a sample */
+        APPROX,
+        /** The adapter gives the exact interval for the values */
+        INTERVAL,
+    };
+
     /**
      * Creates an adapter for a SciDb array.
      *
      * @param array the SciDb data array
      */
-    Adapter(const SearchArrayDesc &array) : array_desc_(array) {}
+    Adapter(const SearchArrayDesc &array) :
+        array_desc_(array),
+        mode_(Mode::INTERVAL) {}
+
+    /**
+     * Sets the mode of operation for the adapter.
+     *
+     * @param mode the mode required
+     */
+    void SetAdapterMode(Mode mode) {
+        mode_ = mode;
+    }
 private:
     // The search array descriptor
     const SearchArrayDesc &array_desc_;
+
+    // Mode of operation
+    Mode mode_;
 };
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_ADAPTER_H_ */

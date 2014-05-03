@@ -35,5 +35,55 @@
 #include <constraint_solver/constraint_solver.h>
 
 using operations_research::Solver;
+using operations_research::DecisionBuilder;
+using operations_research::Decision;
+using operations_research::IntVar;
+using operations_research::IntVarElement;
+using operations_research::IntExpr;
+using operations_research::SearchMonitor;
+using operations_research::SolutionCollector;
+using operations_research::Assignment;
+using operations_research::ModelVisitor;
+
+using operations_research::CPModelProto;
+using operations_research::CPIntegerExpressionProto;
+
+/*
+ * CPModelLoader hack. We need this class, but is defined without a header,
+ * to use internally. So, this is a partial declaration, which should work
+ * as far as the linker is concerned.
+ *
+ * CAUTION: we must not use this class directly! Only pointers to it and
+ * the corresponding member calls!
+ */
+namespace operations_research {
+class CPModelLoader {
+public:
+    bool ScanArguments(const std::string& type,
+            const CPIntegerExpressionProto& proto,
+            std::vector<IntVar*>* to_fill);
+};
+}
+using operations_research::CPModelLoader;
+
+/**
+ * A vector of Int Variables.
+ */
+typedef std::vector<IntVar *> IntVarVector;
+
+/**
+ *  A vector of assignments.
+ */
+typedef std::vector<Assignment *> AssignmentVector;
+
+/**
+ * An assignment shared pointer
+ */
+typedef boost::shared_ptr<Assignment> AssignmentPtr;
+
+/**
+ *  A vector of assignment pointers.
+ */
+typedef std::vector<AssignmentPtr> AssignmentPtrVector;
 
 #endif /* SEARCHLIGHT_ORTOOLS_INC_H_ */

@@ -23,9 +23,9 @@
 /**
  * @file searchlight.h
  *
- * This is the main entry point for the search process. The Searchlight class
- * is responsible for registering all arrays, attributes, solvers and helping
- * the search process by providing the tools necessary.
+ * This is the main entry point for the search process. It contains a number of
+ * tools to guide and monitor search, and also provides a number of other
+ * useful tools, like estimation API.
  *
  * @author Alexander Kalinin
  */
@@ -35,8 +35,21 @@
 
 #include "ortools_inc.h"
 #include "array_desc.h"
+#include "system/Config.h"
+
+#include <dlfcn.h>
+#include <boost/thread.hpp>
 
 namespace searchlight {
+
+/**
+ * The type for a UDF function creator. It produces an or-tools IntExpr
+ * representing the function. Takes as parameters: the solver to use
+ * with, the adapter for accessing data and a vector of variables to work
+ * with.
+ */
+typedef IntExpr *(* UDFFunctionCreator)(Solver *, Adapter *,
+        const std::vector<IntVar *>);
 
 /**
  * This class allows the search process to access data both via sampling
@@ -48,22 +61,60 @@ namespace searchlight {
 class Searchlight {
 public:
     /**
+     * Maps UDF names to UDF creators.
+     */
+    typedef std::map<std::string, UDFFunctionCreator> UDFMapper;
+
+    /**
      * Creates the main searchlight class. An instance of this class
      * corresponds to a single search process.
      *
-     * @param solver the or-tools main solver process
+     * @param name the name of the search
      */
-    Searchlight(Solver &solver) :
-        solver_(solver),
+    Searchlight(const std::string &name) :
+        solver_(name),
         array_desc_(NULL),
-        array_adapter_(NULL) {}
+        validator_(NULL),
+        validator_thread_(NULL) {
+
+        // loading the udf library
+        const std::string &plugins_dir = scidb::Config::getInstance()->
+                getOption<std::string>(scidb::CONFIG_PLUGINS);
+        std::string lib_name = plugins_dir + "/searchlight_udfs.so";
+        dl_udf_handle_ = dlopen(lib_name.c_str(), RTLD_LAZY | RTLD_LOCAL);
+        if (!dl_udf_handle_) {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                    << "Cannot load the UDF Searchlight library!";
+        }
+    }
 
     /**
      * The destructor.
      */
     ~Searchlight() {
-        delete array_adapter_;
         delete array_desc_;
+        dlclose(dl_udf_handle_); // cannot be NULL
+
+        delete validator_thread_;
+        delete validator_;
+    }
+
+    /**
+     * Returns the solver to use for the search.
+     *
+     * @return the solver for the search
+     */
+    Solver &GetSolver() {
+        return solver_;
+    }
+
+    /**
+     * Returns a constant reference to the solver.
+     *
+     * @return constant solver reference
+     */
+    const Solver &GetSolver() const {
+        return solver_;
     }
 
     /**
@@ -77,7 +128,6 @@ public:
      */
     void RegisterArray(const Array &data, const Array &sample) {
         array_desc_ = new SearchArrayDesc(data, sample);
-        array_adapter_ = new Adapter(*array_desc_);
     }
 
     /**
@@ -96,23 +146,141 @@ public:
     }
 
     /**
-     * Returns the search array's adapter.
+     * The main solve method that starts the search.
      *
-     * @return the adapter for the search array
+     * @param db
+     * @param vars
+     * @param monitors
+     * @param sol_collector
+     * @return
      */
-    const Adapter &GetArrayAdapter() const {
-        return *array_adapter_;
+    bool Solve(DecisionBuilder &db, const IntVarVector &vars,
+            const std::vector<SearchMonitor *> &monitors,
+            SolutionCollector &sol_collector);
+
+
+    /**
+     * Returns the creator for the requested UDF.
+     *
+     * @param name the NAME of the UDF
+     * @return pointer to the creator function
+     */
+    UDFFunctionCreator GetUDFFunctionCreator(const std::string &name) {
+        // first, look in the map
+        std::string tag_name = "UDF_" + name;
+        UDFFunctionCreator udf = GetRegisteredUDF(tag_name);
+        if (udf) {
+            return udf;
+        }
+
+        // else, look in the library
+        std::string func_name = "Create" + tag_name;
+        udf = (UDFFunctionCreator)dlsym(dl_udf_handle_,
+                func_name.c_str());
+        // We should check via dlerror, but NULL checking is fine
+        if (!udf) {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                    << "Cannot find a SL UDF function, name=" << func_name;
+        }
+        udf_map_[tag_name] = udf;
+        return udf;
+    }
+
+    /**
+     * Returns the creator for the registered UDF.
+     *
+     * @param tag_name the tag name for the UDF
+     * @return the creator if found; NULL otherwise
+     */
+    UDFFunctionCreator GetRegisteredUDF(const std::string &tag_name) const {
+        UDFMapper::const_iterator udf_it = udf_map_.find(tag_name);
+        if (udf_it != udf_map_.end()) {
+            return udf_it->second;
+        } else {
+            return NULL;
+        }
+    }
+
+    /**
+     * Return all UDFs requested from this SL.
+     *
+     * @return a set of UDF names requested from this SL.
+     */
+    StringSet GetAllUsedUDFs() const {
+        StringSet res;
+        for (UDFMapper::const_iterator cit = udf_map_.begin();
+                cit != udf_map_.end(); cit++) {
+            res.insert(cit->first);
+        }
+        return res;
+    }
+
+    /**
+     * Creates an adapter to access the search array.
+     *
+     * @return access adapter
+     */
+    Adapter *CreateAdapter() const {
+        return new Adapter(*array_desc_);
     }
 
 private:
     // The solver
-    Solver &solver_;
+    Solver solver_;
 
     // The array descriptor
     SearchArrayDesc *array_desc_;
 
-    // The array adapter
-    const Adapter *array_adapter_;
+    // The udfs library
+    void *dl_udf_handle_;
+
+    // Maps requested UDF names to corresponding creators
+    UDFMapper udf_map_;
+
+    // The assignment validator and its thread
+    Validator *validator_;
+    boost::thread *validator_thread_;
 };
+
+/**
+ * This is a monitor that catches complete, but approximate, solutions
+ * (assignments) and passed them along to the Validator.
+ */
+class ValidatorMonitor : public SolutionCollector {
+public:
+    /**
+     * Creates a new validator monitor. This monitor looks for complete
+     * assignments during the search and passed them along to the validator.
+     *
+     * @param validator the validator for checking assignments
+     * @param vars a vector of decision variables (externally managed)
+     * @param solver the main solver
+     */
+    ValidatorMonitor(Validator &validator, const IntVarVector &vars,
+            Solver *solver) :
+        SolutionCollector(solver),
+        validator_(validator),
+        vars_(vars) {
+        Add(vars);
+    }
+
+    /**
+     * This function is called at a leaf of the search tree. At this point
+     * a leaf is accepted as being a solution. This function checks if
+     * it is a complete assignment and passed it along to the validator.
+     *
+     * @return true if we want to continue after the leaf; false otherwise
+     */
+    virtual bool AtSolution();
+
+private:
+    // The validator to pass the solution to
+    Validator &validator_;
+
+    // The vector of vars (managed outside)
+    const IntVarVector &vars_;
+};
+
+
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_SEARCHLIGHT_H_ */

@@ -33,6 +33,12 @@
 namespace searchlight {
 
 AttributeID SearchArrayDesc::RegisterAttribute(const std::string &attr_name) {
+    std::map<std::string, AttributeID>::const_iterator map_it =
+            attr_to_id_.find(attr_name);
+    if (map_it != attr_to_id_.end()) {
+        return map_it->second;
+    }
+
     const ArrayDesc &desc = array_.getArrayDesc();
     const Attributes &attrs = desc.getAttributes(true);
 
@@ -45,6 +51,7 @@ AttributeID SearchArrayDesc::RegisterAttribute(const std::string &attr_name) {
 
     AttributeID search_id = search_orig_ids_.size();
     search_orig_ids_.push_back(orig_id);
+    attr_to_id_[attr_name] = search_id;
 
     // load the sample
     sampler_.LoadSampleForAttribute(orig_id, search_id);

@@ -38,7 +38,22 @@ namespace searchlight {
 /**
  * A general integer interval.
  */
-typedef std::pair<int64_t, int64_t> Interval;
+typedef std::pair<int64_t, int64_t> IntInterval;
+
+/**
+ * A general double interval.
+ */
+typedef std::pair<double, double> DoubleInterval;
+
+/**
+ * A vector of strings.
+ */
+typedef std::vector<std::string> StringVector;
+
+/**
+ * A set of strings.
+ */
+typedef std::set<std::string> StringSet;
 
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_BASE_H_ */

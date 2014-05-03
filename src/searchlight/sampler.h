@@ -84,6 +84,14 @@ public:
     void LoadSampleForAttribute(AttributeID attr_orig_id,
             AttributeID attr_search_id);
 
+    DoubleInterval GetElement(const Coordinates &coord, AttributeID attr, bool approx) const;
+
+    DoubleInterval Aggregate(const Coordinates &left, const Coordinates &right,
+            const char *type, bool approx) const;
+
+    DoubleInterval Aggregate(const Coordinates &left, const Coordinates &right,
+            some callback, bool approx) const;
+
 private:
     /*
      *  Parses chunk sizes out of the string. The string is suppposed to

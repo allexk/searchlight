@@ -65,6 +65,9 @@ public:
      * attribute is also loaded. This function returns the access id, and
      * all future attribute accesses via other SL classes should use this id.
      *
+     * If the attribute has already been registered, this function returns
+     * the same access id as previously.
+     *
      * @param attr_name the name of the attribute to register
      * @return the access id for the attribute
      */
@@ -100,6 +103,9 @@ private:
      *  from the original attribute IDs).
      */
     std::vector<AttributeID> search_orig_ids_;
+
+    // Maps  attribute names to internal access ids
+    std::map<std::string, AttributeID> attr_to_id_;
 
     // The sampler
     Sampler sampler_;
