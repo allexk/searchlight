@@ -47,10 +47,123 @@ public:
      *
      * @param array the SciDb data array
      */
-    ArrayAccess(const Array &array) : data_array_(array) {}
+    explicit ArrayAccess(ArrayPtr array) :
+        data_array_(array),
+        array_desc_(array->getArrayDesc()),
+        attrs_(array_desc_.getAttributes(false)),
+        last_attr_(-1) {
+
+        /*
+         * We use tiles only if the storage uses them, since we work with SciDb
+         * arrays (borrowed from the optimizer).
+         */
+        tile_mode_ = Config::getInstance()->
+                        getOption<bool>(scidb::CONFIG_RLE_CHUNK_FORMAT) &&
+                     Config::getInstance()->
+                        getOption<int>(scidb::CONFIG_TILE_SIZE) > 1;
+    }
+
+    /**
+     * Computes aggregates over a region of the array. The aggregate is taken
+     * from the SciDb aggregates library, based on its name and the
+     * attribute's type. count(*) is also supported for including NULL elements.
+     * In the latter case, any AttributeID can be specified.
+     *
+     * @param low the leftmost corner of the region
+     * @param high the rightmost corner of the region
+     * @param attr the id of the attribute (SciDb one)
+     * @param aggr_names names of the aggregates
+     * @return results, one per corresponding aggregate
+     */
+    ValueVector ComputeAggreagate(const Coordinates &low,
+            const Coordinates &high, AttributeID attr,
+            const StringVector &aggr_names) const;
+
+    /**
+     * Returns the element at the given position. The element itself is
+     * returned in the corresponding parameter, and the function itself
+     * returns the status of access. Out-of-bounds accesses are treated as
+     * empty elements. A NULL value might be returned, and it is the
+     * responsibility of the caller to handle that.
+     *
+     * @param point element's coordinates
+     * @param attr requested attribute
+     * @param res reference to assign the element to
+     * @return true, if the element is returned;
+     *         false, if empty or out-of-bounds
+     */
+    bool GetElement(const Coordinates &point, AttributeID attr,
+            Value &res) const {
+        const ConstItemIteratorPtr &array_iter = last_iter_;
+        if (attr != last_attr_) {
+            ItemIteratorsMap::const_iterator it = item_iters_.find(attr);
+            if (it != item_iters_.end()) {
+                array_iter = it->second;
+                last_attr_ = attr;
+            } else {
+                ConstItemIteratorPtr iter = data_array_->getItemIterator(attr,
+                        ConstChunkIterator::IGNORE_OVERLAPS |
+                        ConstChunkIterator::IGNORE_EMPTY_CELLS);
+                array_iter = item_iters_[attr] = iter;
+                last_attr_ = attr;
+            }
+        }
+
+        if (array_iter->setPosition(point)) {
+            // non-empty guaranteed, but can be NULL
+            res = array_iter->getItem();
+            return true;
+        }
+        return false; // empty or out-of-bounds
+    }
+
 private:
+    /*
+     *  The structure represents an internal "small" aggregate. This is done
+     *  basically to handle multi-aggregate requests.
+     */
+    struct SmallAggr {
+        AggregatePtr agg_;        // the aggregate itself
+        bool is_count_;           // is it count()/count(*)
+        bool needs_nulls_;        // does it need NULLs?
+        Value &state_;            // the accumulator -- NULL(0) by default
+
+        SmallAggr(AggregatePtr agg, bool is_count, bool needs_nulls,
+                Value &state) :
+            agg_(agg),
+            is_count_(is_count),
+            needs_nulls_(needs_nulls),
+            state_(state) {}
+    };
+    typedef std::vector<SmallAggr> SmallAggrVector;
+
+    // Aggregate computation for tile-based inputs.
+    static void ComputeGeneralAggregateTile(const Array &array,
+            AttributeID attr, const SmallAggrVector &aggrs, bool need_nulls);
+
+    // General aggregate for non-tile computations
+    static void ComputeGeneralAggregate(const Array &array, AttributeID attr,
+            const SmallAggrVector &aggrs, bool need_nulls);
+
     // The data array
-    const Array &data_array_;
+    ArrayPtr data_array_;
+
+    // The array's descriptor
+    const ArrayDesc &array_desc_;
+
+    // The array's attributes
+    const Attributes &attrs_;
+
+    // Do we use tiles for aggregates?
+    bool tile_mode_;
+
+    // Iterators for point access
+    typedef std::map<AttributeID, ConstItemIteratorPtr> ItemIteratorsMap;
+    ItemIteratorsMap item_iters_;
+
+    // Lats used iterator for faster access
+    ConstItemIteratorPtr last_iter_;
+    AttributeID last_attr_;
 };
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_ARRAY_ACCESS_H_ */

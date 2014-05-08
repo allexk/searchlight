@@ -36,13 +36,43 @@
 #include <array/Array.h>
 
 using scidb::SystemCatalog;
+using scidb::Config;
 using scidb::ArrayDesc;
 using scidb::Array;
 using scidb::Attributes;
 using scidb::AttributeID;
-using scidb::ConstItemIterator;
 using scidb::Coordinate;
 using scidb::Coordinates;
+
+using scidb::ConstChunk;
+
+using scidb::ConstArrayIterator;
+using scidb::ConstItemIterator;
+using scidb::ConstChunkIterator;
+
+using scidb::Aggregate;
+using scidb::AggregatePtr;
+using scidb::AggregateLibrary;
+
+using scidb::TypeLibrary;
+using scidb::Type;
 using scidb::Value;
+
+using scidb::RLEPayload;
+
+/**
+ *  Pointer for an Array (very common in SciDb).
+ */
+typedef boost::shared_ptr<Array> ArrayPtr;
+
+/**
+ * A vector of Values
+ */
+typedef std::vector<Value> ValueVector;
+
+/**
+ * ConstItemIterator pointer
+ */
+typedef boost::shared_ptr<ConstItemIterator> ConstItemIteratorPtr;
 
 #endif /* SEARCHLIGHT_SCIDB_INC_H_ */

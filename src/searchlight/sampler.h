@@ -65,9 +65,10 @@ public:
      * The array is  supposed to have two dimensions:
      *   first -- [0, number_of_chunks),
      *   second -- [0, original_attribute_ids). It also
-     * The array is supposed to have two attributes:
-     *   first -- min value for the chunk
+     * The array is supposed to have attributes:
+     *   first  -- min value for the chunk
      *   second -- max value for the chunk
+     *   third  -- density of the chunk
      *
      * @param array the sample array
      * @param data_desc the descriptor of the data array
@@ -101,17 +102,24 @@ private:
 
     // A region of the sample
     struct Chunk {
-        int64_t min_; // The minimum value in the region
-        int64_t max_; // The maximum value in the region
+        double min_;       // The minimum value in the region
+        double max_;       // The maximum value in the region
+        uint64_t elems_;   // The number of non-empty/null elements
 
-        Chunk(int64_t min, int64_t max) : min_(min), max_(max) {}
+        Chunk(double min, double max, uint64_t elems) :
+            min_(min), max_(max), elems_(elems) {}
+
+        // true, if the chunk is completely empty/null
+        bool empty() const {
+            return elems_ == 0;
+        }
     };
     typedef std::vector<Chunk> ChunkVector;
 
-    // Attribute IDs for min/max elements in the sample array
-    AttributeID min_id_, max_id_;
+    // Attribute IDs for min/max/density elements in the sample array
+    AttributeID min_id_, max_id_, density_id_;
 
-    // The numnber of sample chunks
+    // The number of sample chunks
     Coordinate chunks_num_;
 
     // The sampple array
@@ -124,7 +132,7 @@ private:
     Coordinates chunk_sizes_;
 
     // The starting point of the sample
-    Coordinates sample_start_;
+    Coordinates sample_origin_;
 };
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_SAMPLER_H_ */

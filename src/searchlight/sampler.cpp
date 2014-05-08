@@ -38,7 +38,7 @@ namespace searchlight {
 Sampler::Sampler(const Array &array, const ArrayDesc &data_desc) :
         sample_array_(array),
         chunk_sizes_(data_desc.getDimensions().size()),
-        sample_start_(data_desc.getDimensions().size()){
+        sample_origin_(data_desc.getDimensions().size()){
     const ArrayDesc &sample_desc = array.getArrayDesc();
 
     // by convenience we store sizes in the comment :)
@@ -47,13 +47,14 @@ Sampler::Sampler(const Array &array, const ArrayDesc &data_desc) :
 
     // The start of the sample corresponds to the start of the data array
     for (size_t i = 0; i < data_desc.getDimensions().size(); i++) {
-        sample_start_[i] = data_desc.getDimensions()[i].getCurrStart();
+        sample_origin_[i] = data_desc.getDimensions()[i].getCurrStart();
     }
 
     // find min/max ids (not necessary, unless the array has the empty bitmap)
     const Attributes &attrs = sample_desc.getAttributes(true);
     if (!SearchArrayDesc::FindAttributeId(attrs, std::string("min"), min_id_) ||
-        !SearchArrayDesc::FindAttributeId(attrs, std::string("max"), max_id_)) {
+        !SearchArrayDesc::FindAttributeId(attrs, std::string("max"), max_id_) ||
+        !SearchArrayDesc::FindAttributeId(attrs, std::string("density"), density_id_)) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << "Cannot find min/max attribute in the sample: sample="
                 << sample_desc.getName();
@@ -74,6 +75,8 @@ void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,
             sample_array_.getItemIterator(min_id_);
     boost::shared_ptr<ConstItemIterator> max_iterator =
             sample_array_.getItemIterator(max_id_);
+    boost::shared_ptr<ConstItemIterator> density_iterator =
+            sample_array_.getItemIterator(density_id_);
 
     // Sample: first dimension -- region, second -- the original attribute
     sample_chunks_.push_back(ChunkVector());
@@ -87,11 +90,17 @@ void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,
     Coordinates pos(2);
     pos[1] = attr_orig_id;
     for (pos[0] = 0; pos[0] < chunks_num_; pos[0]++) {
-        min_iterator->setPosition(pos);
-        max_iterator->setPosition(pos);
-        const int64_t minv = min_iterator->getItem().getInt64();
-        const int64_t maxv = max_iterator->getItem().getInt64();
-        chunks.push_back(Chunk(minv, maxv));
+        const double minv, maxv, density;
+        if (!min_iterator->setPosition(pos) || !max_iterator->setPosition(pos)
+                || !density_iterator->setPosition(pos)) {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                    << "Cannot get info from sample, chunk=" << pos[0] <<
+                    "attr=" << pos[1];
+        }
+        const double minv = min_iterator->getItem().getDouble();
+        const double maxv = max_iterator->getItem().getDouble();
+        const uint64_t elems = density_iterator->getItem().getUint64();
+        chunks.push_back(Chunk(minv, maxv, elems));
     }
 }
 
