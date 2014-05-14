@@ -60,13 +60,11 @@ public:
      * This is the mode of work of the adapter, which determines what
      * results it returns.
      */
-    enum class Mode {
+    enum Mode {
         /** The adapter gives the exact results from the real data */
         EXACT,
         /** The adapter gives approximate values generated from a sample */
         APPROX,
-        /** The adapter gives the exact interval for the values */
-        INTERVAL,
     };
 
     /**
@@ -76,7 +74,7 @@ public:
      */
     Adapter(const SearchArrayDesc &array) :
         array_desc_(array),
-        mode_(Mode::INTERVAL) {}
+        mode_(Mode::APPROX) {}
 
     /**
      * Sets the mode of operation for the adapter.
@@ -86,6 +84,37 @@ public:
     void SetAdapterMode(Mode mode) {
         mode_ = mode;
     }
+
+    /**
+     * Computes specified aggregates for the specified regions for the
+     * specified attribute. Depending on the mode, the result will be
+     * approximate with precise boundaries or exact, computed over the real
+     * data. For the exact result, the min/max/val of each result are the same.
+     * All aggregates must be registered with the sampler and with SciDb.
+     * Default ones are registered automatically.
+     *
+     * @param low the low coordinates of the region
+     * @param high the upper coordinates for the region
+     * @param attr the access id of the attribute to compute
+     * @param aggr_names the names of the aggregates
+     * @return results, one per aggregate in the form of intervals; see the
+     *  definition of the interval for details
+     */
+    IntervalValueVector ComputeAggregate(const Coordinates &low,
+            const Coordinates &high, AttributeID attr,
+            const StringVector &aggr_names) const;
+
+    /**
+     * Returns the value at the specified coordinates. The value can be
+     * approximate or exact based on this adapter's mode of operation. In
+     * case of the exact value the min/max/val of the result is the same.
+     *
+     * @param point the point's coordinates
+     * @param attr the attribute to compute the value for
+     * @return the value
+     */
+    IntervalValue GetElement(const Coordinates &point, AttributeID attr) const;
+
 private:
     // The search array descriptor
     const SearchArrayDesc &array_desc_;
@@ -93,5 +122,47 @@ private:
     // Mode of operation
     Mode mode_;
 };
+
+/**
+ * Approximate value, returned by an estimator.
+ */
+struct IntervalValue {
+    /**
+     * Describes the state of the value
+     */
+    enum State {
+        NON_NULL,//!< NON_NULL definitely not NULL
+        MAY_NULL,//!< MIN_NULL might be NULL (thus, min is invalid)
+        NUL      //!< NUL definitely NULL
+    };
+
+    /**
+     * Minimum possible
+     */
+    double min_;
+
+    /**
+     * Maximum possible
+     */
+    double max_;
+
+    /**
+     * An approximate value.
+     */
+    double val_;
+
+    /**
+     * Value state
+     */
+    State state_;
+
+    IntervalValue() : min_(0), max_(0), val_(0), state_(NUL) {}
+};
+
+/**
+ * A vector of interval values.
+ */
+typedef std::vector<IntervalValue> IntervalValueVector;
+
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_ADAPTER_H_ */

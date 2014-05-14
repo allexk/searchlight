@@ -94,13 +94,41 @@ public:
         return false;
     }
 
+    /**
+     * Returns a sampler for this array.
+     *
+     * @return this array's sampler
+     */
+    const Sampler &GetSampler() const {
+        return sampler_;
+    }
+
+    /**
+     * Returns the data accessor for this array.
+     *
+     * @return this array's data accessor
+     */
+    const ArrayAccess &GetAccessor() const {
+        return data_accessor_;
+    }
+
+    /**
+     * Returns the original array attribute id for the specified internal
+     * access id.
+     *
+     * @param attr the internal attribute id
+     * @return the original attribute id
+     */
+    AttributeID GetArrayAttrributeID(AttributeID attr) const {
+        return search_orig_ids_[attr];
+    }
+
 private:
     // The data array
     const Array &array_;
 
     /*
-     *  Maps attribute names to search attribute IDs (might be different
-     *  from the original attribute IDs).
+     *  Maps internal access ids to original attribute IDs.
      */
     std::vector<AttributeID> search_orig_ids_;
 

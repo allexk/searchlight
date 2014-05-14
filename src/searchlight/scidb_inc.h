@@ -43,6 +43,7 @@ using scidb::Attributes;
 using scidb::AttributeID;
 using scidb::Coordinate;
 using scidb::Coordinates;
+using scidb::DimensionDesc;
 
 using scidb::ConstChunk;
 
@@ -60,6 +61,9 @@ using scidb::Value;
 
 using scidb::RLEPayload;
 
+using scidb::SCIDB_SE_OPERATOR;
+using scidb::SCIDB_LE_ILLEGAL_OPERATION;
+
 /**
  *  Pointer for an Array (very common in SciDb).
  */
@@ -69,6 +73,16 @@ typedef boost::shared_ptr<Array> ArrayPtr;
  * A vector of Values
  */
 typedef std::vector<Value> ValueVector;
+
+/**
+ * Value with the type
+ */
+typedef std::pair<Value, Type> TypedValue;
+
+/**
+ * A vector of typed values
+ */
+typedef std::vector<TypedValue> TypedValueVector;
 
 /**
  * ConstItemIterator pointer

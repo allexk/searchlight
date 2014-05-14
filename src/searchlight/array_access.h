@@ -75,7 +75,7 @@ public:
      * @param aggr_names names of the aggregates
      * @return results, one per corresponding aggregate
      */
-    ValueVector ComputeAggreagate(const Coordinates &low,
+    TypedValueVector ComputeAggreagate(const Coordinates &low,
             const Coordinates &high, AttributeID attr,
             const StringVector &aggr_names) const;
 
@@ -93,7 +93,7 @@ public:
      *         false, if empty or out-of-bounds
      */
     bool GetElement(const Coordinates &point, AttributeID attr,
-            Value &res) const {
+            TypedValue &res) const {
         const ConstItemIteratorPtr &array_iter = last_iter_;
         if (attr != last_attr_) {
             ItemIteratorsMap::const_iterator it = item_iters_.find(attr);
@@ -111,7 +111,8 @@ public:
 
         if (array_iter->setPosition(point)) {
             // non-empty guaranteed, but can be NULL
-            res = array_iter->getItem();
+            res.first = array_iter->getItem();
+            res.second = TypeLibrary::getType(attrs_[attr].getType());
             return true;
         }
         return false; // empty or out-of-bounds
@@ -126,14 +127,12 @@ private:
         AggregatePtr agg_;        // the aggregate itself
         bool is_count_;           // is it count()/count(*)
         bool needs_nulls_;        // does it need NULLs?
-        Value &state_;            // the accumulator -- NULL(0) by default
+        Value state_;            // the accumulator -- NULL(0) by default
 
-        SmallAggr(AggregatePtr agg, bool is_count, bool needs_nulls,
-                Value &state) :
+        SmallAggr(AggregatePtr agg, bool is_count, bool needs_nulls) :
             agg_(agg),
             is_count_(is_count),
-            needs_nulls_(needs_nulls),
-            state_(state) {}
+            needs_nulls_(needs_nulls) {}
     };
     typedef std::vector<SmallAggr> SmallAggrVector;
 

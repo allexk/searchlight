@@ -280,7 +280,5 @@ private:
     // The vector of vars (managed outside)
     const IntVarVector &vars_;
 };
-
-
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_SEARCHLIGHT_H_ */

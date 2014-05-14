@@ -85,39 +85,253 @@ public:
     void LoadSampleForAttribute(AttributeID attr_orig_id,
             AttributeID attr_search_id);
 
-    DoubleInterval GetElement(const Coordinates &coord, AttributeID attr, bool approx) const;
 
-    DoubleInterval Aggregate(const Coordinates &left, const Coordinates &right,
-            const char *type, bool approx) const;
+    /**
+     * Registers a new sample aggregate.
+     *
+     * @param name aggregate's name
+     * @param aggr aggregate's factory
+     */
+    void RegisterAggregate(const std::string &name,
+            SampleAggregateFactory *aggr) {
+        aggrs_[name] = aggr;
+    }
 
-    DoubleInterval Aggregate(const Coordinates &left, const Coordinates &right,
-            some callback, bool approx) const;
+    /**
+     * Computes specified aggregates for the specified regions for the
+     * specified attribute. The aggregates must be registered in the sampler or
+     * be default ones. The boundaries returned for the aggregate are guaranteed
+     * to be precise and reachable, i.e., they are not over-/under-estimated.
+     * As for the approximate value, it is computed by using the uniformity
+     * assumption, which might change in the future.
+     *
+     * @param low the low coordinates of the region
+     * @param high the upper coordinates for the region
+     * @param attr the attribute to compute for
+     * @param aggr_names the names of the aggregates
+     * @return results, one per aggregate in the form of intervals; see the
+     *  definition of the interval for details
+     */
+    IntervalValueVector ComputeAggregate(const Coordinates &low,
+            const Coordinates &high, AttributeID attr,
+            const StringVector &aggr_names) const;
+
+    /**
+     * Returns an approximate value at the specified coordinates. The value is
+     * computed using the uniformity assumption. The min/max boundaries are
+     * precise.
+     *
+     * @param point the point's coordinates
+     * @param attr the attribute to compute the value for
+     * @return the approximate value with the boundaries
+     */
+    IntervalValue GetElement(const Coordinates &point, AttributeID attr) const;
+
+    /**
+     * A region (chunk) of the sample.
+     */
+    struct Chunk {
+        /**
+         * The minimum value in the region
+         */
+        double min_;
+
+        /**
+         * The maximum value in the region.
+         */
+        double max_;
+
+        /**
+         * The sum of the elements in the region.
+         */
+        double sum_;
+
+        /**
+         * The number of non-empty/non-null elements.
+         */
+        uint64_t count_;
+
+        /**
+         * Constructs a new chunk.
+         *
+         * @param min the minimum value in the chunk
+         * @param max the maximum value in the chunk
+         * @param sum the sum of all values in the chunk
+         * @param count the number of non-empty/non-null elements
+         */
+        Chunk(double min, double max, double sum, uint64_t count) :
+            min_(min), max_(max), sum_(sum), count_(count) {}
+
+        /**
+         * Checks if the chunk is empty. Empty means all its elements are
+         * empty or null.
+         *
+         * @return true, if the chunk is empty; false otherwise
+         */
+        bool empty() const {
+            return count_ == 0;
+        }
+    };
+
+    /**
+     * A vector of sample chunks.
+     */
+    typedef std::vector<Chunk> ChunkVector;
 
 private:
+    /*
+     *  Iterator over the chunks of a region. We assume that chunks are
+     *  laid in the row-major order for the purpose of returning the
+     *  linear number of the current chunk the iterator points to.
+     */
+    class RegionIterator {
+    public:
+        /*
+         * Creates an iterator over the region, specified by low and
+         * high coordinates (both inclusive).
+         *
+         * We assume that the low-high coordinates comprise a valid region,
+         * where high[i] >= low[i].
+         */
+        RegionIterator(const Sampler &sampler, const Coordinates &low,
+                const Coordinates &high) :
+                    pos_(low),
+                    chunk_pos_(-1),
+                    region_low_(low),
+                    region_high_(high),
+                    sampler_(sampler),
+                    valid_(true) {
+            chunk_pos_ = GetChunkPos();
+        }
+
+        // prefix ++
+        RegionIterator &operator++() {
+            size_t i = pos_.size() - 1;
+            while ((pos_[i] += sampler_.chunk_sizes_[i]) > region_high_[i]) {
+                pos_[i] = region_low_[i];
+                if (i == 0) {
+                    valid_ = false;
+                    break;
+                }
+                i--;
+            }
+
+            if (valid_) {
+                if (i == pos_.size() - 1) {
+                    chunk_pos_++;
+                } else {
+                    chunk_pos_ = GetChunkPos();
+                }
+            }
+
+            return *this;
+        }
+
+        // Is the iterator invalid (at the end?)
+        bool end() const {
+            return !valid_;
+        }
+
+        // Return the linear chunk position
+        uint64_t GetChunk() const {
+            return chunk_pos_;
+        }
+
+        // Are we fully covering the current chunk with the region?
+        bool CoversFullChunk() const {
+            bool res = true;
+            for (size_t i = 0; i < pos_.size(); i++) {
+                if (pos_[i] % sampler_.chunk_sizes_[i] != 0) {
+                    res = false;
+                    break;
+                }
+            }
+            return res;
+        }
+
+        /*
+         *  Return the covered portion of the current chunk. If the
+         *  chunk is fully covered it will return its coordinates.
+         */
+        void GetCoveredChunk(Coordinates &low, Coordinates &high) const {
+            low = pos_;
+            for (size_t i = 0; i < pos_.size(); i++) {
+                const Coordinate chunk_size = sampler_.chunk_sizes_[i];
+                high[i] = (pos_[i] - pos_[i] % chunk_size) + chunk_size - 1;
+            }
+        }
+
+        /*
+         * Computes the number of elements in the covered part of the chunk.
+         */
+        uint64_t GetPartSize() const {
+            uint64_t res = 1;
+            for (size_t i = 0; i < pos_.size(); i++) {
+                const Coordinate chunk_size = sampler_.chunk_sizes_[i];
+                res *= chunk_size - pos_[i] % chunk_size;
+            }
+            return res;
+        }
+
+    private:
+        // Returns the linear chunk number for the current position
+        uint64_t GetChunkPos() const {
+            Coordinates chunk_coord(pos_);
+            for (size_t i = 0; i < chunk_coord.size(); i++) {
+                chunk_coord[i] = (chunk_coord[i] - sampler_.sample_origin_[i]) /
+                        sampler_.chunk_sizes_[i];
+            }
+
+            // TODO: single out one-/two-dimensional cases?
+            uint64_t pos = 0;
+            for (size_t i = 0; i < chunk_coord.size(); i++) {
+                pos *= sampler_.chunk_nums_[i];
+                pos += chunk_coord[i];
+            }
+
+            return pos;
+        }
+
+        // Current position
+        Coordinates pos_;
+
+        // Current chunk position
+        uint64_t chunk_pos_;
+
+        // Boundaries for the region
+        const Coordinates &region_low_, &region_high_;
+
+        // The sampler we are traversing
+        const Sampler &sampler_;
+
+        // Do we point to a valid position?
+        bool valid_;
+    };
+
     /*
      *  Parses chunk sizes out of the string. The string is suppposed to
      *  have the format "x_size,y_size,...".
      */
     void SetChunkSizes(const std::string &size_param);
 
-    // A region of the sample
-    struct Chunk {
-        double min_;       // The minimum value in the region
-        double max_;       // The maximum value in the region
-        uint64_t elems_;   // The number of non-empty/null elements
+    /*
+     * Checks that specified region bounds are correct (low <= high) and
+     * aligns them appropriately, to fit within the sampled area.
+     */
+    void CheckAndCorrectBounds(Coordinates &low, Coordinates &high) const;
 
-        Chunk(double min, double max, uint64_t elems) :
-            min_(min), max_(max), elems_(elems) {}
+    /*
+     * Checks if the point's coordinates are within the sample area.
+     */
+    bool CheckBounds(const Coordinates &point) const;
 
-        // true, if the chunk is completely empty/null
-        bool empty() const {
-            return elems_ == 0;
-        }
-    };
-    typedef std::vector<Chunk> ChunkVector;
+    /*
+     * Computes the number of elements in a chunk based on its length.
+     */
+    uint64_t ComputeShapeChunkSize() const;
 
-    // Attribute IDs for min/max/density elements in the sample array
-    AttributeID min_id_, max_id_, density_id_;
+    // Attribute IDs for min/max/count/sum elements in the sample array
+    AttributeID min_id_, max_id_, count_id_, sum_id_;;
 
     // The number of sample chunks
     Coordinate chunks_num_;
@@ -131,8 +345,67 @@ private:
     // The size of a chunk (one per dimension)
     Coordinates chunk_sizes_;
 
-    // The starting point of the sample
-    Coordinates sample_origin_;
+    // The number of elements in a chunk, based on its shape
+    uint64_t shape_chunk_size_;
+
+    // The starting and ending points of the sample
+    Coordinates sample_origin_, sample_end_;
+
+    // The number of chunks per each dimension
+    Coordinates chunk_nums_;
+
+    // Aggregate map to reso;ve aggregates
+    typedef std::map<const std::string, SampleAggregateFactory> AggrMap;
+    AggrMap aggrs_;
 };
+
+/**
+ * This is a base class for all sample aggregates. Sample means it returns
+ * an interval result in the form of [min, max] values and a possible
+ * indication of NULL.
+ */
+class SampleAggregate {
+public:
+    /**
+     * Adds another chunk to the aggregate. Since the aggregate is computed
+     * for a region, that region might intersect only a part of the
+     * corresponding sample chunk. To account for this, the function is
+     * called with the number of elements in the intersection. Only non-empty
+     * chunks calls this function. So, there might be a case when only the
+     * finalize is called -- when the whole region is definitely empty.
+     *
+     * @param chunk_size the number of elements in the corresponding chunk
+     * @param part_size the number of elements in the intersection
+     * @param chunk reference to the corresponding sample chunk
+     */
+    virtual void AccumulateChunk(uint64_t chunk_size,
+            uint64_t part_size, const Sampler::Chunk &chunk) = 0;
+
+    /**
+     * Finalizes the result after all the chunks have been traversed. For
+     * example, this is the place to compute avg by dividing sum by count.
+     *
+     * @param res reference to put the final result
+     */
+    virtual void Finalize(IntervalValue &res) = 0;
+
+private:
+    /**
+     * Destructor.
+     */
+    virtual ~SampleAggregate() {}
+};
+
+/**
+ * Sample Aggregate Factory.
+ */
+typedef SampleAggregate *(*SampleAggregateFactory)();
+
+/**
+ * A vectort of shared pointers to sample aggregates.
+ */
+typedef std::vector<boost::shared_ptr<SampleAggregate>> SampleAggregatePtrVector;
+
+
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_SAMPLER_H_ */

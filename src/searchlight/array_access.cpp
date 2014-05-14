@@ -37,19 +37,18 @@ using scidb::CountingAggregate;
 
 namespace searchlight {
 
-ValueVector ArrayAccess::ComputeAggreagate(const Coordinates &low,
+TypedValueVector ArrayAccess::ComputeAggreagate(const Coordinates &low,
         const Coordinates &high, AttributeID attr,
         const StringVector &aggr_names) const {
     // first, resolve the aggregates -- we use SciDb built-in ones
     SmallAggrVector aggrs;
-    ValueVector res(aggr_names.size());
+    TypedValueVector res(aggr_names.size());
     bool need_nulls = false;
     for (size_t i = 0; i < aggr_names.size(); i++) {
         AggregatePtr agg = AggregateLibrary::getInstance()->
                 createAggregate(aggr_names[i],
                         TypeLibrary::getType(attrs_[attr].getType()));
-        aggrs.push_back(SmallAggr(agg, agg->isCounting(), !agg->ignoreNulls(),
-                res[i]));
+        aggrs.push_back(SmallAggr(agg, agg->isCounting(), !agg->ignoreNulls()));
         if (!agg->ignoreNulls()) {
             need_nulls = true;
         }
@@ -63,6 +62,13 @@ ValueVector ArrayAccess::ComputeAggreagate(const Coordinates &low,
         ComputeGeneralAggregateTile(region, attr, aggrs, need_nulls);
     } else {
         ComputeGeneralAggregate(region, attr, aggrs, need_nulls);
+    }
+
+    // finalize aggregates
+    for (size_t i = 0; i < aggrs.size(); i++) {
+        const SmallAggr &agg = aggrs[i];
+        agg.agg_->finalResult(res[i].first, agg.state_);
+        res[i].second = agg.agg_->getResultType();
     }
 
     return res;
@@ -89,7 +95,7 @@ void ArrayAccess::ComputeGeneralAggregateTile(const Array &array,
             const RLEPayload *tile = v.getTile();
             if (tile->count()) {
                 for (size_t i = 0; i < aggrs.size(); i++) {
-                    const SmallAggr &agg = aggrs[i];
+                    SmallAggr &agg = aggrs[i];
                     if (agg.state_.getMissingReason() == 0) {
                         agg.agg_->initializeState(agg.state_);
                     }
@@ -125,7 +131,7 @@ void ArrayAccess::ComputeGeneralAggregate(const Array &array,
                 nonnull_count++;
             }
             for (size_t i = 0; i < aggrs.size(); i++) {
-                const SmallAggr &agg = aggrs[i];
+                SmallAggr &agg = aggrs[i];
                 if (!agg.is_count_ && (agg.needs_nulls_ ||
                         !v.isNull())) {
                     if (agg.state_.getMissingReason() == 0) {
@@ -141,7 +147,7 @@ void ArrayAccess::ComputeGeneralAggregate(const Array &array,
 
     // need to set count() if any
     for (size_t i = 0; i < aggrs.size(); i++) {
-        const SmallAggr &agg = aggrs[i];
+        SmallAggr &agg = aggrs[i];
         if (agg.is_count_) {
             agg.agg_->initializeState(agg.state_);
             const uint64_t count = agg.needs_nulls_ ? total_count :
