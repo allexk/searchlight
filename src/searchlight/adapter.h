@@ -65,6 +65,8 @@ public:
         EXACT,
         /** The adapter gives approximate values generated from a sample */
         APPROX,
+        /** The adapter gives a precise interval of possible values */
+        INTERVAL,
     };
 
     /**
@@ -74,7 +76,7 @@ public:
      */
     Adapter(const SearchArrayDesc &array) :
         array_desc_(array),
-        mode_(Mode::APPROX) {}
+        mode_(Mode::INTERVAL) {}
 
     /**
      * Sets the mode of operation for the adapter.
@@ -122,6 +124,11 @@ private:
     // Mode of operation
     Mode mode_;
 };
+
+/**
+ * Adapter shared pointer.
+ */
+typedef boost::shared_ptr<Adapter> AdapterPtr;
 
 /**
  * Approximate value, returned by an estimator.

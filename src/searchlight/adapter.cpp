@@ -56,9 +56,18 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
                        val_type.first);
             }
         }
-    } else if (mode_ == APPROX) {
+    } else if (mode_ == APPROX || mode_ == INTERVAL) {
         const Sampler &sampler = array_desc_.GetSampler();
         res = sampler.ComputeAggregate(low, high, attr, aggr_names);
+        if (mode_ == APPROX) {
+            for (IntervalValueVector::iterator it = res.begin();
+                    it != res.end(); it++) {
+                it->min_ = it->max_ = it->val_;
+                if (it->state_ == IntervalValue::MAY_NULL) {
+                    it->state_ = IntervalValue::NON_NULL;
+                }
+            }
+        }
     } else {
         // cannot happen
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
@@ -86,9 +95,15 @@ IntervalValue Adapter::GetElement(const Coordinates &point,
                 tres.second.typeId(),
                 tres.first);
         }
-    } else if (mode_ == APPROX) {
+    } else if (mode_ == APPROX || mode_ == INTERVAL) {
         const Sampler &sampler = array_desc_.GetSampler();
         res = sampler.GetElement(point, attr);
+        if (mode_ == APPROX) {
+            res.min_ = res.max_ = res.val_;
+            if (res.state_ == IntervalValue::MAY_NULL) {
+                res.state_ = IntervalValue::NON_NULL;
+            }
+        }
     } else {
         // cannot happen
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)

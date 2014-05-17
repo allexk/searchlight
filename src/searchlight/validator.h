@@ -61,9 +61,7 @@ public:
     /**
      * Destructor.
      */
-    ~Validator() {
-        delete adapter_;
-    }
+    ~Validator() {}
 
     /**
      * Adds a solution (assignment) to validate later.
@@ -138,7 +136,7 @@ private:
     Solver solver_;
 
     // The array access adapter
-    Adapter *adapter_;
+    AdapterPtr adapter_;
 
     // The prototype assignment for search variables
     Assignment search_vars_prototype_;

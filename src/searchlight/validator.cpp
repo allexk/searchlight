@@ -233,7 +233,11 @@ Validator::Validator(const Searchlight &sl, const StringVector &var_names,
          *  changed during the search anyway, albeit later.
          */
         search_vars_prototype_.Add(const_cast<IntVar *>(var->second));
+        collector_.Add(const_cast<IntVar *>(var->second));
     }
+
+    // validator works with real data
+    adapter_->SetAdapterMode(Adapter::EXACT);
 }
 
 void Validator::AddSolution(const Assignment &sol) {
@@ -270,12 +274,19 @@ IntExpr* Validator::UDFBuilder(std::string name, CPModelLoader* const builder,
         return NULL;
     }
 
+    // should have integer parameters protobuffed
+    std::vector<int64> params;
+    if (!builder->ScanArguments(ModelVisitor::kValuesArgument, proto,
+            &params)) {
+        return NULL;
+    }
+
     UDFFunctionCreator udf_creator = sl_.GetRegisteredUDF(name);
     if (!udf_creator) {
         return NULL;
     }
 
-    return udf_creator(&solver_, adapter_, vars);
+    return udf_creator(&solver_, adapter_, vars, params);
 }
 
 void Validator::RegisterUDFBuilder() {

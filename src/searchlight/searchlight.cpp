@@ -33,8 +33,7 @@
 namespace searchlight {
 
 bool Searchlight::Solve(DecisionBuilder &db, const IntVarVector &vars,
-        const std::vector<SearchMonitor *> &monitors,
-        SolutionCollector &sol_collector) {
+        const std::vector<SearchMonitor *> &monitors) {
     /*
      *  First, we need to establish our own validation collector, create
      *  a validator and pass it the names of the decision vars
@@ -52,7 +51,11 @@ bool Searchlight::Solve(DecisionBuilder &db, const IntVarVector &vars,
     }
 
     // establish the validator
-    validator_ = new Validator(*this, var_names, sol_collector);
+    if (!collector_) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << "No solution collector registered!";
+    }
+    validator_ = new Validator(*this, var_names, *collector_);
     validator_thread_ = new boost::thread(boost::ref(validator_));
 
     // Establish monitors

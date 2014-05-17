@@ -366,6 +366,96 @@ private:
     bool not_null_, null_;
 };
 
+class MinMaxSampleAggregate : public SampleAggregate {
+public:
+    static SampleAggregate *CreateMin() {
+        return new MinMaxSampleAggregate(true);
+    }
+
+    static SampleAggregate *CreateMax() {
+        return new MinMaxSampleAggregate(false);
+    }
+
+    virtual void AccumulateChunk(uint64_t chunk_size,
+            uint64_t part_size, const Sampler::Chunk &chunk) {
+        // chunk info
+        const double min = chunk.min_;
+        const double max = chunk.max_;
+
+        // it cannot be null, since chunks are non-empty here
+        null_ = false;
+
+        // is it a full chunk? guaranteed to be non-empty
+        if (part_size == chunk_size) {
+            not_null_ = true;
+            // here we know the exact min and max
+            if (is_min_) {
+                max_ = std::min(max_, min);
+                min_ = std::min(min_, min);
+            } else {
+                max_ = std::max(max_, max);
+                min_ = std::max(min_, max);
+            }
+            return;
+        }
+
+        // compute counts
+        const uint64_t empty_count = chunk_size - chunk.count_;
+        const uint64_t min_count = part_size >= empty_count ?
+                part_size - empty_count : 0;
+        if (min_count > 0) {
+            not_null_ = true;
+        }
+
+        // partial match: a range of values
+        if (is_min_) {
+            min_ = std::min(min_, min);
+            max_ = std::min(max_, max);
+        } else {
+            min_ = std::max(min_, min);
+            max_ = std::max(max_, max);
+        }
+    }
+
+    virtual void Finalize(IntervalValue &res) {
+        if (not_null_) {
+            res.state_ = IntervalValue::NON_NULL;
+        } else {
+            if (!null_) {
+                // got possible non-empty parts
+                res.state_ = IntervalValue::MAY_NULL;
+            } else {
+                res.state_ = IntervalValue::NUL;
+                return;
+            }
+        }
+
+        res.min_ = min_;
+        res.max_ = max_;
+        /*
+         * Approximate value: the middle point, which guarantees the best
+         * worst-case error.
+         */
+        res.val_ = min_ + (max_ - min_) / 2;
+    }
+
+private:
+    MinMaxSampleAggregate(bool min) :
+        min_(std::numeric_limits<double>::max()),
+        max_(std::numeric_limits<double>::min()),
+        approx_(0),
+        is_min_(min), not_null_(false), null_(true) {}
+
+    // Minimum/maximum and approximate values
+    double min_, max_, approx_;
+
+    // is it the min aggregate?
+    bool is_min_;
+
+    // is it definitely not null? or is it definitely null?
+    bool not_null_, null_;
+};
+
 Sampler::Sampler(const Array &array, const ArrayDesc &data_desc) :
         sample_array_(array),
         chunk_sizes_(data_desc.getDimensions().size()),
@@ -411,6 +501,8 @@ Sampler::Sampler(const Array &array, const ArrayDesc &data_desc) :
     // Register default aggregates
     aggrs_["avg"] = AverageSampleAggregate::Create;
     aggrs_["sum"] = SumSampleAggregate::Create;
+    aggrs_["min"] = MinMaxSampleAggregate::CreateMin;
+    aggrs_["max"] = MinMaxSampleAggregate::CreateMax;
 }
 
 void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,

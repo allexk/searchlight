@@ -39,17 +39,18 @@
 
 #include <dlfcn.h>
 #include <boost/thread.hpp>
+#include <boost/make_shared.hpp>
 
 namespace searchlight {
 
 /**
  * The type for a UDF function creator. It produces an or-tools IntExpr
  * representing the function. Takes as parameters: the solver to use
- * with, the adapter for accessing data and a vector of variables to work
- * with.
+ * with, the adapter for accessing data, a vector of variables to work
+ * with and integer parameters.
  */
-typedef IntExpr *(* UDFFunctionCreator)(Solver *, Adapter *,
-        const std::vector<IntVar *>);
+typedef IntExpr *(* UDFFunctionCreator)(Solver *, AdapterPtr,
+        const std::vector<IntVar *> &, const std::vector<int64> &);
 
 /**
  * This class allows the search process to access data both via sampling
@@ -73,6 +74,7 @@ public:
      */
     Searchlight(const std::string &name) :
         solver_(name),
+        collector_(NULL),
         array_desc_(NULL),
         validator_(NULL),
         validator_thread_(NULL) {
@@ -148,16 +150,13 @@ public:
     /**
      * The main solve method that starts the search.
      *
-     * @param db
-     * @param vars
-     * @param monitors
-     * @param sol_collector
-     * @return
+     * @param db the decision builder (search heuristic)
+     * @param vars the decision variables
+     * @param monitors monitors, if required (can be empty)
+     * @return true, if the search found something; false otherwise
      */
     bool Solve(DecisionBuilder &db, const IntVarVector &vars,
-            const std::vector<SearchMonitor *> &monitors,
-            SolutionCollector &sol_collector);
-
+            const std::vector<SearchMonitor *> &monitors);
 
     /**
      * Returns the creator for the requested UDF.
@@ -220,13 +219,26 @@ public:
      *
      * @return access adapter
      */
-    Adapter *CreateAdapter() const {
-        return new Adapter(*array_desc_);
+    AdapterPtr CreateAdapter() const {
+        return boost::make_shared<Adapter>(*array_desc_);
+    }
+
+    /**
+     * Registers a solution collector for handling the exact results. SL is
+     * not responsible for deleting it.
+     *
+     * @param collector collector for exact results
+     */
+    void RegisterCollector(SolutionCollector *collector) {
+        collector_ = collector;
     }
 
 private:
     // The solver
     Solver solver_;
+
+    // Solution collector for main (exact) results
+    SolutionCollector *collector_;
 
     // The array descriptor
     SearchArrayDesc *array_desc_;

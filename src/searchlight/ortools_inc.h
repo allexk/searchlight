@@ -38,15 +38,20 @@ using operations_research::Solver;
 using operations_research::DecisionBuilder;
 using operations_research::Decision;
 using operations_research::IntVar;
+using operations_research::IntVarIterator;
 using operations_research::IntVarElement;
 using operations_research::IntExpr;
+using operations_research::BaseIntExpr;
 using operations_research::SearchMonitor;
 using operations_research::SolutionCollector;
 using operations_research::Assignment;
 using operations_research::ModelVisitor;
+using operations_research::Demon;
 
 using operations_research::CPModelProto;
 using operations_research::CPIntegerExpressionProto;
+
+using operations_research::StringPrintf;
 
 /*
  * CPModelLoader hack. We need this class, but is defined without a header,
@@ -54,7 +59,8 @@ using operations_research::CPIntegerExpressionProto;
  * as far as the linker is concerned.
  *
  * CAUTION: we must not use this class directly! Only pointers to it and
- * the corresponding member calls!
+ * the corresponding member calls! In this way we do not mess up binary
+ * compatibility with or-tools.
  */
 namespace operations_research {
 class CPModelLoader {
@@ -62,6 +68,9 @@ public:
     bool ScanArguments(const std::string& type,
             const CPIntegerExpressionProto& proto,
             std::vector<IntVar*>* to_fill);
+    bool ScanArguments(const std::string& type,
+            const CPIntegerExpressionProto& proto,
+            std::vector<int64>* to_fill);
 };
 }
 using operations_research::CPModelLoader;
