@@ -34,22 +34,29 @@
 
 #include <array/Metadata.h>
 #include <array/Array.h>
+#include <array/StreamArray.h>
 
 using scidb::SystemCatalog;
+using scidb::Query;
 using scidb::Config;
 using scidb::ArrayDesc;
 using scidb::Array;
+using scidb::StreamArray;
 using scidb::Attributes;
 using scidb::AttributeID;
+using scidb::AttributeDesc;
 using scidb::Coordinate;
 using scidb::Coordinates;
 using scidb::DimensionDesc;
+using scidb::Address;
 
 using scidb::ConstChunk;
+using scidb::MemChunk;
 
 using scidb::ConstArrayIterator;
 using scidb::ConstItemIterator;
 using scidb::ConstChunkIterator;
+using scidb::ChunkIterator;
 
 using scidb::Aggregate;
 using scidb::AggregatePtr;

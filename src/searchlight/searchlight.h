@@ -35,7 +35,7 @@
 
 #include "ortools_inc.h"
 #include "array_desc.h"
-#include "system/Config.h"
+#include <system/Config.h>
 
 #include <dlfcn.h>
 #include <boost/thread.hpp>
@@ -76,8 +76,7 @@ public:
         solver_(name),
         collector_(NULL),
         array_desc_(NULL),
-        validator_(NULL),
-        validator_thread_(NULL) {
+        terminate_(false) {
 
         // loading the udf library
         const std::string &plugins_dir = scidb::Config::getInstance()->
@@ -96,9 +95,6 @@ public:
     ~Searchlight() {
         delete array_desc_;
         dlclose(dl_udf_handle_); // cannot be NULL
-
-        delete validator_thread_;
-        delete validator_;
     }
 
     /**
@@ -155,7 +151,7 @@ public:
      * @param monitors monitors, if required (can be empty)
      * @return true, if the search found something; false otherwise
      */
-    bool Solve(DecisionBuilder &db, const IntVarVector &vars,
+    bool Solve(DecisionBuilder *db, const IntVarVector &vars,
             const std::vector<SearchMonitor *> &monitors);
 
     /**
@@ -233,7 +229,26 @@ public:
         collector_ = collector;
     }
 
+    /**
+     * Causes the searchlight search to terminate. Note, it does not terminate
+     * immediately, but within a reasonable amount of time.
+     */
+    void Terminate() {
+        terminate_ = true;
+    }
+
 private:
+    // Checks if we need to terminate
+    bool CheckTerminate() const {
+        /*
+         * This code is obviously not thread-safe (see Terminate() as well),
+         * but for our purposes it is fine. One thread will set it to true and
+         * the other will read it. Delays in propagating the value are not that
+         * important here, and it is changed only once.
+         */
+        return terminate_;
+    }
+
     // The solver
     Solver solver_;
 
@@ -249,9 +264,8 @@ private:
     // Maps requested UDF names to corresponding creators
     UDFMapper udf_map_;
 
-    // The assignment validator and its thread
-    Validator *validator_;
-    boost::thread *validator_thread_;
+    // True if we are required to terminate
+    volatile bool terminate_;
 };
 
 /**

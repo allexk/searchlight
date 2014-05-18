@@ -36,6 +36,7 @@
 
 #include "scidb_inc.h"
 #include "ortools_inc.h"
+#include "searchlight.h"
 
 namespace searchlight {
 
@@ -148,6 +149,16 @@ public:
      */
     std::string GetNextSolution();
 
+    /**
+     * Terminate the current task. It passes along the requirement to the
+     * SL search, which will terminate in a (short) period of time. Then, the
+     * thread can be joined, unless something is holding it in the DLL's
+     * task function, in which case there is no way to deal with that.
+     */
+    void Terminate() {
+        searchlight_.Terminate();
+    }
+
 private:
     // Make it a friend to modify the queue
     friend class TaskSolutionCollector;
@@ -184,7 +195,7 @@ private:
     SLTaskFunc task_;
     const std::string task_params_;
 
-    // so-based stuff
+    // dll-based stuff
     void *dl_lib_handle_;
 
     // Stringified solutions.
@@ -198,6 +209,78 @@ private:
 
     // Condition to facilitate waiting for solutions
     boost::condition_variable queue_cond_;
+};
+
+/**
+ *  A shared pointer for the SearclightTask.
+ */
+typedef boost::shared_ptr<SearchlightTask> SearchlightTaskPtr;
+
+/**
+ * This class represents an array for returning SL results upstream.
+ * This is a stream array, which means it is single-pass. The latter is
+ * because we do not know the number of results beforehand and cannot
+ * let the user to randomly walk through it. For the same reason its scheme's
+ * only dimension is unbounded on the right.
+ *
+ * This array also handles the searchlight task by running it in a
+ * separate thread and terminating when necessary. The search starts running
+ * when the first result is requested.
+ *
+ * Since the array is stream-based, the results can be delivered in an online
+ * fashion, which (hopefully) is what SciDb should be doing, since
+ * materialization is unnecessary.
+ */
+class SearchlightResultsArray : public StreamArray {
+public:
+    /**
+     * Creates a new resulting array.
+     * @param sl_task the searchlight task
+     * @param desc the descriptor of the array
+     */
+    SearchlightResultsArray(SearchlightTaskPtr sl_task, ArrayDesc &desc) :
+        sl_task_(sl_task),
+        desc_(desc),
+        res_count_(0),
+        sl_thread_(NULL) {}
+
+    /**
+     * Destructor.
+     */
+    virtual ~SearchlightResultsArray() {
+        if (sl_thread_) {
+            sl_task_->Terminate();
+            sl_thread_->join();
+            delete sl_thread_;
+        }
+    }
+
+    /**
+     * Creates a descriptor for this type of arrays. Basically, it is a
+     * single dimension [1, *] array with a single string attribute. The
+     * dimension index equals the result's number, and the attribute
+     * contains the stringified result.
+     *
+     * @return a suitable descruptor for the SL result array
+     */
+    static ArrayDesc GetArrayDesc();
+
+protected:
+    // Creates a chunk with a new result (one result per chunk)
+    virtual ConstChunk const* nextChunk(AttributeID attId, MemChunk& chunk);
+
+private:
+    // The main SL task
+    SearchlightTaskPtr sl_task_;
+
+    // This array descriptor
+    ArrayDesc desc_;
+
+    // Current results count
+    uint64_t res_count_;
+
+    // The main sl thread
+    boost::thread *sl_thread_;
 };
 
 } /* namespace searchlight */

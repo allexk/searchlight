@@ -53,6 +53,8 @@ using operations_research::CPIntegerExpressionProto;
 
 using operations_research::StringPrintf;
 
+using operations_research::SearchLimit;
+
 /*
  * CPModelLoader hack. We need this class, but is defined without a header,
  * to use internally. So, this is a partial declaration, which should work

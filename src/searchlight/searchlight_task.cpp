@@ -88,4 +88,44 @@ std::string SearchlightTask::GetNextSolution() {
     return res;
 }
 
+const ConstChunk *SearchlightResultsArray::nextChunk(AttributeID attId,
+        MemChunk& chunk) {
+    // initialize the search if needed
+    if (!sl_thread_) {
+        sl_thread_ = new boost::thread(boost::ref(*sl_task_));
+    }
+
+    // block until next solution
+    std::string sol = sl_task_->GetNextSolution();
+    if (sol.empty()) {
+        return NULL; //no more results
+    } else {
+        res_count_++;
+        Coordinates pos(1, res_count_);
+        Address addr(attId, pos);
+        chunk.initialize(this, &desc_, addr, 0 /* no compression */);
+
+        // set iterator
+        boost::shared_ptr<Query> query(Query::getValidQueryPtr(_query));
+        boost::shared_ptr<ChunkIterator> dst = chunk.getIterator(query, 0);
+        dst->setPosition(pos);
+
+        // write value
+        Value v;
+        v.setString(sol.c_str());
+        dst->writeItem(v);
+        dst->flush();
+
+        return &chunk;
+    }
+}
+
+ArrayDesc SearchlightResultsArray::GetArrayDesc() {
+    std::vector<AttributeDesc> attrs(1,
+         AttributeDesc(AttributeID(0), "assignment", scidb::TID_STRING, 0, 0));
+    std::vector<DimensionDesc> dims(1,
+            DimensionDesc("num", 1, scidb::MAX_COORDINATE, 1, 0));
+    return ArrayDesc("sl_result", attrs, dims);
+}
+
 } /* namespace searchlight */

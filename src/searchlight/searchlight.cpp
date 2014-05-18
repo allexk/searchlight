@@ -32,11 +32,11 @@
 
 namespace searchlight {
 
-bool Searchlight::Solve(DecisionBuilder &db, const IntVarVector &vars,
+bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
         const std::vector<SearchMonitor *> &monitors) {
     /*
-     *  First, we need to establish our own validation collector, create
-     *  a validator and pass it the names of the decision vars
+     * First, we need to establish our own validation collector, create
+     * a validator and pass it the names of the decision vars
      */
     StringVector var_names(vars.size());
     int i = 0;
@@ -55,22 +55,25 @@ bool Searchlight::Solve(DecisionBuilder &db, const IntVarVector &vars,
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << "No solution collector registered!";
     }
-    validator_ = new Validator(*this, var_names, *collector_);
-    validator_thread_ = new boost::thread(boost::ref(validator_));
+    Validator validator(*this, var_names, *collector_);
+    boost::thread validator_thread(boost::ref(validator));
 
-    // Establish monitors
+    // Establish monitors: validator (to transfer leaves) and terminator
     std::vector<SearchMonitor *> solver_monitors(monitors);
-    ValidatorMonitor val_monitor(*validator_, vars, solver_);
+    ValidatorMonitor val_monitor(validator, vars, solver_);
+    SearchLimit *terminator = solver_.MakeCustomLimit(
+            NewPermanentCallback(this, &Searchlight::CheckTerminate));
     solver_monitors.push_back(&val_monitor);
+    solver_monitors.push_back(terminator);
 
     // start the search
-    solver_.Solve(&db, monitors);
+    solver_.Solve(db, monitors);
 
     // Terminate validator
-    validator_->Terminate();
-    validator_thread_->join();
+    validator.Terminate();
+    validator_thread.join();
 
-    return validator_->GetValidatorSolverResult();
+    return validator.GetValidatorSolverResult();
 }
 
 virtual bool ValidatorMonitor::AtSolution() {
