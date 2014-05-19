@@ -96,4 +96,9 @@ typedef std::vector<TypedValue> TypedValueVector;
  */
 typedef boost::shared_ptr<ConstItemIterator> ConstItemIteratorPtr;
 
+/**
+ * Array shared pointer.
+ */
+typedef boost::shared_ptr<Array> ArrayPtr;
+
 #endif /* SEARCHLIGHT_SCIDB_INC_H_ */

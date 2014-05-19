@@ -100,8 +100,7 @@ const ConstChunk *SearchlightResultsArray::nextChunk(AttributeID attId,
     if (sol.empty()) {
         return NULL; //no more results
     } else {
-        res_count_++;
-        Coordinates pos(1, res_count_);
+        Coordinates pos(1, res_count_++);
         Address addr(attId, pos);
         chunk.initialize(this, &desc_, addr, 0 /* no compression */);
 
@@ -124,7 +123,7 @@ ArrayDesc SearchlightResultsArray::GetArrayDesc() {
     std::vector<AttributeDesc> attrs(1,
          AttributeDesc(AttributeID(0), "assignment", scidb::TID_STRING, 0, 0));
     std::vector<DimensionDesc> dims(1,
-            DimensionDesc("num", 1, scidb::MAX_COORDINATE, 1, 0));
+            DimensionDesc("num", 0, scidb::MAX_COORDINATE, 1, 0));
     return ArrayDesc("sl_result", attrs, dims);
 }
 

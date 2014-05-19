@@ -55,9 +55,9 @@ public:
      * @param array the scidb's original array
      * @param sample the sample array
      */
-    SearchArrayDesc(const Array &array, const Array &sample) :
+    SearchArrayDesc(const ArrayPtr &array, const ArrayPtr &sample) :
         array_(array),
-        sampler_(sample, array.getArrayDesc()),
+        sampler_(sample, array->getArrayDesc()),
         data_accessor_(array) {}
 
     /**
@@ -125,7 +125,7 @@ public:
 
 private:
     // The data array
-    const Array &array_;
+    const ArrayPtr array_;
 
     /*
      *  Maps internal access ids to original attribute IDs.

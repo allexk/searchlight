@@ -124,7 +124,7 @@ public:
      * @param data the data array
      * @param sample the sample for the data array
      */
-    void RegisterArray(const Array &data, const Array &sample) {
+    void RegisterArray(ArrayPtr &data, ArrayPtr &sample) {
         array_desc_ = new SearchArrayDesc(data, sample);
     }
 

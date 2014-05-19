@@ -456,12 +456,12 @@ private:
     bool not_null_, null_;
 };
 
-Sampler::Sampler(const Array &array, const ArrayDesc &data_desc) :
+Sampler::Sampler(const ArrayPtr &array, const ArrayDesc &data_desc) :
         sample_array_(array),
         chunk_sizes_(data_desc.getDimensions().size()),
         sample_origin_(data_desc.getDimensions().size()),
         sample_end_(data_desc.getDimensions().size()) {
-    const ArrayDesc &sample_desc = array.getArrayDesc();
+    const ArrayDesc &sample_desc = array->getArrayDesc();
 
     // by convenience we store sizes in the comment :)
     const std::string &sample_config = sample_desc.getComment();
@@ -509,13 +509,13 @@ void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,
         AttributeID attr_search_id) {
 
     boost::shared_ptr<ConstItemIterator> min_iterator =
-            sample_array_.getItemIterator(min_id_);
+            sample_array_->getItemIterator(min_id_);
     boost::shared_ptr<ConstItemIterator> max_iterator =
-            sample_array_.getItemIterator(max_id_);
+            sample_array_->getItemIterator(max_id_);
     boost::shared_ptr<ConstItemIterator> count_iterator =
-            sample_array_.getItemIterator(count_id_);
+            sample_array_->getItemIterator(count_id_);
     boost::shared_ptr<ConstItemIterator> sum_iterator =
-            sample_array_.getItemIterator(sum_id_);
+            sample_array_->getItemIterator(sum_id_);
 
     // Sample: first dimension -- region, second -- the original attribute
     sample_chunks_.push_back(ChunkVector());
@@ -548,7 +548,7 @@ void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,
 
 void Sampler::SetChunkSizes(const std::string &size_param) {
     typedef boost::tokenizer<boost::char_separator<char> > tokenizer_t;
-    boost::char_separator<char> sep(",| ");
+    boost::char_separator<char> sep(",|;");
     tokenizer_t tokenizer(size_param, sep);
 
     int i = 0;

@@ -73,7 +73,7 @@ public:
      * @param array the sample array
      * @param data_desc the descriptor of the data array
      */
-    Sampler(const Array &array, const ArrayDesc &data_desc);
+    Sampler(const ArrayPtr &array, const ArrayDesc &data_desc);
 
     /**
      * Loads the sample for the particular attribute. It is assumed that the
@@ -337,7 +337,7 @@ private:
     Coordinate chunks_num_;
 
     // The sampple array
-    const Array &sample_array_;
+    const ArrayPtr sample_array_;
 
     // Sample chunks as a linearized array (multiple attributes)
     std::vector<ChunkVector> sample_chunks_;

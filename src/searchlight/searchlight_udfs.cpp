@@ -55,18 +55,19 @@ public:
      *
      * @param s the solver we are using
      * @param agg the type of the aggregate
-     * @param coords_lens coordinates of the leftmost corner of the window plus
-     *  lengths of the window in a single vector
+     * @param adapter the adapter for data access
+     * @param low_lens_coords an array of coordinates + lengths for the region
+     * @param params a vector of parameters; currently one -- the attribute
      */
     AggrFuncExpr(Solver *s, AggType agg, AdapterPtr adapter,
-            const std::vector<IntVar *> &low_high_coords,
+            const std::vector<IntVar *> &low_lens_coords,
             const std::vector<int64> &params) :
         BaseIntExpr(s),
         adapter_(adapter),
         attr_(AttributeID(params[0])),
         func_(agg),
-        dims_(low_high_coords.size() / 2), // assume even division (check later)
-        low_lens_(low_high_coords),
+        dims_(low_lens_coords.size() / 2), // assume even division (check later)
+        low_lens_(low_lens_coords),
         low_lens_iters_(2 * dims_),
         min_(0),
         max_(0),
@@ -76,7 +77,7 @@ public:
         max_support_lens_(dims_),
         min_max_init_(false) {
 
-        if (low_high_coords.size() != dims_ * 2 || params.size() != 1) {
+        if (low_lens_coords.size() != dims_ * 2 || params.size() != 1) {
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                     << "Aggregate UDFs coordinates/lengths are inconsistent "
                     << "or parameters are incorrect!";
@@ -332,7 +333,7 @@ void AggrFuncExpr::ComputeMinMax() const {
             for (size_t i = 0; i < dims_; i++) {
                 low[i] = low_lens_[i]->Value();
                 lens[i] = low_lens_[dims_ + i]->Value();
-                high[i] = low[i] + lens[i];
+                high[i] = low[i] + lens[i] - 1;
             }
 
             new_min_max = ComputeFunc(low, high);
@@ -357,7 +358,7 @@ void AggrFuncExpr::ComputeMinMax() const {
                     low_lens_iters_[dims_ + i]->Init();
                     low[i] = low_lens_iters_[i]->Value();
                     lens[i] = low_lens_iters_[dims_ + i]->Value();
-                    high[i] = low[i] + lens[i];
+                    high[i] = low[i] + lens[i] - 1;
                 }
 
                 while (true) {
@@ -400,10 +401,11 @@ void AggrFuncExpr::ComputeMinMax() const {
 
                         if (k < dims_) {
                             low[k] = it->Value();
-                            high[k] = low[k] + lens[k];
+                            high[k] = low[k] + lens[k] - 1;
                         } else {
                             lens[k - dims_] = it->Value();
-                            high[k - dims_] = lens[k - dims_] + low[k - dims_];
+                            high[k - dims_] = lens[k - dims_] +
+                                    low[k - dims_] - 1;
                         }
 
                         if (k == i) {
@@ -423,7 +425,7 @@ void AggrFuncExpr::ComputeMinMax() const {
                 for (size_t i = 0; i < dims_; i++) {
                     low[i] = low_lens_[i]->Min();
                     lens[i] = low_lens_[dims_ + i]->Max();
-                    high[i] = low[i] + lens[i];
+                    high[i] = low[i] + lens[i] - 1;
                     min_size *= low_lens_[dims_ + i]->Min();
                     max_size *= low_lens_[dims_ + i]->Max();
                 }
@@ -463,6 +465,22 @@ void AggrFuncExpr::ComputeMinMax() const {
             s->SaveAndSetValue(&max_support_low_[i], new_max_support_lens[i]);
         }
     }
+}
+
+extern "C"
+IntExpr *CreateUDF_avg(Solver *solver, AdapterPtr adapter,
+        const std::vector<IntVar *> &coord_lens,
+        const std::vector<int64> &params) {
+    return new AggrFuncExpr(solver, AggrFuncExpr::AVG, adapter, coord_lens,
+            params);
+}
+
+extern "C"
+IntExpr *CreateUDF_sum(Solver *solver, AdapterPtr adapter,
+        const std::vector<IntVar *> &coord_lens,
+        const std::vector<int64> &params) {
+    return new AggrFuncExpr(solver, AggrFuncExpr::SUM, adapter, coord_lens,
+            params);
 }
 
 } /* namespace searchlight */
