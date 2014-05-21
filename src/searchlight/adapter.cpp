@@ -29,6 +29,7 @@
  */
 
 #include "adapter.h"
+#include "array_desc.h"
 
 namespace searchlight {
 IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,

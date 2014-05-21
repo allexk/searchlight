@@ -34,6 +34,14 @@
 
 namespace searchlight {
 
+TaskSolutionCollector::TaskSolutionCollector(SearchlightTask &task, Solver *s) :
+    SolutionCollector(s),
+    task_(task) {}
+
+void TaskSolutionCollector::ExitSearch() {
+    task_.OnFinishSearch();
+}
+
 bool TaskSolutionCollector::AtSolution() {
     // we can reuse the same prototype and do not have to store the values
     const Assignment::IntContainer &vars = prototype_.get()->IntVarContainer();
@@ -57,7 +65,7 @@ void SearchlightTask::ResolveTask(const std::string &lib_name,
     // loading the task library
     const std::string &plugins_dir = scidb::Config::getInstance()->
             getOption<std::string>(scidb::CONFIG_PLUGINS);
-    std::string lib_path = plugins_dir + "/" + lib_name + ".so";
+    std::string lib_path = plugins_dir + "/lib" + lib_name + ".so";
     dl_lib_handle_= dlopen(lib_path.c_str(), RTLD_LAZY | RTLD_LOCAL);
     if (!dl_lib_handle_) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)

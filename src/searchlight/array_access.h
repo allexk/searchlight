@@ -31,6 +31,7 @@
 #define SEARCHLIGHT_ARRAY_ACCESS_H_
 
 #include "scidb_inc.h"
+#include "base.h"
 
 namespace searchlight {
 
@@ -94,7 +95,7 @@ public:
      */
     bool GetElement(const Coordinates &point, AttributeID attr,
             TypedValue &res) const {
-        const ConstItemIteratorPtr &array_iter = last_iter_;
+        ConstItemIteratorPtr &array_iter = last_iter_;
         if (attr != last_attr_) {
             ItemIteratorsMap::const_iterator it = item_iters_.find(attr);
             if (it != item_iters_.end()) {
@@ -138,14 +139,14 @@ private:
 
     // Aggregate computation for tile-based inputs.
     static void ComputeGeneralAggregateTile(const Array &array,
-            AttributeID attr, const SmallAggrVector &aggrs, bool need_nulls);
+            AttributeID attr, SmallAggrVector &aggrs, bool need_nulls);
 
     // General aggregate for non-tile computations
     static void ComputeGeneralAggregate(const Array &array, AttributeID attr,
-            const SmallAggrVector &aggrs, bool need_nulls);
+            SmallAggrVector &aggrs, bool need_nulls);
 
     // The data array
-    ArrayPtr data_array_;
+    const ArrayPtr data_array_;
 
     // The array's descriptor
     const ArrayDesc &array_desc_;
@@ -158,11 +159,11 @@ private:
 
     // Iterators for point access
     typedef std::map<AttributeID, ConstItemIteratorPtr> ItemIteratorsMap;
-    ItemIteratorsMap item_iters_;
+    mutable ItemIteratorsMap item_iters_;
 
-    // Lats used iterator for faster access
-    ConstItemIteratorPtr last_iter_;
-    AttributeID last_attr_;
+    // Last used iterator for faster access
+    mutable ConstItemIteratorPtr last_iter_;
+    mutable AttributeID last_attr_;
 };
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_ARRAY_ACCESS_H_ */

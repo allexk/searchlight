@@ -39,7 +39,7 @@ AttributeID SearchArrayDesc::RegisterAttribute(const std::string &attr_name) {
         return map_it->second;
     }
 
-    const ArrayDesc &desc = array_.getArrayDesc();
+    const ArrayDesc &desc = array_->getArrayDesc();
     const Attributes &attrs = desc.getAttributes(true);
 
     AttributeID orig_id;

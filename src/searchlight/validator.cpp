@@ -28,15 +28,18 @@
  * @author Alexander Kalinin
  */
 
+#include "searchlight.h"
 #include "validator.h"
 #include "base/callback.h"
+
+#include <constraint_solver/model.pb.h>
 
 namespace searchlight {
 
 /**
  * A decision that just restores the given assignment causing the corresponding
  * variables to take the values from the assignment. In its right branch it
- * soes nothing, thus creating a right-deep tree.
+ * does nothing, thus creating a right-deep tree.
  */
 class RestoreAssignment : public Decision {
 public:
@@ -87,7 +90,7 @@ private:
     // The assignment to restore
     AssignmentPtr asgn_;
 
-    // The flag to set when the Apply is calles
+    // The flag to set when the Apply is called
     bool *callback_flag_ref_;
 };
 
@@ -104,6 +107,14 @@ private:
  * db produces alternate decisions: after a successful restore a NULL is
  * generated that cuts the left branch. This is mostly taken care of by
  * the solver itself.
+ *
+ * The flag we give the RestoreAssignment allows us to distinguish between
+ * two different situations: successful restoration and failure. During the
+ * latter the flag is unchanged and we just generate the next check
+ * (after an empty Refute, of course). But if we are successful, the flag
+ * is true and we are at a leaf, which we signal to the solver by
+ * returning NULL. Then, after an empty Refute, we continue. The flag is
+ * restored automatically to false every time via the backtracking.
  *
  */
 class RestoreAssignmentBuilder : public DecisionBuilder {
@@ -158,9 +169,10 @@ public:
             delete new_asgns;
         }
 
-        AssignmentPtr *next_asgn = asgns_.back();
+        AssignmentPtr next_asgn = asgns_.back();
         asgns_.pop_back();
-        return solver->RevAlloc(new RestoreAssignment(next_asgn));
+        return solver->RevAlloc(new RestoreAssignment(next_asgn,
+                &just_restored_));
     }
 
     /**
@@ -173,7 +185,7 @@ public:
 
  private:
     // The validator producing the assignments
-    Validator validator_;
+    Validator &validator_;
 
     // Assignments to validate
     AssignmentPtrVector asgns_;
@@ -317,9 +329,9 @@ AssignmentPtrVector *Validator::GetNextAssignments() {
         return NULL;
     }
 
-    AssignmentPtrVector res = new AssignmentPtrVector;
-    res.reserve(to_validate_.size());
-    res.insert(res.end(), to_validate_.begin(), to_validate_.end());
+    AssignmentPtrVector *res = new AssignmentPtrVector;
+    res->reserve(to_validate_.size());
+    res->insert(res->end(), to_validate_.begin(), to_validate_.end());
     to_validate_.clear();
 
     return res;

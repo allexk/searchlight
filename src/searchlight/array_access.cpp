@@ -54,8 +54,15 @@ TypedValueVector ArrayAccess::ComputeAggreagate(const Coordinates &low,
         }
     }
 
-    // then, we use the SciDb's between array for the low-high region
-    BetweenArray region(addEmptyTagAttribute(array_desc_), low, high,
+    /*
+     * Then, we use the SciDb's between array for the low-high region.
+     *
+     * We need to ensure an empty attribute since BetweenArray will be
+     * expecting it by design. Since the function is const, we make a local
+     * copy (cheap).
+     */
+    ArrayDesc array_desc_empty_attr = addEmptyTagAttribute(array_desc_);
+    BetweenArray region(array_desc_empty_attr, low, high,
             data_array_, tile_mode_ /* tile mode */);
 
     if (tile_mode_) {
@@ -75,7 +82,7 @@ TypedValueVector ArrayAccess::ComputeAggreagate(const Coordinates &low,
 }
 
 void ArrayAccess::ComputeGeneralAggregateTile(const Array &array,
-        AttributeID attr, const SmallAggrVector &aggrs, bool need_nulls) {
+        AttributeID attr, SmallAggrVector &aggrs, bool need_nulls) {
     boost::shared_ptr<ConstArrayIterator> array_iter =
             array.getConstIterator(attr);
 
@@ -109,7 +116,7 @@ void ArrayAccess::ComputeGeneralAggregateTile(const Array &array,
 }
 
 void ArrayAccess::ComputeGeneralAggregate(const Array &array,
-        AttributeID attr, const SmallAggrVector &aggrs, bool need_nulls) {
+        AttributeID attr, SmallAggrVector &aggrs, bool need_nulls) {
     boost::shared_ptr<ConstArrayIterator> array_iter =
             array.getConstIterator(attr);
 

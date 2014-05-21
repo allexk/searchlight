@@ -35,6 +35,7 @@
 #include "base.h"
 #include "scidb_inc.h"
 #include "array_access.h"
+#include "sampler.h"
 
 namespace searchlight {
 
@@ -85,7 +86,7 @@ public:
      */
     static bool FindAttributeId(const Attributes &attrs,
             const std::string &name, AttributeID &res) {
-        for (size_t i = 0; i < attrs.size; i++) {
+        for (size_t i = 0; i < attrs.size(); i++) {
             if (attrs[i].getName() == name) {
                 res = attrs[i].getId();
                 return true;
@@ -139,7 +140,7 @@ private:
     Sampler sampler_;
 
     // The data accessor
-    ArrayAccess &data_accessor_;
+    ArrayAccess data_accessor_;
 };
 
 } /* namespace searchlight */

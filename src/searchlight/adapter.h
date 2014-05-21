@@ -34,9 +34,52 @@
 #define SEARCHLIGHT_ADAPTER_H_
 
 #include "scidb_inc.h"
-#include "array_desc.h"
+#include "base.h"
 
 namespace searchlight {
+
+class SearchArrayDesc;
+
+/**
+ * Approximate value, returned by an estimator.
+ */
+struct IntervalValue {
+    /**
+     * Describes the state of the value
+     */
+    enum State {
+        NON_NULL,//!< NON_NULL definitely not NULL
+        MAY_NULL,//!< MIN_NULL might be NULL (thus, min is invalid)
+        NUL      //!< NUL definitely NULL
+    };
+
+    /**
+     * Minimum possible
+     */
+    double min_;
+
+    /**
+     * Maximum possible
+     */
+    double max_;
+
+    /**
+     * An approximate value.
+     */
+    double val_;
+
+    /**
+     * Value state
+     */
+    State state_;
+
+    IntervalValue() : min_(0), max_(0), val_(0), state_(NUL) {}
+};
+
+/**
+ * A vector of interval values.
+ */
+typedef std::vector<IntervalValue> IntervalValueVector;
 
 /**
  * This class allows users to access search data. For example, fetching
@@ -129,47 +172,6 @@ private:
  * Adapter shared pointer.
  */
 typedef boost::shared_ptr<Adapter> AdapterPtr;
-
-/**
- * Approximate value, returned by an estimator.
- */
-struct IntervalValue {
-    /**
-     * Describes the state of the value
-     */
-    enum State {
-        NON_NULL,//!< NON_NULL definitely not NULL
-        MAY_NULL,//!< MIN_NULL might be NULL (thus, min is invalid)
-        NUL      //!< NUL definitely NULL
-    };
-
-    /**
-     * Minimum possible
-     */
-    double min_;
-
-    /**
-     * Maximum possible
-     */
-    double max_;
-
-    /**
-     * An approximate value.
-     */
-    double val_;
-
-    /**
-     * Value state
-     */
-    State state_;
-
-    IntervalValue() : min_(0), max_(0), val_(0), state_(NUL) {}
-};
-
-/**
- * A vector of interval values.
- */
-typedef std::vector<IntervalValue> IntervalValueVector;
 
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_ADAPTER_H_ */

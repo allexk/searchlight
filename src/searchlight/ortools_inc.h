@@ -33,6 +33,9 @@
 #define SEARCHLIGHT_ORTOOLS_INC_H_
 
 #include <constraint_solver/constraint_solver.h>
+#include <constraint_solver/constraint_solveri.h>
+
+#include <boost/shared_ptr.hpp>
 
 using operations_research::Solver;
 using operations_research::DecisionBuilder;

@@ -33,6 +33,7 @@
 
 #include <boost/lexical_cast.hpp>
 #include <boost/make_shared.hpp>
+#include <boost/tokenizer.hpp>
 
 namespace searchlight {
 
@@ -213,7 +214,7 @@ public:
     }
 
 private:
-    AverageSampleAggregate(bool approx) :
+    AverageSampleAggregate() :
         not_null_(false), sum_(0), count_(0),
         approx_sum_(0), approx_count_(0) {}
 
@@ -529,7 +530,6 @@ void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,
     Coordinates pos(2);
     pos[1] = attr_orig_id;
     for (pos[0] = 0; pos[0] < chunks_num_; pos[0]++) {
-        const double minv, maxv, density;
         if (!min_iterator->setPosition(pos) ||
                 !max_iterator->setPosition(pos) ||
                 !count_iterator->setPosition(pos) ||

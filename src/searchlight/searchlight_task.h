@@ -40,6 +40,8 @@
 
 namespace searchlight {
 
+class SearchlightTask;
+
 /**
  * This class collects tracks exacts solutions, stringifies them and them
  * to the searchlight task. It also signals to the task when the search ends.
@@ -50,10 +52,9 @@ public:
      * Creates a new task collector.
      *
      * @param task the task to collect for
+     * @param s the solver from searchlight
      */
-    TaskSolutionCollector(SearchlightTask &task) :
-        SolutionCollector(&(task.GetSearchlight().GetSolver())),
-        task_(task) {}
+    TaskSolutionCollector(SearchlightTask &task, Solver *s);
 
     /**
      * A callback called at a solution.
@@ -65,9 +66,7 @@ public:
     /**
      * A callback that is called when the search is finished.
      */
-    virtual void ExitSearch() {
-        task_.OnFinishSearch();
-    }
+    virtual void ExitSearch();
 
     /**
      * Returns a string representation for debugging.
@@ -108,7 +107,7 @@ public:
     SearchlightTask(const std::string &library_name,
             const std::string &task_name, const std::string &task_params) :
                 searchlight_(task_name),
-                collector_(searchlight_),
+                collector_(*this, &searchlight_.GetSolver()),
                 task_params_(task_params),
                 search_ended_(false) {
 
@@ -239,6 +238,7 @@ public:
      * @param desc the descriptor of the array
      */
     SearchlightResultsArray(SearchlightTaskPtr sl_task, ArrayDesc &desc) :
+        StreamArray(desc, false),
         sl_task_(sl_task),
         desc_(desc),
         res_count_(0),

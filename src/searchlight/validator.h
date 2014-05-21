@@ -33,10 +33,13 @@
 #define SEARCHLIGHT_VALIDATOR_H_
 
 #include "scidb_inc.h"
-#include "array_desc.h"
 #include "ortools_inc.h"
 
+#include <boost/thread.hpp>
+
 namespace searchlight {
+
+class Searchlight;
 
 /**
  * This class allows users to collect solutions (assignments) and check them
@@ -148,7 +151,7 @@ private:
     boost::condition_variable validate_cond_;
 
     // Mutex to guard the validation array
-    boost::mutex to_validate_mtx_;
+    mutable boost::mutex to_validate_mtx_;
 
     // Should we terminate?
     bool terminate_;

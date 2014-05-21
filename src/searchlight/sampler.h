@@ -31,14 +31,18 @@
 #ifndef SEARCHLIGHT_SAMPLER_H_
 #define SEARCHLIGHT_SAMPLER_H_
 
-#include "searchlight/base.h"
-#include "searchlight/array_desc.h"
-
-#include "searchlight/scidb_inc.h"
-
-#include <vector>
+#include "base.h"
+#include "adapter.h"
+#include "scidb_inc.h"
 
 namespace searchlight {
+
+class SampleAggregate;
+
+/**
+ * Sample Aggregate Factory.
+ */
+typedef SampleAggregate *(*SampleAggregateFactory)();
 
 /**
  * Sampler allows access to an array sample stored in memory. A sample is
@@ -93,7 +97,7 @@ public:
      * @param aggr aggregate's factory
      */
     void RegisterAggregate(const std::string &name,
-            SampleAggregateFactory *aggr) {
+            SampleAggregateFactory aggr) {
         aggrs_[name] = aggr;
     }
 
@@ -389,17 +393,11 @@ public:
      */
     virtual void Finalize(IntervalValue &res) = 0;
 
-private:
     /**
      * Destructor.
      */
     virtual ~SampleAggregate() {}
 };
-
-/**
- * Sample Aggregate Factory.
- */
-typedef SampleAggregate *(*SampleAggregateFactory)();
 
 /**
  * A vectort of shared pointers to sample aggregates.

@@ -29,6 +29,7 @@
  */
 
 #include "searchlight.h"
+#include "validator.h"
 
 namespace searchlight {
 
@@ -60,7 +61,7 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
 
     // Establish monitors: validator (to transfer leaves) and terminator
     std::vector<SearchMonitor *> solver_monitors(monitors);
-    ValidatorMonitor val_monitor(validator, vars, solver_);
+    ValidatorMonitor val_monitor(validator, vars, &solver_);
     SearchLimit *terminator = solver_.MakeCustomLimit(
             NewPermanentCallback(this, &Searchlight::CheckTerminate));
     solver_monitors.push_back(&val_monitor);
@@ -76,7 +77,7 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
     return validator.GetValidatorSolverResult();
 }
 
-virtual bool ValidatorMonitor::AtSolution() {
+bool ValidatorMonitor::AtSolution() {
     Assignment * const asgn = prototype_.get();
 
     // Store the solution (assuming complete assignment)

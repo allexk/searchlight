@@ -32,6 +32,8 @@
 #ifndef SEARCHLIGHT_TASKS_COMMON_H_
 #define SEARCHLIGHT_TASKS_COMMON_H_
 
+#include "searchlight/base.h"
+
 namespace searchlight {
 
 /**

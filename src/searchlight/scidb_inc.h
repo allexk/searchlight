@@ -32,9 +32,19 @@
 #ifndef SEARCHLIGHT_SCIDB_INC_H_
 #define SEARCHLIGHT_SCIDB_INC_H_
 
+/*
+ * A workaround to avoid std/boost::shared_ptr in SciDb, since we are
+ * working with -std=c++0x
+ */
+#include <boost/shared_array.hpp>
+namespace scidb {
+    using boost::shared_ptr;
+}
+
 #include <array/Metadata.h>
 #include <array/Array.h>
 #include <array/StreamArray.h>
+#include <system/Config.h>
 
 using scidb::SystemCatalog;
 using scidb::Query;

@@ -244,6 +244,21 @@ private:
         return name;
     }
 
+    /*
+     * Saves the old value at addr and assigns the new value
+     * at the same place. Introduced to fix a small incompatibility
+     * between int64 types in or-tools and scidb, which results in
+     * ambiguity in SaveAndSetValue function.
+     *
+     * Strictly speaking, converting the pointer to (int64 *) is not
+     * cool, but since they are both 8 bytes (guaranteed), it should be
+     * fine.
+     */
+    void SaveCoordinate(Coordinate *addr, Coordinate new_val) const {
+        solver()->SaveAndSetValue(reinterpret_cast<int64 *>(addr),
+                int64(new_val));
+    }
+
     const AdapterPtr adapter_; // the adapter for data access
     const AttributeID attr_; // attribute we are computing
     const AggType func_; // type of the aggregate
@@ -459,10 +474,10 @@ void AggrFuncExpr::ComputeMinMax() const {
         s->SaveAndSetValue(&max_, new_max);
         s->SaveAndSetValue(&min_max_init_, true);
         for (size_t i = 0; i < dims_; i++) {
-            s->SaveAndSetValue(&min_support_low_[i], new_min_support_low[i]);
-            s->SaveAndSetValue(&min_support_low_[i], new_min_support_lens[i]);
-            s->SaveAndSetValue(&max_support_low_[i], new_max_support_low[i]);
-            s->SaveAndSetValue(&max_support_low_[i], new_max_support_lens[i]);
+            SaveCoordinate(&min_support_low_[i], new_min_support_low[i]);
+            SaveCoordinate(&min_support_low_[i], new_min_support_lens[i]);
+            SaveCoordinate(&max_support_low_[i], new_max_support_low[i]);
+            SaveCoordinate(&max_support_low_[i], new_max_support_lens[i]);
         }
     }
 }

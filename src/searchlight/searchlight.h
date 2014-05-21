@@ -35,6 +35,7 @@
 
 #include "ortools_inc.h"
 #include "array_desc.h"
+
 #include <system/Config.h>
 
 #include <dlfcn.h>
@@ -42,6 +43,8 @@
 #include <boost/make_shared.hpp>
 
 namespace searchlight {
+
+class Validator;
 
 /**
  * The type for a UDF function creator. It produces an or-tools IntExpr
@@ -72,7 +75,7 @@ public:
      *
      * @param name the name of the search
      */
-    Searchlight(const std::string &name) :
+    explicit Searchlight(const std::string &name) :
         solver_(name),
         collector_(NULL),
         array_desc_(NULL),
@@ -81,7 +84,7 @@ public:
         // loading the udf library
         const std::string &plugins_dir = scidb::Config::getInstance()->
                 getOption<std::string>(scidb::CONFIG_PLUGINS);
-        std::string lib_name = plugins_dir + "/searchlight_udfs.so";
+        std::string lib_name = plugins_dir + "/libsearchlight_udfs.so";
         dl_udf_handle_ = dlopen(lib_name.c_str(), RTLD_LAZY | RTLD_LOCAL);
         if (!dl_udf_handle_) {
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)

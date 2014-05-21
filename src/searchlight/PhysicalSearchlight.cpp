@@ -29,9 +29,10 @@
  * @author Alexander Kalinin
  */
 
-#include <query/Operator.h>
-
 #include "searchlight_task.h"
+
+#include <query/Operator.h>
+#include <boost/tokenizer.hpp>
 
 namespace scidb
 {
