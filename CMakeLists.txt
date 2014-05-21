@@ -12,12 +12,14 @@ message(STATUS "The type of build is: ${CMAKE_BUILD_TYPE}")
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
 
 # finding libraries
+find_package(SciDB REQUIRED)
 find_package(OrTools REQUIRED)
-find_package(GFlags REQUIRED)
+find_package(GFlags REQUIRED)   # needed by or-tools
 find_package(Protobuf REQUIRED) # needed by or-tools
-find_package(Coin REQUIRED)  # needed by or-tools
+find_package(Coin REQUIRED)     # needed by or-tools
 
 # includes and libraries
+include_directories(${SCIDB_INCLUDE_DIRS})
 include_directories(${ORTOOLS_INCLUDE_DIRS})
 include_directories(${GFLAGS_INCLUDE_DIRS})
 
@@ -30,6 +32,16 @@ if (CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(STATUS "Setting ARCH_K8 CXX definition for or-tools...")
     add_definitions(-DARCH_K8)
 endif()
+
+# PROJECT_ROOT should be defined for SciDb error reporting.
+# We will use the parent directory of this project. Assuming
+# SciDb sits in the same parent directory, error reporting will
+# be fine. Otherwise, there might be problems with error messages
+# initiated from SciDb header files. Of course, if we include header
+# files from something like /usr/include, we will have problems anyway.
+get_filename_component(PROJECT_PARENT_DIR ${CMAKE_SOURCE_DIR} PATH)
+message(STATUS "Setting PROJECT_ROOT for SciDb: ${PROJECT_PARENT_DIR}")
+add_definitions("-DPROJECT_ROOT=\"\\\"${PROJECT_PARENT_DIR}\\\"\"")
 
 # system library
 if (UNIX AND NOT APPLE)
