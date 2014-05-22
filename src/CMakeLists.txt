@@ -5,7 +5,8 @@ add_library(searchlight_udo SHARED searchlight/adapter.cpp
     searchlight/array_access.cpp searchlight/array_desc.cpp
     searchlight/LogicalSearchlight.cpp searchlight/PhysicalSearchlight.cpp
     searchlight/sampler.cpp searchlight/searchlight_task.cpp
-    searchlight/searchlight.cpp searchlight/validator.cpp)
+    searchlight/searchlight.cpp searchlight/validator.cpp
+    searchlight/plugin.cpp)
 
 # We have to link the libraries since SciDb will not load them during the
 # dynamic operator loading. We don't need to do anything special for SciDb
@@ -24,3 +25,7 @@ set_target_properties(searchlight_udfs PROPERTIES OUTPUT_NAME searchlight_udfs)
 # example tasks
 add_library(searchlight_sw SHARED tasks/common.cpp tasks/sw.cpp)
 set_target_properties(searchlight_sw PROPERTIES OUTPUT_NAME searchlight_sw)
+
+#install rules
+install(TARGETS searchlight_udo searchlight_udfs searchlight_sw
+    DESTINATION lib/scidb/plugins)
