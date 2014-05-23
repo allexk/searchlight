@@ -461,7 +461,8 @@ Sampler::Sampler(const ArrayPtr &array, const ArrayDesc &data_desc) :
         sample_array_(array),
         chunk_sizes_(data_desc.getDimensions().size()),
         sample_origin_(data_desc.getDimensions().size()),
-        sample_end_(data_desc.getDimensions().size()) {
+        sample_end_(data_desc.getDimensions().size()),
+        chunk_nums_(data_desc.getDimensions().size()) {
     const ArrayDesc &sample_desc = array->getArrayDesc();
 
     // by convenience we store sizes in the comment :)

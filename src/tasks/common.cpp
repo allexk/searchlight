@@ -36,7 +36,7 @@ namespace searchlight {
 
 void ParseParameters(const std::string &params, ParamsMap &pmap) {
     typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
-    tokenizer tokens(params, boost::char_separator<char>(";|,"));
+    tokenizer tokens(params, boost::char_separator<char>(","));
     searchlight::StringVector str_tokens;
     for (tokenizer::iterator it = tokens.begin(); it != tokens.end();
             ++it) {

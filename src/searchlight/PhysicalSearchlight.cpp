@@ -77,7 +77,7 @@ public:
                         _parameters[0])->getExpression()->
                         evaluate().getString();
         typedef boost::tokenizer<boost::char_separator<char>> tokenizer;
-        tokenizer tokens(lib_func_param, boost::char_separator<char>(":|,", 0,
+        tokenizer tokens(lib_func_param, boost::char_separator<char>(":", 0,
                 boost::keep_empty_tokens));
         searchlight::StringVector str_tokens;
         for (tokenizer::iterator it = tokens.begin(); it != tokens.end();

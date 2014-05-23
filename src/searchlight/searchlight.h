@@ -88,7 +88,7 @@ public:
         dl_udf_handle_ = dlopen(lib_name.c_str(), RTLD_LAZY | RTLD_LOCAL);
         if (!dl_udf_handle_) {
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << "Cannot load the UDF Searchlight library!";
+                    << "Cannot load the UDF Searchlight library: " << dlerror();
         }
     }
 
