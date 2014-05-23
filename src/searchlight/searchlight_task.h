@@ -34,8 +34,8 @@
 #ifndef SEARCHLIGHT_TASK_H_
 #define SEARCHLIGHT_TASK_H_
 
-#include "scidb_inc.h"
 #include "ortools_inc.h"
+#include "scidb_inc.h"
 #include "searchlight.h"
 
 namespace searchlight {

@@ -256,13 +256,13 @@ void Validator::AddSolution(const Assignment &sol) {
     // All assignments have the same structure
     Assignment *asgn = new Assignment(&search_vars_prototype_);
 
-    Assignment::IntContainer &to_vars = asgn->MutableIntVarContainer();
+    Assignment::IntContainer *to_vars = asgn->MutableIntVarContainer();
     const Assignment::IntContainer &from_vars = sol.IntVarContainer();
 
-    for (size_t i = 0; i < to_vars.Size(); i++) {
+    for (size_t i = 0; i < to_vars->Size(); i++) {
         const IntVarElement &from_elem = from_vars.Element(i);
-        IntVarElement &to_elem = to_vars.MutableElement(i);
-        to_elem.SetRange(from_elem.Min(), from_elem.Max());
+        IntVarElement *to_elem = to_vars->MutableElement(i);
+        to_elem->SetRange(from_elem.Min(), from_elem.Max());
         // The only thing we ignore here is "Activated", which is not needed
     }
 

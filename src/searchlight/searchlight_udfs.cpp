@@ -192,11 +192,11 @@ public:
         visitor->BeginVisitIntegerExpression(tag, this);
 
         visitor->VisitIntegerVariableArrayArgument(ModelVisitor::kVarsArgument,
-                low_lens_.data(), low_lens_.size());
+                low_lens_);
 
-        int64 params[1] = {int64(attr_)};
+        std::vector<int64> params(1, int64(attr_));
         visitor->VisitIntegerArrayArgument(ModelVisitor::kValuesArgument,
-                params, 1);
+                params);
 
         visitor->EndVisitIntegerExpression(tag, this);
     }
