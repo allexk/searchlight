@@ -465,8 +465,17 @@ Sampler::Sampler(const ArrayPtr &array, const ArrayDesc &data_desc) :
     const ArrayDesc &sample_desc = array->getArrayDesc();
 
     // by convenience we store sizes in the comment :)
-    const std::string &sample_config = sample_desc.getComment();
-    SetChunkSizes(sample_config);
+    const std::string &sample_config =
+            ArrayDesc::makeUnversionedName(sample_desc.getName());
+    const size_t undersc_pos = sample_config.find_last_of('_');
+    if (undersc_pos == std::string::npos || sample_config.size() < 3 ||
+            undersc_pos > sample_config.size() - 2) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << "Incorrect sample array name (must have an underscore "
+                        "followed by ?x? size parameters: name="
+                << sample_desc.getName();
+    }
+    SetChunkSizes(sample_config.substr(undersc_pos + 1));
 
     // The start of the sample corresponds to the start of the data array
     for (size_t i = 0; i < data_desc.getDimensions().size(); i++) {
@@ -548,13 +557,19 @@ void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,
 
 void Sampler::SetChunkSizes(const std::string &size_param) {
     typedef boost::tokenizer<boost::char_separator<char> > tokenizer_t;
-    boost::char_separator<char> sep(",|;");
+    boost::char_separator<char> sep("xX"); // size_1xsize_2x...xsize_n
     tokenizer_t tokenizer(size_param, sep);
 
     int i = 0;
     for (tokenizer_t::const_iterator cit = tokenizer.begin();
             cit != tokenizer.end(); cit++) {
         chunk_sizes_[i++] = boost::lexical_cast<Coordinate>(cit->c_str());
+    }
+
+    if (i != chunk_sizes_.size()) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << "Could not retrieve all chunk sizes: conf=" <<
+                size_param << ", needed sizes=" << chunk_sizes_.size();
     }
 }
 
