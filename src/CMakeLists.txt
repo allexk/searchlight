@@ -10,21 +10,19 @@ add_library(searchlight_udo SHARED searchlight/adapter.cpp
 
 # We have to link the libraries since SciDb will not load them during the
 # dynamic operator loading. We don't need to do anything special for SciDb
-# libs, though. Also, UDFs and tasks are run via the UDO, so we do not need
-# to link them against or-tools either.
+# libs, though. We also link UDFs and tasks with the UDO for proper
+# symbol resolution.
 target_link_libraries(searchlight_udo ${ORTOOLS_LIBRARIES})
 target_link_libraries(searchlight_udo ${GFLAGS_LIBRARIES})
 target_link_libraries(searchlight_udo ${COIN_LIBRARIES})
 
-# to find or-tools stuff after installing the library
-set_target_properties(searchlight_udo PROPERTIES
-    INSTALL_RPATH_USE_LINK_PATH TRUE)
-
 # searchlight UDFs
 add_library(searchlight_udfs SHARED searchlight/searchlight_udfs.cpp)
+target_link_libraries(searchlight_udfs searchlight_udo)
 
 # example tasks
 add_library(searchlight_sw SHARED tasks/common.cpp tasks/sw.cpp)
+target_link_libraries(searchlight_sw searchlight_udo)
 
 #install rules for the Searchlight libs
 install(TARGETS searchlight_udo searchlight_udfs searchlight_sw

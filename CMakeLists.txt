@@ -62,6 +62,12 @@ endif()
 SET(LIBRARY_OUTPUT_PATH ${CMAKE_BINARY_DIR}/lib)
 SET(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/bin)
 
+# Since we link with or-tools and we ourselves, which is not
+# in the standard path, we need to modify
+# RPATHs of the libraries.
+set(CMAKE_INSTALL_RPATH "$ORIGIN")
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+
 # the sources
 include_directories(src)
 add_subdirectory(src)
