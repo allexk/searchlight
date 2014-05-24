@@ -58,26 +58,7 @@ using operations_research::StringPrintf;
 
 using operations_research::SearchLimit;
 
-/*
- * CPModelLoader hack. We need this class, but is defined without a header,
- * to use internally. So, this is a partial declaration, which should work
- * as far as the linker is concerned.
- *
- * CAUTION: we must not use this class directly! Only pointers to it and
- * the corresponding member calls! In this way we do not mess up binary
- * compatibility with or-tools.
- */
-namespace operations_research {
-class CPModelLoader {
-public:
-    bool ScanArguments(const std::string& type,
-            const CPIntegerExpressionProto& proto,
-            std::vector<IntVar*>* to_fill);
-    bool ScanArguments(const std::string& type,
-            const CPIntegerExpressionProto& proto,
-            std::vector<int64>* to_fill);
-};
-}
+#include "ortools_loader.h"
 using operations_research::CPModelLoader;
 
 /**
