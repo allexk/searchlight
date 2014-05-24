@@ -513,7 +513,7 @@ Sampler::Sampler(const ArrayPtr &array, const ArrayDesc &data_desc) :
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << err_msg.str();
     }
-    chunks_num_ = sample_desc.getDimensions()[0].getCurrEnd();
+    chunks_num_ = sample_desc.getDimensions()[0].getCurrEnd() + 1;
 
     // Register default aggregates
     aggrs_["avg"] = AverageSampleAggregate::Create;
