@@ -535,7 +535,6 @@ void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,
             sample_array_->getItemIterator(sum_id_);
 
     // Sample: first dimension -- region, second -- the original attribute
-    sample_chunks_.push_back(ChunkVector());
     if (sample_chunks_.size() != attr_search_id) {
         std::ostringstream err_msg;
         err_msg << "Sampler and descriptor inconsistency: sample aid="
@@ -543,6 +542,7 @@ void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << err_msg.str();
     }
+    sample_chunks_.push_back(ChunkVector());
     ChunkVector &chunks = sample_chunks_.back();
     chunks.reserve(chunks_num_);
     Coordinates pos(2);
