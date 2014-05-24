@@ -235,9 +235,11 @@ Validator::Validator(const Searchlight &sl, const StringVector &var_names,
             cit != var_names.end(); cit++) {
         VariableFinder::StringVarMap::const_iterator var = var_map.find(*cit);
         if (var == var_map.end()) {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << "Cannot find a variable in the duplicate solver: name="
+            std::ostringstream err_msg;
+            err_msg << "Cannot find a variable in the duplicate solver: name="
                     << *cit;
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                    << err_msg.str();
         }
         /*
          *  const_cast is perfectly fine. Vars just come from the visitor,

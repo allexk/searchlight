@@ -80,7 +80,7 @@ public:
         if (low_lens_coords.size() != dims_ * 2 || params.size() != 1) {
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                     << "Aggregate UDFs coordinates/lengths are inconsistent "
-                    << "or parameters are incorrect!";
+                    "or parameters are incorrect!";
         }
 
         for (size_t i = 0; i < 2 * dims_; i++) {

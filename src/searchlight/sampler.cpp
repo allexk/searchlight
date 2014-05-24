@@ -471,10 +471,12 @@ Sampler::Sampler(const ArrayPtr &array, const ArrayDesc &data_desc) :
     const size_t undersc_pos = sample_config.find_last_of('_');
     if (undersc_pos == std::string::npos || sample_config.size() < 3 ||
             undersc_pos > sample_config.size() - 2) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Incorrect sample array name (must have an underscore "
-                        "followed by ?x? size parameters: name="
+        std::ostringstream err_msg;
+        err_msg << "Incorrect sample array name (must have an underscore "
+                "followed by ?x? size parameters: name="
                 << sample_desc.getName();
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << err_msg.str();
     }
     SetChunkSizes(sample_config.substr(undersc_pos + 1));
 
@@ -497,15 +499,19 @@ Sampler::Sampler(const ArrayPtr &array, const ArrayDesc &data_desc) :
         !SearchArrayDesc::FindAttributeId(attrs,
                 std::string("count"), count_id_) ||
         !SearchArrayDesc::FindAttributeId(attrs, std::string("sum"), sum_id_)) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Cannot find min/max attribute in the sample: sample="
+        std::ostringstream err_msg;
+        err_msg << "Cannot find min/max attribute in the sample: sample="
                 << sample_desc.getName();
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << err_msg.str();
     }
 
     if (sample_desc.getDimensions()[0].getCurrStart() != 0) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Chunk coordinate should start from 0: sample="
+        std::ostringstream err_msg;
+        err_msg << "Chunk coordinate should start from 0: sample="
                 << sample_desc.getName();
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << err_msg.str();
     }
     chunks_num_ = sample_desc.getDimensions()[0].getCurrEnd();
 
@@ -531,9 +537,11 @@ void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,
     // Sample: first dimension -- region, second -- the original attribute
     sample_chunks_.push_back(ChunkVector());
     if (sample_chunks_.size() != attr_search_id) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Sampler and descriptor inconsistency: sample aid="
+        std::ostringstream err_msg;
+        err_msg << "Sampler and descriptor inconsistency: sample aid="
                 << sample_chunks_.size() << ", desc id=" << attr_search_id;
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << err_msg.str();
     }
     ChunkVector &chunks = sample_chunks_.back();
     chunks.reserve(chunks_num_);
@@ -544,9 +552,11 @@ void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,
                 !max_iterator->setPosition(pos) ||
                 !count_iterator->setPosition(pos) ||
                 !sum_iterator->setPosition(pos)) {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << "Cannot get info from sample, chunk=" << pos[0] <<
+            std::ostringstream err_msg;
+            err_msg << "Cannot get info from sample, chunk=" << pos[0] <<
                     "attr=" << pos[1];
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                    << err_msg.str();
         }
         const double minv = min_iterator->getItem().getDouble();
         const double maxv = max_iterator->getItem().getDouble();
@@ -568,9 +578,11 @@ void Sampler::SetChunkSizes(const std::string &size_param) {
     }
 
     if (i != chunk_sizes_.size()) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Could not retrieve all chunk sizes: conf=" <<
+        std::ostringstream err_msg;
+        err_msg << "Could not retrieve all chunk sizes: conf=" <<
                 size_param << ", needed sizes=" << chunk_sizes_.size();
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << err_msg.str();
     }
 }
 
@@ -629,8 +641,10 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
     for (size_t i = 0; i < aggr_names.size(); i++) {
         AggrMap::const_iterator it = aggrs_.find(aggr_names[i]);
         if (it == aggrs_.end()) {
+            std::ostringstream err_msg;
+            err_msg << "Sample aggregate not found: aggr=" << aggr_names[i];
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << "Sample aggregate not found: aggr=" << aggr_names[i];
+                    << err_msg.str();
         }
         // the aggregate is created via the registered factory
         aggs[i].reset(it->second());

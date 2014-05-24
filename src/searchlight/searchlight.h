@@ -87,8 +87,10 @@ public:
         std::string lib_name = plugins_dir + "/libsearchlight_udfs.so";
         dl_udf_handle_ = dlopen(lib_name.c_str(), RTLD_LAZY | RTLD_LOCAL);
         if (!dl_udf_handle_) {
+            std::ostringstream err_msg;
+            err_msg << "Cannot load the UDF Searchlight library: " << dlerror();
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << "Cannot load the UDF Searchlight library: " << dlerror();
+                    << err_msg.str();
         }
     }
 
@@ -177,8 +179,10 @@ public:
                 func_name.c_str());
         // We should check via dlerror, but NULL checking is fine
         if (!udf) {
+            std::ostringstream err_msg;
+            err_msg << "Cannot find a SL UDF function, name=" << func_name;
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << "Cannot find a SL UDF function, name=" << func_name;
+                    << err_msg.str();
         }
         udf_map_[tag_name] = udf;
         return udf;

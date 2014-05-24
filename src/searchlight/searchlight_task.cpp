@@ -68,16 +68,21 @@ void SearchlightTask::ResolveTask(const std::string &lib_name,
     std::string lib_path = plugins_dir + "/lib" + lib_name + ".so";
     dl_lib_handle_= dlopen(lib_path.c_str(), RTLD_LAZY | RTLD_LOCAL);
     if (!dl_lib_handle_) {
+        std::ostringstream err_msg;
+        err_msg << "Cannot load the task library: name=" << lib_name <<
+                ", reason=" << dlerror();
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Cannot load the task library: " << lib_name;
+                << err_msg.str();
     }
 
     // look up the task
     task_ = (SLTaskFunc)dlsym(dl_lib_handle_, task_name.c_str());
     // We should check an error via dlerror, but NULL checking is fine
     if (!task_) {
+        std::ostringstream err_msg;
+        err_msg << "Cannot find an SL task function, name=" << task_name;
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Cannot find an SL task function, name=" << task_name;
+                << err_msg.str();
     }
 }
 

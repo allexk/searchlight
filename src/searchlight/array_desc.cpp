@@ -44,9 +44,11 @@ AttributeID SearchArrayDesc::RegisterAttribute(const std::string &attr_name) {
 
     AttributeID orig_id;
     if (!SearchArrayDesc::FindAttributeId(attrs, attr_name, orig_id)) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Cannot find the attribute in the array: array="
+        std::ostringstream err_msg;
+        err_msg << "Cannot find the attribute in the array: array="
                 << desc.getName() << ", attr=" << attr_name;
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << err_msg.str();
     }
 
     AttributeID search_id = search_orig_ids_.size();
