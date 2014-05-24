@@ -128,7 +128,16 @@ public:
      * the DLL.
      */
     void operator()() {
-        task_(&searchlight_, task_params_);
+        try {
+            task_(&searchlight_, task_params_);
+        } catch (const scidb::Exception &ex) {
+            /*
+             *  boost::thread would call std::terminate(), so
+             *  we have to take care of proper error reporting
+             */
+            sl_error_ = ex.copy();
+            OnFinishSearch();
+        }
     }
 
     /**
@@ -156,6 +165,14 @@ public:
      */
     void Terminate() {
         searchlight_.Terminate();
+    }
+
+    /**
+     * Determines if the task terminated erroneously.
+     * @return true, if terminated on error; false, otherwise
+     */
+    bool ErrorTerminate() const {
+        return sl_error_;
     }
 
 private:
@@ -208,6 +225,9 @@ private:
 
     // Condition to facilitate waiting for solutions
     boost::condition_variable queue_cond_;
+
+    // Error in the searchlight thread, if any
+    scidb::Exception::Pointer sl_error_;
 };
 
 /**

@@ -87,6 +87,11 @@ std::string SearchlightTask::GetNextSolution() {
         queue_cond_.wait(lock);
     }
 
+    // Terminated on error? Throw it in the main thread.
+    if (sl_error_) {
+        sl_error_->raise();
+    }
+
     if (solutions_queue_.empty() && search_ended_) {
         return "";
     }
