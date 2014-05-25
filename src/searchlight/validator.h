@@ -180,7 +180,7 @@ public:
      * @param delegate the expression this variable is casted for
      */
     virtual void VisitIntegerVariable(const IntVar* const variable,
-                                      const IntExpr* const delegate) {
+                                      IntExpr* const delegate) {
         if (!delegate && variable->HasName()) { // Ignore cast vars
             var_map_[variable->name()] = variable;
         }
