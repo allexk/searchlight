@@ -34,32 +34,6 @@
 
 namespace searchlight {
 
-TaskSolutionCollector::TaskSolutionCollector(SearchlightTask &task, Solver *s) :
-    SolutionCollector(s),
-    task_(task) {}
-
-void TaskSolutionCollector::ExitSearch() {
-    task_.OnFinishSearch();
-}
-
-bool TaskSolutionCollector::AtSolution() {
-    // we can reuse the same prototype and do not have to store the values
-    const Assignment::IntContainer &vars = prototype_.get()->IntVarContainer();
-
-    // stringify the solution
-    std::ostringstream sol_string;
-    for (size_t i = 0; i < vars.Size(); i++) {
-        const IntVar *v = vars.Element(i).Var();
-        sol_string << v->name() << "=" << v->Value();
-        if (i != vars.Size() - 1) {
-            sol_string << ", ";
-        }
-    }
-
-    task_.AddSolution(sol_string.str());
-    return true;
-}
-
 void SearchlightTask::ResolveTask(const std::string &lib_name,
         const std::string &task_name) {
     // loading the task library

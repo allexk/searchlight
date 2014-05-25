@@ -31,6 +31,7 @@
 #include "searchlight.h"
 #include "validator.h"
 #include "base/callback.h"
+#include "searchlight_collector.h"
 
 #include <constraint_solver/model.pb.h>
 
@@ -199,12 +200,11 @@ public:
 };
 
 Validator::Validator(const Searchlight &sl, const StringVector &var_names,
-        SolutionCollector &collector) :
+        SearchlightCollector &sl_collector) :
         sl_(sl),
         solver_("validator solver"),
         adapter_(sl.CreateAdapter()),
         search_vars_prototype_(&solver_),
-        collector_(collector),
         terminate_(false),
         solver_status_(false) {
     /*
@@ -223,6 +223,10 @@ Validator::Validator(const Searchlight &sl, const StringVector &var_names,
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << "Cannot create the validator solver!";
     }
+
+    // Craete collector
+    sl_collector.InitCollector(&solver_);
+    collector_ = sl_collector.GetCollector();
 
     /*
      * Now, we want to find all decision variables. We do this via a
@@ -247,7 +251,7 @@ Validator::Validator(const Searchlight &sl, const StringVector &var_names,
          *  changed during the search anyway, albeit later.
          */
         search_vars_prototype_.Add(const_cast<IntVar *>(var->second));
-        collector_.Add(const_cast<IntVar *>(var->second));
+        collector_->Add(const_cast<IntVar *>(var->second));
     }
 
     // validator works with real data
@@ -276,7 +280,7 @@ void Validator::AddSolution(const Assignment &sol) {
 
 void Validator::operator()() {
     DecisionBuilder *db = solver_.RevAlloc(new RestoreAssignmentBuilder(*this));
-    solver_status_ = solver_.Solve(db, &collector_);
+    solver_status_ = solver_.Solve(db, collector_);
 }
 
 IntExpr* Validator::UDFBuilder(std::string name, CPModelLoader* const builder,

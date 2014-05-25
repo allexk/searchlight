@@ -37,55 +37,11 @@
 #include "ortools_inc.h"
 #include "scidb_inc.h"
 #include "searchlight.h"
+#include "searchlight_collector.h"
 
 namespace searchlight {
 
 class SearchlightTask;
-
-/**
- * This class collects tracks exacts solutions, stringifies them and them
- * to the searchlight task. It also signals to the task when the search ends.
- */
-class TaskSolutionCollector : public SolutionCollector {
-public:
-    /**
-     * Creates a new task collector.
-     *
-     * @param task the task to collect for
-     * @param s the solver from searchlight
-     */
-    TaskSolutionCollector(SearchlightTask &task, Solver *s);
-
-    /**
-     * A callback called at a solution.
-     *
-     * @return true, if we want to continue; false otherwise
-     */
-    virtual bool AtSolution();
-
-    /**
-     * A callback that is called when the search is finished.
-     */
-    virtual void ExitSearch();
-
-    /**
-     * Returns a string representation for debugging.
-     *
-     * @return a string representation
-     */
-    virtual std::string DebugString() const {
-        if (prototype_.get() == NULL) {
-            return "TaskSolutionCollector()";
-        } else {
-            return "TaskSolutionCollector(" + prototype_->DebugString() + ")";
-        }
-    }
-
-private:
-    // The searchlight engine
-    SearchlightTask &task_;
-};
-
 
 /**
  * This class incapsulates the searchlight process and a monitor that collects
@@ -107,7 +63,7 @@ public:
     SearchlightTask(const std::string &library_name,
             const std::string &task_name, const std::string &task_params) :
                 searchlight_(task_name),
-                collector_(*this, &searchlight_.GetSolver()),
+                collector_(*this),
                 task_params_(task_params),
                 search_ended_(false) {
 
@@ -205,7 +161,7 @@ private:
     Searchlight searchlight_;
 
     // The solution collector for exact results
-    TaskSolutionCollector collector_;
+    SearchlightCollector collector_;
 
     // Task and its params
     SLTaskFunc task_;

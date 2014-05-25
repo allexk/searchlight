@@ -40,6 +40,7 @@
 namespace searchlight {
 
 class Searchlight;
+class SearchlightCollector;
 
 /**
  * This class allows users to collect solutions (assignments) and check them
@@ -56,10 +57,10 @@ public:
      *
      * @param solver the main search solver
      * @param var_names the names of the variables
-     * @param collector the solution collector to grab validated solutions
+     * @param collector the searchlight collector to grab validated solutions
      */
     Validator(const Searchlight &sl, const StringVector &var_names,
-            SolutionCollector &collector);
+            SearchlightCollector &sl_collector);
 
     /**
      * Destructor.
@@ -144,8 +145,8 @@ private:
     // The prototype assignment for search variables
     Assignment search_vars_prototype_;
 
-    // User's sollution collector
-    SolutionCollector &collector_;
+    // User's solution collector (don't need to delete)
+    SolutionCollector *collector_;
 
     // Condition var to wait for solutions to validate
     boost::condition_variable validate_cond_;

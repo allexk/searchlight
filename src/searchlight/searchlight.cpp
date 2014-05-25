@@ -30,6 +30,7 @@
 
 #include "searchlight.h"
 #include "validator.h"
+#include "searchlight_collector.h"
 
 namespace searchlight {
 

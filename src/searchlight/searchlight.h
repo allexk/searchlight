@@ -45,6 +45,7 @@
 namespace searchlight {
 
 class Validator;
+class SearchlightCollector;
 
 /**
  * The type for a UDF function creator. It produces an or-tools IntExpr
@@ -232,7 +233,7 @@ public:
      *
      * @param collector collector for exact results
      */
-    void RegisterCollector(SolutionCollector *collector) {
+    void RegisterCollector(SearchlightCollector *collector) {
         collector_ = collector;
     }
 
@@ -260,7 +261,7 @@ private:
     Solver solver_;
 
     // Solution collector for main (exact) results
-    SolutionCollector *collector_;
+    SearchlightCollector *collector_;
 
     // The array descriptor
     SearchArrayDesc *array_desc_;
