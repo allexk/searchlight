@@ -83,8 +83,10 @@ public:
      * should be joined to ensure proper termination.
      */
     void SignalEnd() {
-        boost::lock_guard<boost::mutex> validate_lock(to_validate_mtx_);
+        to_validate_mtx_.lock();
         search_ended_ = true;
+        to_validate_mtx_.unlock();
+        validate_cond_.notify_one();
     }
 
     /**
