@@ -245,8 +245,11 @@ public:
         terminate_ = true;
     }
 
-private:
-    // Checks if we need to terminate
+    /**
+     * Checks if the searchlight is terminating.
+     *
+     * @return true, if we are terminating; false otherwise
+     */
     bool CheckTerminate() const {
         /*
          * This code is obviously not thread-safe (see Terminate() as well),
@@ -257,6 +260,7 @@ private:
         return terminate_;
     }
 
+private:
     // The solver
     Solver solver_;
 

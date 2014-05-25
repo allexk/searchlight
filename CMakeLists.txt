@@ -14,6 +14,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
 # finding libraries
 find_package(SciDB REQUIRED)
 find_package(OrTools REQUIRED)
+find_package(Log4CXX REQUIRED)
 find_package(GFlags REQUIRED)   # needed by or-tools
 find_package(Protobuf REQUIRED) # needed by or-tools
 find_package(Coin REQUIRED)     # needed by or-tools
@@ -22,6 +23,7 @@ find_package(Coin REQUIRED)     # needed by or-tools
 include_directories(${SCIDB_INCLUDE_DIRS})
 include_directories(${ORTOOLS_INCLUDE_DIRS})
 include_directories(${GFLAGS_INCLUDE_DIRS})
+include_directories(${LOG4CXX_INCLUDE_DIRS})
 
 # add c++0x compatibility and turn-off STL deprecated warnings (needed for or-tools)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++0x -Wno-deprecated")

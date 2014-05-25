@@ -34,6 +34,10 @@
 
 namespace searchlight {
 
+// The logger
+static log4cxx::LoggerPtr logger(
+        log4cxx::Logger::getLogger("searchlight.searchlight"));
+
 bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
         const std::vector<SearchMonitor *> &monitors) {
     /*
@@ -57,6 +61,7 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << "No solution collector registered!";
     }
+    LOG4CXX_INFO(logger, "Initiating the validator");
     Validator validator(*this, var_names, *collector_);
     boost::thread validator_thread(boost::ref(validator));
 
@@ -69,12 +74,15 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
     solver_monitors.push_back(terminator);
 
     // start the search
+    LOG4CXX_INFO(logger, "Starting the main search");
     solver_.Solve(db, monitors);
 
     // Terminate validator
-    validator.Terminate();
+    LOG4CXX_INFO(logger, "Signaling the validator and waiting");
+    validator.SignalEnd();
     validator_thread.join();
 
+    LOG4CXX_INFO(logger, "Finished the main search");
     return validator.GetValidatorSolverResult();
 }
 
@@ -83,6 +91,7 @@ bool ValidatorMonitor::AtSolution() {
 
     // Store the solution (assuming complete assignment)
     asgn->Store();
+    LOG4CXX_DEBUG(logger, "Encountered a leaf: " << asgn->DebugString());
 
     // Should check if we have a complete assignment
     bool complete = true;

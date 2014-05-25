@@ -75,16 +75,16 @@ public:
     void AddSolution(const Assignment &sol);
 
     /**
-     * Terminates the validator.
+     * Signal to the validator that the search ended.
      *
-     * The validator is not necesarily terminated
+     * The validator is not necessarily terminated
      * upon the exit from this function. It is assumed that this function
      * is called from another thread. In this case, the validator thread
      * should be joined to ensure proper termination.
      */
-    void Terminate() {
-        boost::unique_lock<boost::mutex> validate_lock(to_validate_mtx_);
-        terminate_ = true;
+    void SignalEnd() {
+        boost::lock_guard<boost::mutex> validate_lock(to_validate_mtx_);
+        search_ended_ = true;
     }
 
     /**
@@ -124,10 +124,10 @@ private:
     // Returns the next portion of Assignments to validate
     AssignmentPtrVector *GetNextAssignments();
 
-    // Check if the validator is terminating
+    // Check if the searclight is terminating
     bool CheckTerminate() const {
         boost::unique_lock<boost::mutex> validate_lock(to_validate_mtx_);
-        return terminate_;
+        return sl_.CheckTerminate();
     }
 
     // Searchlight instance
@@ -154,8 +154,8 @@ private:
     // Mutex to guard the validation array
     mutable boost::mutex to_validate_mtx_;
 
-    // Should we terminate?
-    bool terminate_;
+    // Has the search ended
+    bool search_ended_;
 
     // The resulting status of the validator solver
     bool solver_status_;

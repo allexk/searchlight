@@ -32,9 +32,30 @@
 #include "array_desc.h"
 
 namespace searchlight {
+
+// The logger
+static log4cxx::LoggerPtr logger(
+        log4cxx::Logger::getLogger("searchlight.sampler"));
+
 IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
         const Coordinates &high, AttributeID attr,
         const StringVector &aggr_names) const {
+
+    if (logger->isDebugEnabled()) {
+        std::ostringstream deb_str;
+        deb_str << "Aggregate request: Low: ";
+        std::copy(low.begin(), low.end(),
+                std::ostream_iterator<Coordinate>(deb_str, ", "));
+        deb_str << " High: ";
+        std::copy(high.begin(), high.end(),
+                std::ostream_iterator<Coordinate>(deb_str, ", "));
+        deb_str << " Attr: " << attr << " Aggs: ";
+        std::copy(aggr_names.begin(), aggr_names.end(),
+                std::ostream_iterator<std::string>(deb_str, ", "));
+        deb_str << " Mode: " << mode_;
+
+        logger->debug(deb_str.str(), LOG4CXX_LOCATION);
+    }
 
     IntervalValueVector res(aggr_names.size()); // NULLs by default
     if (mode_ == EXACT) {
@@ -80,6 +101,17 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
 
 IntervalValue Adapter::GetElement(const Coordinates &point,
         AttributeID attr) const {
+
+    if (logger->isDebugEnabled()) {
+        std::ostringstream deb_str;
+        deb_str << "Element request: Point: ";
+        std::copy(point.begin(), point.end(),
+                std::ostream_iterator<Coordinate>(deb_str, ", "));
+        deb_str << " Attr: " << attr;
+        deb_str << " Mode: " << mode_;
+
+        logger->debug(deb_str.str(), LOG4CXX_LOCATION);
+    }
 
     IntervalValue res; // NULL
     if (mode_ == EXACT) {

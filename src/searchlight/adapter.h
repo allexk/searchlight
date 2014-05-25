@@ -105,7 +105,7 @@ public:
      */
     enum Mode {
         /** The adapter gives the exact results from the real data */
-        EXACT,
+        EXACT = 0,
         /** The adapter gives approximate values generated from a sample */
         APPROX,
         /** The adapter gives a precise interval of possible values */

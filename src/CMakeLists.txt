@@ -6,7 +6,7 @@ add_library(searchlight_udo SHARED searchlight/adapter.cpp
     searchlight/LogicalSearchlight.cpp searchlight/PhysicalSearchlight.cpp
     searchlight/sampler.cpp searchlight/searchlight_task.cpp
     searchlight/searchlight.cpp searchlight/validator.cpp
-    searchlight/plugin.cpp)
+    searchlight/searchlight_collector.cpp searchlight/plugin.cpp)
 
 # We have to link the libraries since SciDb will not load them during the
 # dynamic operator loading. We don't need to do anything special for SciDb

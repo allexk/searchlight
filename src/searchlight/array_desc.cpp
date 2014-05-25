@@ -32,6 +32,10 @@
 
 namespace searchlight {
 
+// The logger
+static log4cxx::LoggerPtr logger(
+        log4cxx::Logger::getLogger("searchlight.array_descriptor"));
+
 AttributeID SearchArrayDesc::RegisterAttribute(const std::string &attr_name) {
     std::map<std::string, AttributeID>::const_iterator map_it =
             attr_to_id_.find(attr_name);
@@ -58,6 +62,8 @@ AttributeID SearchArrayDesc::RegisterAttribute(const std::string &attr_name) {
     // load the sample
     sampler_.LoadSampleForAttribute(orig_id, search_id);
 
+    LOG4CXX_INFO(logger, "Registered attribute, name=" << attr_name <<
+            ", orig_id=" << orig_id << ", internal_id=" << search_id);
     return search_id;
 }
 

@@ -37,6 +37,10 @@
 
 namespace searchlight {
 
+// The logger
+static log4cxx::LoggerPtr logger(
+        log4cxx::Logger::getLogger("searchlight.validator"));
+
 /**
  * A decision that just restores the given assignment causing the corresponding
  * variables to take the values from the assignment. In its right branch it
@@ -68,6 +72,7 @@ public:
     virtual void Apply(Solver* const s) {
         // callback_flag should be set back after we backtrack
         s->SaveAndSetValue(callback_flag_ref_, true);
+        LOG4CXX_DEBUG(logger, "Validating: " << asgn_->DebugString());
         asgn_->Restore();
     }
 
@@ -152,9 +157,10 @@ public:
             return NULL;
         }
 
-        // check for termination
+        // check for searchlight termination
         if (validator_.CheckTerminate()) {
             // this will stop the search by cutting the right branch
+            LOG4CXX_INFO(logger, "Terminating the validator");
             return NULL;
         }
 
@@ -164,8 +170,11 @@ public:
             AssignmentPtrVector *new_asgns = validator_.GetNextAssignments();
             if (!new_asgns) {
                 // No more assignments: stop the validator search
+                LOG4CXX_INFO(logger, "Stopping the validator search");
                 return NULL;
             }
+            LOG4CXX_INFO(logger, "Got " << asgns_.size() << " new assignments "
+                    "to check");
             asgns_.insert(asgns_.end(), new_asgns->begin(), new_asgns->end());
             delete new_asgns;
         }
@@ -205,7 +214,7 @@ Validator::Validator(const Searchlight &sl, const StringVector &var_names,
         solver_("validator solver"),
         adapter_(sl.CreateAdapter()),
         search_vars_prototype_(&solver_),
-        terminate_(false),
+        search_ended_(false),
         solver_status_(false) {
     /*
      * There might be a better way to do this, but... Since the solver does
@@ -224,7 +233,17 @@ Validator::Validator(const Searchlight &sl, const StringVector &var_names,
                 << "Cannot create the validator solver!";
     }
 
-    // Craete collector
+    // logging
+    if (logger->isDebugEnabled()) {
+        /*
+         *  Unfortunately, it will dump it into std::cerr, which is
+         *  redirected by SciDb to a file.
+         */
+        ModelVisitor *pmv = solver_.MakePrintModelVisitor();
+        solver_.Accept(pmv);
+    }
+
+    // Create collector
     sl_collector.InitCollector(&solver_);
     collector_ = sl_collector.GetCollector();
 
@@ -272,6 +291,8 @@ void Validator::AddSolution(const Assignment &sol) {
         // The only thing we ignore here is "Activated", which is not needed
     }
 
+    LOG4CXX_DEBUG(logger, "New solution to validate: " << sol.DebugString());
+
     to_validate_mtx_.lock();
     to_validate_.push_back(AssignmentPtr(asgn));
     to_validate_mtx_.unlock();
@@ -279,6 +300,7 @@ void Validator::AddSolution(const Assignment &sol) {
 }
 
 void Validator::operator()() {
+    LOG4CXX_INFO(logger, "Starting the validator search");
     DecisionBuilder *db = solver_.RevAlloc(new RestoreAssignmentBuilder(*this));
     solver_status_ = solver_.Solve(db, collector_);
 }
@@ -323,15 +345,15 @@ void Validator::RegisterUDFBuilder() {
 
 AssignmentPtrVector *Validator::GetNextAssignments() {
     /*
-     * For now, a simple policy: wait until we get an assignmeny to
+     * For now, a simple policy: wait until we get an assignment to
      * validate and then check it.
      */
     boost::unique_lock<boost::mutex> validate_lock(to_validate_mtx_);
-    while (to_validate_.empty() && !terminate_) {
+    while (to_validate_.empty() && !search_ended_) {
         validate_cond_.wait(validate_lock);
     }
 
-    if (terminate_) {
+    if (to_validate_.empty() && search_ended_) {
         return NULL;
     }
 

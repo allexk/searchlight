@@ -38,6 +38,8 @@
 #include <vector>
 #include <set>
 
+#include <log4cxx/log4cxx.h>
+
 namespace searchlight {
 
 /**

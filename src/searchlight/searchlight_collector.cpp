@@ -33,6 +33,10 @@
 
 namespace searchlight {
 
+// The logger
+static log4cxx::LoggerPtr logger(
+        log4cxx::Logger::getLogger("searchlight.collector"));
+
 TaskSolutionCollector::TaskSolutionCollector(SearchlightTask &task, Solver *s) :
     SolutionCollector(s),
     task_(task) {}

@@ -34,6 +34,10 @@
 
 namespace searchlight {
 
+// The logger
+static log4cxx::LoggerPtr logger(
+        log4cxx::Logger::getLogger("searchlight.task"));
+
 void SearchlightTask::ResolveTask(const std::string &lib_name,
         const std::string &task_name) {
     // loading the task library
@@ -68,15 +72,19 @@ std::string SearchlightTask::GetNextSolution() {
 
     // Terminated on error? Throw it in the main thread.
     if (sl_error_) {
+        LOG4CXX_INFO(logger, "SearchlightTask terminated on error!");
         sl_error_->raise();
     }
 
     if (solutions_queue_.empty() && search_ended_) {
+        LOG4CXX_INFO(logger, "SearchlightTask finished");
         return "";
     }
 
     std::string res(solutions_queue_.front());
     solutions_queue_.pop_front();
+
+    LOG4CXX_DEBUG(logger, "A new final solution: " << res);
     return res;
 }
 
@@ -84,6 +92,7 @@ const ConstChunk *SearchlightResultsArray::nextChunk(AttributeID attId,
         MemChunk& chunk) {
     // initialize the search if needed
     if (!sl_thread_) {
+        LOG4CXX_INFO(logger, "Starting Searchlight Thread");
         sl_thread_ = new boost::thread(boost::ref(*sl_task_));
     }
 
