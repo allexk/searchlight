@@ -59,7 +59,7 @@ void SemWindowsAvg(Searchlight *sl, const std::string &params) {
     std::vector<IntVar *> lens(2);
     coords[0] = solver.MakeIntVar(start_x, end_x, "x");
     coords[1] = solver.MakeIntVar(start_y, end_y, "y");
-    lens[0] = solver.MakeIntVar(1, size_l, "lx");
+    lens[0] = solver.MakeIntVar(1, size_u, "lx");
     lens[1] = solver.MakeIntVar(1, size_u, "ly");
 
     // convenience -- all vars in a single vector
@@ -72,7 +72,7 @@ void SemWindowsAvg(Searchlight *sl, const std::string &params) {
     solver.AddConstraint(solver.MakeLessOrEqual(
             solver.MakeSum(coords[1], lens[1]), end_y + 1));
     solver.AddConstraint(solver.MakeBetweenCt(
-            solver.MakeProd(lens[0], lens[1])->Var(), size_l, size_u));
+            solver.MakeProd(lens[0], lens[1]), size_l, size_u));
 
     // average
     AttributeID attr = sl->RegisterAttribute("val");
@@ -82,7 +82,7 @@ void SemWindowsAvg(Searchlight *sl, const std::string &params) {
     std::vector<int64> udf_params(1, int64(attr));
     IntExpr *avg = solver.RevAlloc(avg_fab(&solver, adapter, all_vars,
             udf_params));
-    solver.AddConstraint(solver.MakeBetweenCt(avg->Var(), avg_l, avg_u));
+    solver.AddConstraint(solver.MakeBetweenCt(avg, avg_l, avg_u));
 
     // create the search phase
     DecisionBuilder * const db = solver.MakePhase(all_vars,
