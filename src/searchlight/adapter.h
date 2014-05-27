@@ -77,6 +77,15 @@ struct IntervalValue {
 };
 
 /**
+ * Outputs an IntervalValue into an output stream.
+ *
+ * @param os the stream to output to
+ * @param iv the value to output
+ * @return the stream used for the output
+ */
+std::ostream &operator<<(std::ostream &os, const IntervalValue &iv);
+
+/**
  * A vector of interval values.
  */
 typedef std::vector<IntervalValue> IntervalValueVector;

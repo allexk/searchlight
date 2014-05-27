@@ -96,6 +96,14 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
                 << "Unknown adapter mode!";
     }
 
+    if (logger->isDebugEnabled()) {
+        std::ostringstream deb_str;
+        deb_str << "Computed aggregates: ";
+        std::copy(res.begin(), res.end(),
+                std::ostream_iterator<IntervalValue>(deb_str, ", "));
+        logger->debug(deb_str.str(), LOG4CXX_LOCATION);
+    }
+
     return res;
 }
 
@@ -143,7 +151,22 @@ IntervalValue Adapter::GetElement(const Coordinates &point,
                 << "Unknown adapter mode!";
     }
 
+    LOG4CXX_DEBUG(logger, "Computed element: " << res);
+
     return res;
 }
 
+std::ostream &operator<<(std::ostream &os, const IntervalValue &iv) {
+    if (iv.state_ == IntervalValue::NUL) {
+        os << "(NULL)";
+    } else {
+        os << "(Min: " << iv.min_ << ", Max: " << iv.max_ <<
+                ", Val: " << iv.val_;
+        if (iv.state_ == IntervalValue::MAY_NULL) {
+            os << ", null?";
+        }
+        os << ")";
+    }
+    return os;
+}
 } /* namespace searchlight */
