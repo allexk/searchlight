@@ -33,6 +33,10 @@
 
 namespace searchlight {
 
+// The logger
+static log4cxx::LoggerPtr logger(
+        log4cxx::Logger::getLogger("searchlight.udfs"));
+
 /**
  * This class allows to compute aggregate functions on arrays that are
  * expressed in terms of integer variables
@@ -311,6 +315,8 @@ IntervalValue AggrFuncExpr::ComputeFuncSub(const Coordinates &low,
             res.max_ = min_max[1].max_ * max_size;
             break;
     }
+
+    LOG4CXX_DEBUG(logger, "Computed MBR value: " << res);
 
     return res;
 }
