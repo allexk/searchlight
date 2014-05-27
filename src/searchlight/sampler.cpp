@@ -442,10 +442,14 @@ public:
 
 private:
     MinMaxSampleAggregate(bool min) :
-        min_(std::numeric_limits<double>::max()),
-        max_(std::numeric_limits<double>::min()),
         approx_(0),
-        is_min_(min), not_null_(false), null_(true) {}
+        is_min_(min), not_null_(false), null_(true) {
+        if (is_min_) {
+            min_ = max_ = std::numeric_limits<double>::max();
+        } else {
+            min_ = max_ = std::numeric_limits<double>::lowest();
+        }
+    }
 
     // Minimum/maximum and approximate values
     double min_, max_, approx_;
