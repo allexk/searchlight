@@ -153,15 +153,17 @@ public:
            /*
             * We are here since the restoration was successful: cut the branch.
             * just_restored_ will fall back to 'false' automatically.
+            *
+            * Also, this will trigger visiting the leaf at the collector.
             */
             return NULL;
         }
 
         // check for searchlight termination
         if (validator_.CheckTerminate()) {
-            // this will stop the search by cutting the right branch
+            // this will stop the search by failing the right branch
             LOG4CXX_INFO(logger, "Terminating the validator");
-            return NULL;
+            solver->Fail();
         }
 
         // pick the next assignment
@@ -171,7 +173,7 @@ public:
             if (!new_asgns) {
                 // No more assignments: stop the validator search
                 LOG4CXX_INFO(logger, "Stopping the validator search");
-                return NULL;
+                solver->Fail();
             }
             LOG4CXX_INFO(logger, "Got " << asgns_.size() << " new assignments "
                     "to check");
