@@ -329,7 +329,7 @@ bool AggrFuncExpr::CheckSupport() const {
 }
 
 void AggrFuncExpr::ComputeMinMax() const {
-    if (!min_max_init_ || !CheckSupport()) {
+    if (!min_max_init_) {
         IntervalValue new_min_max;
         Coordinates new_min_support_low, new_min_support_lens;
         Coordinates new_max_support_low, new_max_support_lens;
@@ -344,6 +344,9 @@ void AggrFuncExpr::ComputeMinMax() const {
         }
 
         if (vars_bound) {
+            if (CheckSupport()) {
+                return;
+            }
             Coordinates low(dims_), high(dims_), lens(dims_);
             for (size_t i = 0; i < dims_; i++) {
                 low[i] = low_lens_[i]->Value();
@@ -362,6 +365,9 @@ void AggrFuncExpr::ComputeMinMax() const {
             }
 
             if (reg_num <= INDIVIDUAL_CHECK_THRESHOLD) {
+                if (CheckSupport()) {
+                    return;
+                }
                 /*
                  * Here we need to go through every possible combination
                  * of coords/lens, which might be tricky for an arbitrary
@@ -437,12 +443,29 @@ void AggrFuncExpr::ComputeMinMax() const {
                 // Third case: MBR + min/max based
                 Coordinates low(dims_), high(dims_), lens(dims_);
                 uint64_t min_size = 1, max_size = 1;
+                bool mbr_changed = false;
                 for (size_t i = 0; i < dims_; i++) {
                     low[i] = low_lens_[i]->Min();
-                    lens[i] = low_lens_[dims_ + i]->Max();
-                    high[i] = low[i] + lens[i] - 1;
+                    high[i] = low_lens_[i]->Max() +
+                            low_lens_[dims_ + i]->Max() - 1;
+                    lens[i] = high[i] - low[i] + 1;
                     min_size *= low_lens_[dims_ + i]->Min();
                     max_size *= low_lens_[dims_ + i]->Max();
+
+                    // min/max supports are equal for MBRs
+                    if (low[i] != min_support_low_[i] ||
+                            lens[i] != min_support_lens_[i]) {
+                        mbr_changed = true;
+                    }
+                }
+
+                if (!mbr_changed) {
+                    /*
+                     * Strictly speaking, we might have different
+                     * min_size or max_size here, but this is probably
+                     * going to be really rare.
+                     */
+                    return;
                 }
 
                 new_min_max = ComputeFuncSub(low, high, min_size, max_size);
@@ -475,9 +498,9 @@ void AggrFuncExpr::ComputeMinMax() const {
         s->SaveAndSetValue(&min_max_init_, true);
         for (size_t i = 0; i < dims_; i++) {
             SaveCoordinate(&min_support_low_[i], new_min_support_low[i]);
-            SaveCoordinate(&min_support_low_[i], new_min_support_lens[i]);
+            SaveCoordinate(&min_support_lens_[i], new_min_support_lens[i]);
             SaveCoordinate(&max_support_low_[i], new_max_support_low[i]);
-            SaveCoordinate(&max_support_low_[i], new_max_support_lens[i]);
+            SaveCoordinate(&max_support_lens_[i], new_max_support_lens[i]);
         }
     }
 }
