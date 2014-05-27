@@ -75,7 +75,7 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
 
     // start the search
     LOG4CXX_INFO(logger, "Starting the main search");
-    solver_.Solve(db, monitors);
+    solver_.Solve(db, solver_monitors);
 
     // Terminate validator
     LOG4CXX_INFO(logger, "Signaling the validator and waiting");
