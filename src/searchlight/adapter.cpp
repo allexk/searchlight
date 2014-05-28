@@ -37,6 +37,15 @@ namespace searchlight {
 static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.sampler"));
 
+Adapter::~Adapter() {
+    const auto secs = std::chrono::duration_cast<std::chrono::seconds>(
+            total_req_time_).count();
+    const auto usecs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            total_req_time_).count();
+    LOG4CXX_INFO(logger, "Adapter(" << name_ << "), total requests time: " <<
+            secs << '.' << usecs << 's');
+}
+
 IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
         const Coordinates &high, AttributeID attr,
         const StringVector &aggr_names) const {
@@ -56,6 +65,9 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
 
         logger->debug(deb_str.str(), LOG4CXX_LOCATION);
     }
+
+    // starting the timer
+    const auto req_start_time = std::chrono::steady_clock::now();
 
     IntervalValueVector res(aggr_names.size()); // NULLs by default
     if (mode_ == EXACT) {
@@ -96,6 +108,11 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
                 << "Unknown adapter mode!";
     }
 
+    // "stopping" the timer
+    const auto req_end_time = std::chrono::steady_clock::now();
+    total_req_time_ += std::chrono::duration_cast<decltype(total_req_time_)>(
+            req_end_time - req_start_time);
+
     if (logger->isDebugEnabled()) {
         std::ostringstream deb_str;
         deb_str << "Computed aggregates: ";
@@ -120,6 +137,9 @@ IntervalValue Adapter::GetElement(const Coordinates &point,
 
         logger->debug(deb_str.str(), LOG4CXX_LOCATION);
     }
+
+    // starting the timer
+    const auto req_start_time = std::chrono::steady_clock::now();
 
     IntervalValue res; // NULL
     if (mode_ == EXACT) {
@@ -150,6 +170,11 @@ IntervalValue Adapter::GetElement(const Coordinates &point,
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << "Unknown adapter mode!";
     }
+
+    // "stopping" the timer
+    const auto req_end_time = std::chrono::steady_clock::now();
+    total_req_time_ += std::chrono::duration_cast<decltype(total_req_time_)>(
+            req_end_time - req_start_time);
 
     LOG4CXX_DEBUG(logger, "Computed element: " << res);
 

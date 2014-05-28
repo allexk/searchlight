@@ -76,7 +76,7 @@ void SemWindowsAvg(Searchlight *sl, const std::string &params) {
 
     // average
     AttributeID attr = sl->RegisterAttribute("val");
-    AdapterPtr adapter = sl->CreateAdapter();
+    AdapterPtr adapter = sl->CreateAdapter("sw");
     UDFFunctionCreator avg_fab = sl->GetUDFFunctionCreator("avg");
 
     std::vector<int64> udf_params(1, int64(attr));

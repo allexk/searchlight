@@ -276,10 +276,11 @@ public:
     /**
      * Creates an adapter to access the search array.
      *
+     * @param name the adapater's name
      * @return access adapter
      */
-    AdapterPtr CreateAdapter() const {
-        return boost::make_shared<Adapter>(*array_desc_);
+    AdapterPtr CreateAdapter(const std::string &name) const {
+        return boost::make_shared<Adapter>(*array_desc_, name);
     }
 
     /**

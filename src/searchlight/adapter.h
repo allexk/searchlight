@@ -36,6 +36,8 @@
 #include "scidb_inc.h"
 #include "base.h"
 
+#include <chrono>
+
 namespace searchlight {
 
 class SearchArrayDesc;
@@ -126,9 +128,15 @@ public:
      *
      * @param array the SciDb data array
      */
-    Adapter(const SearchArrayDesc &array) :
+    Adapter(const SearchArrayDesc &array, const std::string &name) :
         array_desc_(array),
-        mode_(Mode::INTERVAL) {}
+        mode_(Mode::INTERVAL),
+        name_(name) {}
+
+    /**
+     * Destructor.
+     */
+    ~Adapter();
 
     /**
      * Sets the mode of operation for the adapter.
@@ -175,6 +183,12 @@ private:
 
     // Mode of operation
     Mode mode_;
+
+    // The adapter's name
+    const std::string name_;
+
+    // Total time spent for requests
+    mutable std::chrono::microseconds total_req_time_;
 };
 
 /**

@@ -214,7 +214,7 @@ Validator::Validator(const Searchlight &sl, const StringVector &var_names,
         SearchlightCollector &sl_collector) :
         sl_(sl),
         solver_("validator solver"),
-        adapter_(sl.CreateAdapter()),
+        adapter_(sl.CreateAdapter("validator")),
         search_vars_prototype_(&solver_),
         search_ended_(false),
         solver_status_(false) {
