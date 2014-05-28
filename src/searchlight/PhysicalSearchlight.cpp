@@ -98,7 +98,7 @@ public:
                         str_tokens[1], str_tokens[2]);
         sl_task->GetSearchlight().RegisterArray(inputArrays[0], inputArrays[1]);
         return ArrayPtr(new searchlight::SearchlightResultsArray(sl_task,
-                _schema));
+                _schema, query));
     }
 };
 

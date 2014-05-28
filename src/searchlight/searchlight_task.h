@@ -202,13 +202,20 @@ public:
      * Creates a new resulting array.
      * @param sl_task the searchlight task
      * @param desc the descriptor of the array
+     * @param query the query context of this array
      */
-    SearchlightResultsArray(SearchlightTaskPtr sl_task, ArrayDesc &desc) :
+    SearchlightResultsArray(SearchlightTaskPtr sl_task, ArrayDesc &desc,
+            const boost::shared_ptr<Query> &query) :
         StreamArray(desc, false),
         sl_task_(sl_task),
         desc_(desc),
         res_count_(0),
-        sl_thread_(NULL) {}
+        sl_thread_(NULL) {
+
+        // we need the context to create the array
+        assert(query);
+        _query = query;
+    }
 
     /**
      * Destructor.
