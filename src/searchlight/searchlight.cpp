@@ -38,6 +38,17 @@ namespace searchlight {
 static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.searchlight"));
 
+Searchlight::~Searchlight() {
+    const auto secs = std::chrono::duration_cast<std::chrono::seconds>(
+            total_solve_time_).count();
+    const auto usecs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            total_solve_time_).count();
+    LOG4CXX_INFO(logger, "Searchlight solve time: " << secs << '.' <<
+            usecs << 's');
+
+    delete array_desc_;
+}
+
 bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
         const std::vector<SearchMonitor *> &monitors) {
     /*
@@ -73,6 +84,9 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
     solver_monitors.push_back(&val_monitor);
     solver_monitors.push_back(terminator);
 
+    // starting the timer
+    const auto solve_start_time = std::chrono::steady_clock::now();
+
     // start the search
     LOG4CXX_INFO(logger, "Starting the main search");
     solver_.Solve(db, solver_monitors);
@@ -81,6 +95,12 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
     LOG4CXX_INFO(logger, "Signaling the validator and waiting");
     validator.SignalEnd();
     validator_thread.join();
+
+    // stopping the timer
+    const auto solve_end_time = std::chrono::steady_clock::now();
+    total_solve_time_ =
+            std::chrono::duration_cast<decltype(total_solve_time_)>(
+            solve_end_time - solve_start_time);
 
     LOG4CXX_INFO(logger, "Finished the main search");
     return validator.GetValidatorSolverResult();

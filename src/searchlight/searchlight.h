@@ -41,6 +41,7 @@
 #include <dlfcn.h>
 #include <boost/thread.hpp>
 #include <boost/make_shared.hpp>
+#include <chrono>
 
 namespace searchlight {
 
@@ -154,9 +155,7 @@ public:
     /**
      * The destructor.
      */
-    ~Searchlight() {
-        delete array_desc_;
-    }
+    ~Searchlight();
 
     /**
      * Returns the solver to use for the search.
@@ -334,6 +333,10 @@ private:
 
     // True if we are required to terminate
     volatile bool terminate_;
+
+    // Total time spent on solving
+    std::chrono::microseconds total_solve_time_;
+
 };
 
 /**
