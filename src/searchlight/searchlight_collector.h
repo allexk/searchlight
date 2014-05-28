@@ -55,6 +55,11 @@ public:
     TaskSolutionCollector(SearchlightTask &task, Solver *s);
 
     /**
+     * Destructor.
+     */
+    virtual ~TaskSolutionCollector() {}
+
+    /**
      * A callback called at a solution.
      *
      * @return true, if we want to continue; false otherwise
