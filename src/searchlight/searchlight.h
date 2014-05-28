@@ -48,6 +48,74 @@ class Validator;
 class SearchlightCollector;
 
 /**
+ * This class manages supplementary DLL resources required by Searchlight.
+ * It is guaranteed to close all opened libraries at the end, on destruction.
+ * It also serves as a map of names->dll handles, thus allowing retrieval of
+ * DLLs via names, avoiding duplicate open calls.
+ *
+ * The need of such a manager is also emphasized by the necessity of closing
+ * the libraries at the very end. For example, if you create an object with
+ * the definition in a DLL and later try to delete it after closing the
+ * library, you will have trouble with calling the destructor. That is why
+ * the handler should be deleted at the very end.
+ */
+class DLLHandler {
+public:
+    /**
+     * Constructs a new DLL handler. It assumes the default DLL directory
+     * to be the SciDb plugin's directory.
+     */
+    DLLHandler() :
+        dlls_dir_(scidb::Config::getInstance()->
+                getOption<std::string>(scidb::CONFIG_PLUGINS)) {}
+
+    /**
+     * Destructor. Closes all opened DLLs.
+     */
+    ~DLLHandler() {
+        for (auto &name_lib: dlls_) {
+            dlclose(name_lib.second);
+        }
+
+    }
+
+    /**
+     * Loads the specified DLL into memory. If the library was loaded before,
+     * it returns the same handle. If the loading is impossible for some
+     * reason, it throws a SciDb system exception.
+     *
+     * @param name the name of the library, without the suffix or prefix
+     * @return the DLL handle (never nullptr)
+     */
+    void *LoadDLL(const std::string &name) {
+        auto it = dlls_.find(name);
+        if (it == dlls_.end()) {
+            std::string full_name = dlls_dir_ + "/lib" + name + ".so";
+            void *dll_handle= dlopen(full_name.c_str(), RTLD_LAZY | RTLD_LOCAL);
+            if (!dll_handle) {
+                std::ostringstream err_msg;
+                err_msg << "Cannot load the task library: name=" <<
+                        full_name << ", reason=" << dlerror();
+                throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                        SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
+            }
+
+            dlls_[name] = dll_handle;
+            return dll_handle;
+        } else {
+            return it->second;
+        }
+    }
+
+private:
+    // Default DLL directory
+    std::string dlls_dir_;
+
+    // Map: DLL name -> DLL handle
+    std::map<std::string, void *> dlls_;
+};
+
+/**
  * The type for a UDF function creator. It produces an or-tools IntExpr
  * representing the function. Takes as parameters: the solver to use
  * with, the adapter for accessing data, a vector of variables to work
@@ -76,31 +144,18 @@ public:
      *
      * @param name the name of the search
      */
-    explicit Searchlight(const std::string &name) :
+    explicit Searchlight(const std::string &name, DLLHandler &dll_handler) :
         solver_(name),
         collector_(NULL),
         array_desc_(NULL),
-        terminate_(false) {
-
-        // loading the udf library
-        const std::string &plugins_dir = scidb::Config::getInstance()->
-                getOption<std::string>(scidb::CONFIG_PLUGINS);
-        std::string lib_name = plugins_dir + "/libsearchlight_udfs.so";
-        dl_udf_handle_ = dlopen(lib_name.c_str(), RTLD_LAZY | RTLD_LOCAL);
-        if (!dl_udf_handle_) {
-            std::ostringstream err_msg;
-            err_msg << "Cannot load the UDF Searchlight library: " << dlerror();
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << err_msg.str();
-        }
-    }
+        dl_udf_handle_(dll_handler.LoadDLL("searchlight_udfs")),
+        terminate_(false) {}
 
     /**
      * The destructor.
      */
     ~Searchlight() {
         delete array_desc_;
-        dlclose(dl_udf_handle_); // cannot be NULL
     }
 
     /**

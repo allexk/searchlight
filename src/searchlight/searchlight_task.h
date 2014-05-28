@@ -41,8 +41,6 @@
 
 namespace searchlight {
 
-class SearchlightTask;
-
 /**
  * This class incapsulates the searchlight process and a monitor that collects
  * results and put them into a queue. This class is also repsonsible for
@@ -62,7 +60,7 @@ public:
      */
     SearchlightTask(const std::string &library_name,
             const std::string &task_name, const std::string &task_params) :
-                searchlight_(task_name),
+                searchlight_(task_name, dll_handler_),
                 collector_(*this),
                 task_params_(task_params),
                 search_ended_(false) {
@@ -70,14 +68,6 @@ public:
         ResolveTask(library_name, task_name);
         searchlight_.RegisterCollector(&collector_);
     }
-
-    /**
-     * Destructor.
-     */
-    ~SearchlightTask() {
-        dlclose(dl_lib_handle_);
-    }
-
 
     /**
      * Operator for running the task. Basically, just calls the function from
@@ -157,6 +147,9 @@ private:
     // Type of the task function (called from the library)
     typedef void (*SLTaskFunc)(Searchlight *, const std::string &);
 
+    // The main DLL Handler (we need it to be destroyed last!)
+    DLLHandler dll_handler_;
+
     // The main sl instance
     Searchlight searchlight_;
 
@@ -166,9 +159,6 @@ private:
     // Task and its params
     SLTaskFunc task_;
     const std::string task_params_;
-
-    // dll-based stuff
-    void *dl_lib_handle_;
 
     // Stringified solutions.
     std::list<std::string> solutions_queue_;

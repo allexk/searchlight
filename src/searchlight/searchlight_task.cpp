@@ -41,20 +41,10 @@ static log4cxx::LoggerPtr logger(
 void SearchlightTask::ResolveTask(const std::string &lib_name,
         const std::string &task_name) {
     // loading the task library
-    const std::string &plugins_dir = scidb::Config::getInstance()->
-            getOption<std::string>(scidb::CONFIG_PLUGINS);
-    std::string lib_path = plugins_dir + "/lib" + lib_name + ".so";
-    dl_lib_handle_= dlopen(lib_path.c_str(), RTLD_LAZY | RTLD_LOCAL);
-    if (!dl_lib_handle_) {
-        std::ostringstream err_msg;
-        err_msg << "Cannot load the task library: name=" << lib_name <<
-                ", reason=" << dlerror();
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << err_msg.str();
-    }
+    void *lib_handle = dll_handler_.LoadDLL(lib_name);
 
     // look up the task
-    task_ = (SLTaskFunc)dlsym(dl_lib_handle_, task_name.c_str());
+    task_ = (SLTaskFunc)dlsym(lib_handle, task_name.c_str());
     // We should check an error via dlerror, but NULL checking is fine
     if (!task_) {
         std::ostringstream err_msg;
