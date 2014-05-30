@@ -37,6 +37,12 @@
 
 namespace searchlight {
 
+/*
+ * TODO: approximate values are now computed... incorrectly. They might be
+ * plausible, but a better way would be to compute the probability and
+ * possibly return NULL, if suitable. For now, the value will always be
+ * something non-NULL, but the error might be quite significant.
+ */
 class AverageSampleAggregate : public SampleAggregate {
 public:
     static SampleAggregate *Create() {
@@ -136,9 +142,6 @@ public:
             }
         }
 
-        // approximate value
-        res.val_ = approx_sum_ / approx_count_;
-
         // we have to make copies of counts to reuse them for the lower bound
         std::vector<uint64_t> chunk_min_count_copy(chunk_min_count_);
         std::vector<uint64_t> chunk_max_count_copy(chunk_max_count_);
@@ -211,6 +214,14 @@ public:
             }
         }
         res.min_ = current_sum / current_count; /* current_count > 0 here */
+
+        // approximate value
+        if (approx_count_ > 0) {
+            res.val_ = approx_sum_ / approx_count_;
+        }
+        if (approx_count_ == 0 || res.val_ < res.min_) {
+            res.val_ = res.min_;
+        }
     }
 
 private:
@@ -352,7 +363,7 @@ public:
 
         res.min_ = min_sum_;
         res.max_ = max_sum_;
-        res.val_ = approx_sum_;
+        res.val_ = approx_sum_ < min_sum_ ? min_sum_ : approx_sum_;
     }
 
 private:

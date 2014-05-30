@@ -162,6 +162,7 @@ IntervalValue Adapter::GetElement(const Coordinates &point,
         if (mode_ == APPROX) {
             res.min_ = res.max_ = res.val_;
             if (res.state_ == IntervalValue::MAY_NULL) {
+                // TODO: make the choice with some probability returned in res?
                 res.state_ = IntervalValue::NON_NULL;
             }
         }

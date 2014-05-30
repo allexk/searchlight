@@ -44,6 +44,9 @@ class SearchArrayDesc;
 
 /**
  * Approximate value, returned by an estimator.
+ *
+ * TODO: there might be some benefits in returning the probability of MAY_NULL
+ * in the future.
  */
 struct IntervalValue {
     /**
@@ -75,7 +78,10 @@ struct IntervalValue {
      */
     State state_;
 
-    IntervalValue() : min_(0), max_(0), val_(0), state_(NUL) {}
+    /**
+     * Creates a NULL interval value.
+     */
+    IntervalValue() : min_(0), max_(0), val_(-1), state_(NUL) {}
 };
 
 /**
