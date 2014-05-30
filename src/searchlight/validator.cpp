@@ -175,11 +175,18 @@ public:
                 LOG4CXX_INFO(logger, "Stopping the validator search");
                 solver->Fail();
             }
+            asgns_.insert(asgns_.end(), new_asgns->begin(), new_asgns->end());
+
             LOG4CXX_INFO(logger, "Got " << asgns_.size() << " new assignments "
                     "to check");
-            asgns_.insert(asgns_.end(), new_asgns->begin(), new_asgns->end());
             delete new_asgns;
         }
+
+        /*
+         * Set the mode to exact. It's here since we want to avoid working
+         * with real data until candidates show up from the main search.
+         */
+        validator_.adapter_->SetAdapterMode(Adapter::EXACT);
 
         AssignmentPtr next_asgn = asgns_.back();
         asgns_.pop_back();
@@ -214,7 +221,7 @@ Validator::Validator(const Searchlight &sl, const StringVector &var_names,
         SearchlightCollector &sl_collector) :
         sl_(sl),
         solver_("validator solver"),
-        adapter_(sl.CreateAdapter("validator")),
+        adapter_(sl.CreateAdapter("validator")), // INTERVAL mode by default!
         search_vars_prototype_(&solver_),
         search_ended_(false),
         solver_status_(false) {
@@ -274,9 +281,6 @@ Validator::Validator(const Searchlight &sl, const StringVector &var_names,
         search_vars_prototype_.Add(const_cast<IntVar *>(var->second));
         collector_->Add(const_cast<IntVar *>(var->second));
     }
-
-    // validator works with real data
-    adapter_->SetAdapterMode(Adapter::EXACT);
 }
 
 void Validator::AddSolution(const Assignment &sol) {

@@ -102,6 +102,19 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
             std::chrono::duration_cast<decltype(total_solve_time_)>(
             solve_end_time - solve_start_time);
 
+    /*
+     * Output some stats. Note that the solver's fail counter contains
+     * not only true fails (due to violations), but also in-solution fails,
+     * when we it just backtracks to find the next one. In our case, we always
+     * continue after another candidate is found, so fails-sols should give
+     * the number of true fails.
+     */
+    int64 total_fails = solver_.failures();
+    int64 total_candidates = solver_.solutions();
+    LOG4CXX_INFO(logger, "Main search stats: fails=" << total_fails <<
+            ", true fails=" << (total_fails - total_candidates) <<
+            ", candidates=" << total_candidates);
+
     LOG4CXX_INFO(logger, "Finished the main search");
     return validator.GetValidatorSolverResult();
 }
