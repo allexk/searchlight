@@ -328,7 +328,8 @@ IntExpr* Validator::UDFBuilder(std::string name, CPModelLoader* const builder,
         return NULL;
     }
 
-    return udf_creator(&solver_, adapter_, vars, params);
+    return builder->solver()->RevAlloc(
+            udf_creator(&solver_, adapter_, vars, params));
 }
 
 void Validator::RegisterUDFBuilder() {
