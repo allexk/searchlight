@@ -495,12 +495,16 @@ void AggrFuncExpr::ComputeMinMax() const {
 
     /*
      * Need to convert from double to int64, since or-tools do not support
-     * floating values. For now, just round them to the nearest integer.
+     * floating values. For now, just round them to the nearest integer for the
+     * exact value case or "nearest" interval for the interval case.
      *
-     * TODO: revisit later if floats/doubles become available.
+     * TODO: revisit later if floats/doubles become available in or-tools.
      */
     int64 new_min = floor(new_min_max.min_);
     int64 new_max = ceil(new_min_max.max_);
+    if (new_min_max.min_ == new_min_max.max_) {
+        new_min = new_max = round(new_min_max.min_);
+    }
 
     // save the values and supports
     s->SaveAndSetValue(&min_, new_min);
