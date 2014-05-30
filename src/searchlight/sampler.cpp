@@ -565,7 +565,7 @@ void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,
 
                     std::ostringstream err_msg;
                     err_msg << "Cannot get info from sample, chunk=" <<
-                            pos[0] << "attr=" << pos[1];
+                            pos[0] << ", attr=" << pos[1];
                     throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
                             SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
                 }

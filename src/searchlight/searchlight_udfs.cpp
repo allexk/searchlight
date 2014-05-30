@@ -322,6 +322,11 @@ IntervalValue AggrFuncExpr::ComputeFuncSub(const Coordinates &low,
 }
 
 bool AggrFuncExpr::CheckSupport() const {
+    // first time: no support
+    if (!min_max_init_) {
+        return false;
+    }
+
     // the support is not valid if it is not a valid window anymore
     for (size_t i = 0; i < dims_; i++) {
         if (!low_lens_[i]->Contains(min_support_low_[i]) ||
@@ -335,179 +340,177 @@ bool AggrFuncExpr::CheckSupport() const {
 }
 
 void AggrFuncExpr::ComputeMinMax() const {
-    if (!min_max_init_) {
-        IntervalValue new_min_max;
-        Coordinates new_min_support_low, new_min_support_lens;
-        Coordinates new_max_support_low, new_max_support_lens;
+    IntervalValue new_min_max;
+    Coordinates new_min_support_low, new_min_support_lens;
+    Coordinates new_max_support_low, new_max_support_lens;
 
-        // First case: variables are bound
-        bool vars_bound = true;
-        for (size_t i = 0; i < 2 * dims_; i++) {
-            if (!low_lens_[i]->Bound()) {
-                vars_bound = false;
-                break;
-            }
+    // First case: variables are bound
+    bool vars_bound = true;
+    for (size_t i = 0; i < 2 * dims_; i++) {
+        if (!low_lens_[i]->Bound()) {
+            vars_bound = false;
+            break;
+        }
+    }
+
+    if (vars_bound) {
+        if (CheckSupport()) {
+            return;
+        }
+        Coordinates low(dims_), high(dims_), lens(dims_);
+        for (size_t i = 0; i < dims_; i++) {
+            low[i] = low_lens_[i]->Value();
+            lens[i] = low_lens_[dims_ + i]->Value();
+            high[i] = low[i] + lens[i] - 1;
         }
 
-        if (vars_bound) {
+        new_min_max = ComputeFunc(low, high);
+        new_min_support_low = new_max_support_low = low;
+        new_min_support_lens = new_max_support_lens = lens;
+    } else {
+        // Second case: below threshold and individual checks
+        uint64_t reg_num = 1;
+        for (size_t i = 0; i < 2 * dims_; i++) {
+            reg_num *= low_lens_[i]->Size();
+        }
+
+        if (reg_num <= INDIVIDUAL_CHECK_THRESHOLD) {
             if (CheckSupport()) {
                 return;
             }
+            /*
+             * Here we need to go through every possible combination
+             * of coords/lens, which might be tricky for an arbitrary
+             * number of dimensions...
+             */
             Coordinates low(dims_), high(dims_), lens(dims_);
             for (size_t i = 0; i < dims_; i++) {
-                low[i] = low_lens_[i]->Value();
-                lens[i] = low_lens_[dims_ + i]->Value();
+                low_lens_iters_[i]->Init();
+                low_lens_iters_[dims_ + i]->Init();
+                low[i] = low_lens_iters_[i]->Value();
+                lens[i] = low_lens_iters_[dims_ + i]->Value();
                 high[i] = low[i] + lens[i] - 1;
             }
 
-            new_min_max = ComputeFunc(low, high);
-            new_min_support_low = new_max_support_low = low;
-            new_min_support_lens = new_max_support_lens = lens;
-        } else {
-            // Second case: below threshold and individual checks
-            uint64_t reg_num = 1;
-            for (size_t i = 0; i < 2 * dims_; i++) {
-                reg_num *= low_lens_[i]->Size();
-            }
-
-            if (reg_num <= INDIVIDUAL_CHECK_THRESHOLD) {
-                if (CheckSupport()) {
-                    return;
+            while (true) {
+                const IntervalValue val = ComputeFunc(low, high);
+                if (new_min_max.state_ == IntervalValue::NUL) {
+                    new_min_max = val;
+                    new_min_support_low = new_max_support_low = low;
+                    new_min_support_lens = new_max_support_lens = high;
+                } else if (val.state_ != IntervalValue::NUL) {
+                    if (val.min_ < new_min_max.min_) {
+                        new_min_max.min_ = val.min_;
+                        new_min_support_low = low;
+                        new_min_support_lens = high;
+                    }
+                    if (val.max_ > new_min_max.max_) {
+                        new_min_max.max_ = val.max_;
+                        new_max_support_low = low;
+                        new_max_support_lens = high;
+                    }
+                    if (val.state_ == IntervalValue::MAY_NULL) {
+                        new_min_max.state_ = IntervalValue::MAY_NULL;
+                    }
                 }
+
                 /*
-                 * Here we need to go through every possible combination
-                 * of coords/lens, which might be tricky for an arbitrary
-                 * number of dimensions...
+                 *  Move to a new region. We try to move the current
+                 *  iterator while possible, and then reset and move to
+                 *  the next one and so on...
                  */
-                Coordinates low(dims_), high(dims_), lens(dims_);
-                for (size_t i = 0; i < dims_; i++) {
-                    low_lens_iters_[i]->Init();
-                    low_lens_iters_[dims_ + i]->Init();
-                    low[i] = low_lens_iters_[i]->Value();
-                    lens[i] = low_lens_iters_[dims_ + i]->Value();
-                    high[i] = low[i] + lens[i] - 1;
-                }
+                size_t i = 0;
+                while (i < 2 * dims_) {
+                    IntVarIterator *it = low_lens_iters_[i];
+                    const size_t k = i;
 
-                while (true) {
-                    const IntervalValue val = ComputeFunc(low, high);
-                    if (new_min_max.state_ == IntervalValue::NUL) {
-                        new_min_max = val;
-                        new_min_support_low = new_max_support_low = low;
-                        new_min_support_lens = new_max_support_lens = high;
-                    } else if (val.state_ != IntervalValue::NUL) {
-                        if (val.min_ < new_min_max.min_) {
-                            new_min_max.min_ = val.min_;
-                            new_min_support_low = low;
-                            new_min_support_lens = high;
-                        }
-                        if (val.max_ > new_min_max.max_) {
-                            new_min_max.max_ = val.max_;
-                            new_max_support_low = low;
-                            new_max_support_lens = high;
-                        }
-                        if (val.state_ == IntervalValue::MAY_NULL) {
-                            new_min_max.state_ = IntervalValue::MAY_NULL;
-                        }
+                    it->Next();
+                    if (!it->Ok()) {
+                        it->Init();
+                        i++;
                     }
 
-                    /*
-                     *  Move to a new region. We try to move the current
-                     *  iterator while possible, and then reset and move to
-                     *  the next one and so on...
-                     */
-                    size_t i = 0;
-                    while (i < 2 * dims_) {
-                        IntVarIterator *it = low_lens_iters_[i];
-                        const size_t k = i;
-
-                        it->Next();
-                        if (!it->Ok()) {
-                            it->Init();
-                            i++;
-                        }
-
-                        if (k < dims_) {
-                            low[k] = it->Value();
-                            high[k] = low[k] + lens[k] - 1;
-                        } else {
-                            lens[k - dims_] = it->Value();
-                            high[k - dims_] = lens[k - dims_] +
-                                    low[k - dims_] - 1;
-                        }
-
-                        if (k == i) {
-                            break;
-                        }
+                    if (k < dims_) {
+                        low[k] = it->Value();
+                        high[k] = low[k] + lens[k] - 1;
+                    } else {
+                        lens[k - dims_] = it->Value();
+                        high[k - dims_] = lens[k - dims_] +
+                                low[k - dims_] - 1;
                     }
 
-                    // more regions? not if we have exhausted all iterators
-                    if (i == 2 * dims_) {
+                    if (k == i) {
                         break;
                     }
                 }
-            } else {
-                // Third case: MBR + min/max based
-                Coordinates low(dims_), high(dims_), lens(dims_);
-                uint64_t min_size = 1, max_size = 1;
-                bool mbr_changed = false;
-                for (size_t i = 0; i < dims_; i++) {
-                    low[i] = low_lens_[i]->Min();
-                    high[i] = low_lens_[i]->Max() +
-                            low_lens_[dims_ + i]->Max() - 1;
-                    lens[i] = high[i] - low[i] + 1;
-                    min_size *= low_lens_[dims_ + i]->Min();
-                    max_size *= low_lens_[dims_ + i]->Max();
 
-                    // min/max supports are equal for MBRs
-                    if (low[i] != min_support_low_[i] ||
-                            lens[i] != min_support_lens_[i]) {
-                        mbr_changed = true;
-                    }
+                // more regions? not if we have exhausted all iterators
+                if (i == 2 * dims_) {
+                    break;
                 }
-
-                if (!mbr_changed) {
-                    /*
-                     * Strictly speaking, we might have different
-                     * min_size or max_size here, but this is probably
-                     * going to be really rare.
-                     */
-                    return;
-                }
-
-                new_min_max = ComputeFuncSub(low, high, min_size, max_size);
-                new_min_support_low = new_max_support_low = low;
-                new_min_support_lens = new_max_support_lens = lens;
             }
-        }
+        } else {
+            // Third case: MBR + min/max based
+            Coordinates low(dims_), high(dims_), lens(dims_);
+            uint64_t min_size = 1, max_size = 1;
+            bool mbr_changed = false;
+            for (size_t i = 0; i < dims_; i++) {
+                low[i] = low_lens_[i]->Min();
+                high[i] = low_lens_[i]->Max() +
+                        low_lens_[dims_ + i]->Max() - 1;
+                lens[i] = high[i] - low[i] + 1;
+                min_size *= low_lens_[dims_ + i]->Min();
+                max_size *= low_lens_[dims_ + i]->Max();
 
-        /*
-         * At this point we have a proper new_min_max and supports. We need
-         * to analyze the value and properly save it.
-         */
-        Solver * const s = solver();
-        if (new_min_max.state_ == IntervalValue::NUL) {
-            s->Fail();
-        }
+                // min/max supports are equal for MBRs
+                if (low[i] != min_support_low_[i] ||
+                        lens[i] != min_support_lens_[i]) {
+                    mbr_changed = true;
+                }
+            }
 
-        /*
-         * Need to convert from double to int64, since or-tools do not support
-         * floating values. For now, just round them to the nearest integer.
-         *
-         * TODO: revisit later if floats/doubles become available.
-         */
-        int64 new_min = floor(new_min_max.min_);
-        int64 new_max = ceil(new_min_max.max_);
+            if (min_max_init_ && !mbr_changed) {
+                /*
+                 * Strictly speaking, we might have different
+                 * min_size or max_size here, but this is probably
+                 * going to be really rare.
+                 */
+                return;
+            }
 
-        // save the values and supports
-        s->SaveAndSetValue(&min_, new_min);
-        s->SaveAndSetValue(&max_, new_max);
-        s->SaveAndSetValue(&min_max_init_, true);
-        for (size_t i = 0; i < dims_; i++) {
-            SaveCoordinate(&min_support_low_[i], new_min_support_low[i]);
-            SaveCoordinate(&min_support_lens_[i], new_min_support_lens[i]);
-            SaveCoordinate(&max_support_low_[i], new_max_support_low[i]);
-            SaveCoordinate(&max_support_lens_[i], new_max_support_lens[i]);
+            new_min_max = ComputeFuncSub(low, high, min_size, max_size);
+            new_min_support_low = new_max_support_low = low;
+            new_min_support_lens = new_max_support_lens = lens;
         }
+    }
+
+    /*
+     * At this point we have a proper new_min_max and supports. We need
+     * to analyze the value and properly save it.
+     */
+    Solver * const s = solver();
+    if (new_min_max.state_ == IntervalValue::NUL) {
+        s->Fail();
+    }
+
+    /*
+     * Need to convert from double to int64, since or-tools do not support
+     * floating values. For now, just round them to the nearest integer.
+     *
+     * TODO: revisit later if floats/doubles become available.
+     */
+    int64 new_min = floor(new_min_max.min_);
+    int64 new_max = ceil(new_min_max.max_);
+
+    // save the values and supports
+    s->SaveAndSetValue(&min_, new_min);
+    s->SaveAndSetValue(&max_, new_max);
+    s->SaveAndSetValue(&min_max_init_, true);
+    for (size_t i = 0; i < dims_; i++) {
+        SaveCoordinate(&min_support_low_[i], new_min_support_low[i]);
+        SaveCoordinate(&min_support_lens_[i], new_min_support_lens[i]);
+        SaveCoordinate(&max_support_low_[i], new_max_support_low[i]);
+        SaveCoordinate(&max_support_lens_[i], new_max_support_lens[i]);
     }
 }
 
