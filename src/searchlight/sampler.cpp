@@ -552,21 +552,33 @@ void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,
     Coordinates pos(2);
     pos[1] = attr_orig_id;
     for (pos[0] = 0; pos[0] < chunks_num_; pos[0]++) {
-        if (!min_iterator->setPosition(pos) ||
-                !max_iterator->setPosition(pos) ||
-                !count_iterator->setPosition(pos) ||
-                !sum_iterator->setPosition(pos)) {
-            std::ostringstream err_msg;
-            err_msg << "Cannot get info from sample, chunk=" << pos[0] <<
-                    "attr=" << pos[1];
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << err_msg.str();
+        if (count_iterator->setPosition(pos) && !count_iterator->isEmpty()) {
+            const uint64_t count = count_iterator->getItem().getUint64();
+            if (count == 0) {
+                // empty chunk (old case, when we have all chunks in the array)
+                chunks.push_back(Chunk());
+            } else {
+                // should be a non-empty chunk for sure
+                if (!min_iterator->setPosition(pos) ||
+                    !max_iterator->setPosition(pos) ||
+                    !sum_iterator->setPosition(pos)) {
+
+                    std::ostringstream err_msg;
+                    err_msg << "Cannot get info from sample, chunk=" <<
+                            pos[0] << "attr=" << pos[1];
+                    throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                            SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
+                }
+
+                const double minv = min_iterator->getItem().getDouble();
+                const double maxv = max_iterator->getItem().getDouble();
+                const double sumv = sum_iterator->getItem().getDouble();
+                chunks.push_back(Chunk(minv, maxv, sumv, count));
+            }
+        } else {
+            // empty chunk (new case, where empty array areas == empty chunks)
+            chunks.push_back(Chunk());
         }
-        const double minv = min_iterator->getItem().getDouble();
-        const double maxv = max_iterator->getItem().getDouble();
-        const double sumv = sum_iterator->getItem().getDouble();
-        const uint64_t count = count_iterator->getItem().getUint64();
-        chunks.push_back(Chunk(minv, maxv, sumv, count));
     }
 }
 

@@ -167,6 +167,14 @@ public:
             min_(min), max_(max), sum_(sum), count_(count) {}
 
         /**
+         * Constructs an empty chunk.
+         *
+         * Note, this is a valid chunk if it describes an empty area of the
+         * sampled array. All other routines should accout for count == 0.
+         */
+        Chunk() : min_(0), max_(0), sum_(0), count_(0) {}
+
+        /**
          * Checks if the chunk is empty. Empty means all its elements are
          * empty or null.
          *
