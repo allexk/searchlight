@@ -35,7 +35,7 @@ namespace searchlight {
 
 // The logger
 static log4cxx::LoggerPtr logger(
-        log4cxx::Logger::getLogger("searchlight.sampler"));
+        log4cxx::Logger::getLogger("searchlight.adapter"));
 
 Adapter::~Adapter() {
     const auto secs = std::chrono::duration_cast<std::chrono::seconds>(
