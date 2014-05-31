@@ -229,6 +229,8 @@ private:
             }
 
             if (valid_) {
+                // align by the chunk boundary
+                pos_[i] -= pos_[i] % sampler_.chunk_sizes_[i];
                 if (i == pos_.size() - 1) {
                     chunk_pos_++;
                 } else {
@@ -253,7 +255,13 @@ private:
         bool CoversFullChunk() const {
             bool res = true;
             for (size_t i = 0; i < pos_.size(); i++) {
-                if (pos_[i] % sampler_.chunk_sizes_[i] != 0) {
+                const Coordinate chunk_size = sampler_.chunk_sizes_[i];
+                /*
+                 * The point must be aligned with the leftmost corner of the
+                 * chunk + the region must cover it fully.
+                 */
+                if (pos_[i] % chunk_size != 0 ||
+                        region_high_[i] - pos_[i] + 1 < chunk_size) {
                     res = false;
                     break;
                 }
@@ -267,20 +275,19 @@ private:
          */
         void GetCoveredChunk(Coordinates &low, Coordinates &high) const {
             low = pos_;
-            for (size_t i = 0; i < pos_.size(); i++) {
-                const Coordinate chunk_size = sampler_.chunk_sizes_[i];
-                high[i] = (pos_[i] - pos_[i] % chunk_size) + chunk_size - 1;
-            }
+            high.resize(pos_.size());
+            GetHighChunkCoords(high);
         }
 
         /*
          * Computes the number of elements in the covered part of the chunk.
          */
         uint64_t GetPartSize() const {
+            Coordinates high_pos(pos_.size());
+            GetHighChunkCoords(high_pos);
             uint64_t res = 1;
             for (size_t i = 0; i < pos_.size(); i++) {
-                const Coordinate chunk_size = sampler_.chunk_sizes_[i];
-                res *= chunk_size - pos_[i] % chunk_size;
+                res *= (high_pos[i] - pos_[i] + 1);
             }
             return res;
         }
@@ -302,6 +309,20 @@ private:
             }
 
             return pos;
+        }
+
+        /*
+         * Computes rightmost coordinates for the current chunk. The array
+         * must be of the appropriate size.
+         */
+        void GetHighChunkCoords(Coordinates &high) const {
+            for (size_t i = 0; i < pos_.size(); i++) {
+                const Coordinate chunk_size = sampler_.chunk_sizes_[i];
+                high[i] = (pos_[i] - pos_[i] % chunk_size) + chunk_size - 1;
+                if (high[i] > region_high_[i]) {
+                    high[i] = region_high_[i];
+                }
+            }
         }
 
         // Current position
