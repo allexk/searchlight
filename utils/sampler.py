@@ -158,6 +158,10 @@ script_file = open(script_file_name, 'w')
 
 raw_sample_array_name = 'raw_' + sample_array_name
 script_file.write('#!/bin/bash\n\n')
+
+script_file.write('# Set the proper PATH\n')
+script_file.write("PATH=%s:$PATH\n\n" % opts.bindir)
+
 script_file.write('# Remove old and create a new raw array\n')
 script_file.write("iquery -a -q 'remove(%s)'\n" % raw_sample_array_name)
 script_file.write("iquery -q 'create array %s <chunk: int64, attr: int64, \
