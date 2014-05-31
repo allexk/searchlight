@@ -159,11 +159,14 @@ script_file = open(script_file_name, 'w')
 raw_sample_array_name = 'raw_' + sample_array_name
 script_file.write('#!/bin/bash\n\n')
 
+script_file.write('# Exit on error\nset -e\n\n')
+
 script_file.write('# Set the proper PATH\n')
 script_file.write("PATH=%s:$PATH\n\n" % opts.bindir)
 
 script_file.write('# Remove old and create a new raw array\n')
-script_file.write("iquery -a -q 'remove(%s)'\n" % raw_sample_array_name)
+script_file.write("iquery --ignore-errors -a -q 'remove(%s)'\n" % \
+    raw_sample_array_name)
 script_file.write("iquery -q 'create array %s <chunk: int64, attr: int64, \
 min: double, max: double, sum: double, count: uint64>[i=0:*,10000,0]'\n\n" % \
     raw_sample_array_name)
@@ -175,7 +178,7 @@ script_file.write("csv2scidb -i %s -o %s -c 10000 -f 0 -p NNNNNN -s 1\n\n" % \
     (csv_file_name, sdb_file_name))
 
 script_file.write('# Loading the CSV into the raw array\n')
-script_file.write("iquery -q 'load %s from '\\''%s'\\'\n\n" % \
+script_file.write("iquery -n -q 'load %s from '\\''%s'\\'\n\n" % \
     (raw_sample_array_name, sdb_file_name))
 
 script_file.write('# Creating the sample array\n')
@@ -185,7 +188,7 @@ attr=0:%d,%d,0]'\n\n" % (sample_array_name, total_chunks - 1,
         total_chunks, len(attrs) - 1, len(attrs)))
 
 script_file.write('# Converting raw to sample\n')
-script_file.write("iquery -a -q 'redimension_store(%s, %s)'\n" % \
+script_file.write("iquery -n -a -q 'redimension_store(%s, %s)'\n" % \
     (raw_sample_array_name, sample_array_name))
 
 script_file.close()
