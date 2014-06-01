@@ -85,9 +85,20 @@ void SemWindowsAvg(Searchlight *sl, const std::string &params) {
     solver.AddConstraint(solver.MakeBetweenCt(avg, avg_l, avg_u));
 
     // create the search phase
-    DecisionBuilder * const db = solver.MakePhase(all_vars,
-            Solver::CHOOSE_FIRST_UNBOUND,
+    const std::string &search_heuristic = pmap["db"];
+    DecisionBuilder *db;
+    if (search_heuristic == "impact") {
+        db = solver.MakeDefaultPhase(all_vars);
+    } else if (search_heuristic == "random") {
+        db = solver.MakePhase(all_vars, Solver::CHOOSE_RANDOM,
+            Solver::ASSIGN_RANDOM_VALUE);
+    } else if (search_heuristic == "split") {
+        db = solver.MakePhase(all_vars, Solver::CHOOSE_MAX_SIZE,
+            Solver::SPLIT_LOWER_HALF);
+    } else {
+        db = solver.MakePhase(all_vars, Solver::CHOOSE_FIRST_UNBOUND,
             Solver::ASSIGN_MIN_VALUE);
+    }
 
     // solve!
     std::vector<SearchMonitor *> mons;
