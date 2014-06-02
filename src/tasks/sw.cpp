@@ -53,14 +53,18 @@ void SemWindowsAvg(Searchlight *sl, const std::string &params) {
     const int32 avg_u = boost::lexical_cast<int32>(pmap["avg_u"]);
     const int32 size_l = boost::lexical_cast<int32>(pmap["size_l"]);
     const int32 size_u = boost::lexical_cast<int32>(pmap["size_u"]);
+    const int32 len_lx = boost::lexical_cast<int32>(pmap["len_lx"]);
+    const int32 len_ux = boost::lexical_cast<int32>(pmap["len_ux"]);
+    const int32 len_ly = boost::lexical_cast<int32>(pmap["len_ly"]);
+    const int32 len_uy = boost::lexical_cast<int32>(pmap["len_uy"]);
 
     // problem params
     std::vector<IntVar *> coords(2);
     std::vector<IntVar *> lens(2);
     coords[0] = solver.MakeIntVar(start_x, end_x, "x");
     coords[1] = solver.MakeIntVar(start_y, end_y, "y");
-    lens[0] = solver.MakeIntVar(1, size_u, "lx");
-    lens[1] = solver.MakeIntVar(1, size_u, "ly");
+    lens[0] = solver.MakeIntVar(len_lx, len_ux, "lx");
+    lens[1] = solver.MakeIntVar(len_ly, len_uy, "ly");
 
     // convenience -- all vars in a single vector
     std::vector<IntVar *> all_vars(coords);
