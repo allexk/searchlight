@@ -124,7 +124,8 @@ bool ValidatorMonitor::AtSolution() {
 
     // Store the solution (assuming complete assignment)
     asgn->Store();
-    LOG4CXX_DEBUG(logger, "Encountered a leaf: " << asgn->DebugString());
+    LOG4CXX_DEBUG(logger, "Encountered a leaf: " << asgn->DebugString() <<
+            ", depth=" << solver()->SearchDepth());
 
     // Should check if we have a complete assignment
     bool complete = true;
