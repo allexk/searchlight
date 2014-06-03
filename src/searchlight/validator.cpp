@@ -52,12 +52,8 @@ public:
      * Constructs a restore assignment decision.
      *
      * @param asgn the assignment to restore
-     * @param callback_flag_ref pointer to a flag that should be set when
-     *  Apply() is called
      */
-    RestoreAssignment(AssignmentPtr asgn, bool *callback_flag_ref) :
-        asgn_(asgn),
-        callback_flag_ref_(callback_flag_ref) {}
+    RestoreAssignment(AssignmentPtr asgn) : asgn_(asgn) {}
 
     /**
      * The destructor.
@@ -70,8 +66,6 @@ public:
      * @param s the solver
      */
     virtual void Apply(Solver* const s) {
-        // callback_flag should be set back after we backtrack
-        s->SaveAndSetValue(callback_flag_ref_, true);
         LOG4CXX_DEBUG(logger, "Validating: " << asgn_->DebugString());
         asgn_->Restore();
     }
@@ -95,9 +89,6 @@ public:
 private:
     // The assignment to restore
     AssignmentPtr asgn_;
-
-    // The flag to set when the Apply is called
-    bool *callback_flag_ref_;
 };
 
 /**
@@ -111,17 +102,14 @@ private:
  *
  * Since we have to produce a leaf after every successful restoration, this
  * db produces alternate decisions: after a successful restore a NULL is
- * generated that cuts the left branch. This is mostly taken care of by
- * the solver itself.
+ * generated that cuts the left branch and signals a leaf. This is mostly
+ * taken care of by the solver itself; we just need to return NULL.
  *
- * The flag we give the RestoreAssignment allows us to distinguish between
- * two different situations: successful restoration and failure. During the
- * latter the flag is unchanged and we just generate the next check
- * (after an empty Refute, of course). But if we are successful, the flag
- * is true and we are at a leaf, which we signal to the solver by
- * returning NULL. Then, after an empty Refute, we continue. The flag is
- * restored automatically to false every time via the backtracking.
- *
+ * Note that we also inherit from SearchMonitor since we need its functionality.
+ * First of all, we need to restart the search to perform garbage collecting.
+ * Secondly, we need to detect when the current assignment was validated
+ * successfully to produce NULL and, thus, signal a leaf to the solver. This
+ * is done via AfterDecision().
  */
 class RestoreAssignmentBuilder : public DecisionBuilder {
 public:
@@ -130,33 +118,42 @@ public:
      * Creates a new restore assignment builder.
      *
      * @param validator the validator producing assignments
+     * @param s the solver
      */
-    explicit RestoreAssignmentBuilder(Validator &validator)
+    explicit RestoreAssignmentBuilder(Validator &validator, Solver *s)
         : validator_(validator),
-          just_restored_(false) {}
+          just_restored_(false),
+          aux_monitor_(&just_restored_, s) {}
+
 
     /**
-     * Destructor.
+     * Establishes additional monitors for the search.
+     *
+     * @param solver the solver
+     * @param extras vector to add monitors to
      */
-    virtual ~RestoreAssignmentBuilder() {}
-
+    virtual void AppendMonitors(Solver* const solver,
+                                std::vector<SearchMonitor*>* const extras) {
+        extras->push_back(&aux_monitor_);
+    }
 
     /**
-     * Sets variable values according to the assignment. Always returns
-     * NULL, since search does not go beyond assigning values.
+     * Produces a decision to assign values to variables, which effectively
+     * validates the assignment.
      *
      * @param solver the current solver
-     * @return NULL
+     * @return the next decision or nullptr to signify a leaf
      */
     virtual Decision* Next(Solver* const solver) {
         if (just_restored_) {
            /*
             * We are here since the restoration was successful: cut the branch.
-            * just_restored_ will fall back to 'false' automatically.
             *
-            * Also, this will trigger visiting the leaf at the collector.
+            * Also, this will trigger visiting the leaf at the collector, since
+            * this is a valid solution.
             */
-            return NULL;
+            just_restored_ = false;
+            return nullptr;
         }
 
         // check for searchlight termination
@@ -190,8 +187,7 @@ public:
 
         AssignmentPtr next_asgn = asgns_.back();
         asgns_.pop_back();
-        return solver->RevAlloc(new RestoreAssignment(next_asgn,
-                &just_restored_));
+        return solver->RevAlloc(new RestoreAssignment(next_asgn));
     }
 
     /**
@@ -203,6 +199,54 @@ public:
     }
 
  private:
+    /*
+     * We need this Monitor to perform auxiliary tasks for the decision builder.
+     * First of all, we need to restart the search to perform garbage
+     * collecting. Secondly, we need to detect when the current assignment wa
+     * validated successfully to produce NULL and, thus, signal a leaf to the
+     * solver. This is done via AfterDecision().
+     */
+    class AuxRestoreMonitor : public SearchMonitor {
+    public:
+        /*
+         * accept_flag is the flag to toggle at the decision builder after a
+         * successful validation.
+         */
+        AuxRestoreMonitor(bool *accept_flag, Solver *solver) :
+            SearchMonitor(solver),
+            accept_flag_(accept_flag) {}
+
+        /*
+         * Called after a decision was successfully accepted/refuted.
+         */
+        virtual void AfterDecision(Decision* const d, bool apply) {
+            if (apply) {
+                // Assignment was validated successfully
+                *accept_flag_ = true;
+            } else {
+                // Restart the search for garbage collecting
+                if (solver()->SearchDepth() > MAX_ASSGNS_BEFORE_RESTART) {
+                    LOG4CXX_INFO(logger,
+                            "Restarting the validator for garbage collecting");
+                    RestartCurrentSearch();
+                    solver()->Fail();
+                }
+            }
+        }
+
+    private:
+        // Flag to change when the next assignment is validated
+        bool *accept_flag_;
+
+        /*
+         * This parameter specifies the maximum number of assignments to check
+         * before the validator makes a restart. This can be seen as periodic
+         * garbage collecting, since restarting destroys elements Alloced with
+         * the solver.
+         */
+        static const int MAX_ASSGNS_BEFORE_RESTART = 1024;
+    };
+
     // The validator producing the assignments
     Validator &validator_;
 
@@ -215,6 +259,9 @@ public:
      * leaf-based).
      */
     bool just_restored_;
+
+    // The auxiliiary monitor
+    AuxRestoreMonitor aux_monitor_;
 };
 
 Validator::Validator(const Searchlight &sl, const StringVector &var_names,
@@ -307,7 +354,8 @@ void Validator::AddSolution(const Assignment &sol) {
 
 void Validator::operator()() {
     LOG4CXX_INFO(logger, "Starting the validator search");
-    DecisionBuilder *db = solver_.RevAlloc(new RestoreAssignmentBuilder(*this));
+    DecisionBuilder *db =
+            solver_.RevAlloc(new RestoreAssignmentBuilder(*this, &solver_));
     solver_status_ = solver_.Solve(db, collector_);
 }
 
