@@ -26,7 +26,8 @@ include_directories(${GFLAGS_INCLUDE_DIRS})
 include_directories(${LOG4CXX_INCLUDE_DIRS})
 
 # add c++0x compatibility and turn-off STL deprecated warnings (needed for or-tools)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++0x -Wno-deprecated")
+# other warnings are turned off because of SciDb and or-tools
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++0x -Wall -Wextra -Wno-strict-aliasing -Wno-sign-compare -Wno-deprecated -Wno-unused-parameter -Wno-ignored-qualifiers")
 
 # if we are 64-bit, define it (again, for or-tools)
 if (CMAKE_SIZEOF_VOID_P EQUAL 8)
