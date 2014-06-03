@@ -262,7 +262,7 @@ private:
         size_t chunk_;
 
         Effort(double value, uint64_t number, size_t chunk) :
-            value_(value), number_(number_), chunk_(chunk) {}
+            value_(value), number_(number), chunk_(chunk) {}
 
         bool operator<(const Effort &other) const {
             return value_ < other.value_;
