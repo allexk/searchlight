@@ -35,6 +35,12 @@
 
 #include <constraint_solver/model.pb.h>
 
+/**
+ * The maximum number of pending validations. If the number is exceeded the
+ * main solver will block until the validator catches up.
+ */
+static const int MAX_PENDING_VALIDATIONS = 500;
+
 namespace searchlight {
 
 // The logger
@@ -346,9 +352,19 @@ void Validator::AddSolution(const Assignment &sol) {
 
     LOG4CXX_DEBUG(logger, "New solution to validate: " << sol.DebugString());
 
-    to_validate_mtx_.lock();
+    boost::unique_lock<boost::mutex> validate_lock(to_validate_mtx_);
     to_validate_.push_back(AssignmentPtr(asgn));
-    to_validate_mtx_.unlock();
+    while (to_validate_.size() > MAX_PENDING_VALIDATIONS) {
+        /*
+         * It is safe to use the same condition since the validator will be
+         * certainly non-blocked.
+         */
+        LOG4CXX_DEBUG(logger, "Waiting for the validator to catch up"
+                ", queue size=" << to_validate_.size());
+        validate_cond_.wait(validate_lock);
+    }
+
+    // Notify the validator in case it is blocked and unlock
     validate_cond_.notify_one();
 }
 
@@ -416,6 +432,9 @@ AssignmentPtrVector *Validator::GetNextAssignments() {
     res->reserve(to_validate_.size());
     res->insert(res->end(), to_validate_.begin(), to_validate_.end());
     to_validate_.clear();
+
+    // Notify the main solver about catching up
+    validate_cond_.notify_one();
 
     return res;
 }
