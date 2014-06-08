@@ -103,7 +103,9 @@ public:
      * @return the minimum of the expression
      */
     virtual int64 Min() const {
-        ComputeMinMax();
+        if (!ComputeMinMax()) {
+            solver()->Fail();
+        }
         return min_;
     }
 
@@ -116,8 +118,7 @@ public:
      * @param m the minimum to set
      */
     virtual void SetMin(int64 m) {
-        ComputeMinMax();
-        if (max_ < m) {
+        if (!ComputeMinMax() || m > max_) {
             solver()->Fail();
         }
     }
@@ -128,7 +129,9 @@ public:
      * @return the maximum of the expression
      */
     virtual int64 Max() const {
-        ComputeMinMax();
+        if (!ComputeMinMax()) {
+            solver()->Fail();
+        }
         return max_;
     }
 
@@ -141,8 +144,7 @@ public:
      * @param m the maximum to set
      */
     virtual void SetMax(int64 m) {
-        ComputeMinMax();
-        if (min_ > m) {
+        if (!ComputeMinMax() || m < min_) {
             solver()->Fail();
         }
     }
@@ -216,8 +218,13 @@ private:
      * Computes min/max of the aggregate if necessary.
      * Made const since it is called from Min()/Max(), which are made const
      * by or-tool's design.
+     *
+     * Returns true, if the min/max are set; false, if we need to backtrack.
+     * We fail outside the function to avoid problems with setjmp/longjmp, since
+     * (a) that's how Fail() is implemented (b) we have local objects there that
+     * need dtors.
      */
-    void ComputeMinMax() const;
+    bool ComputeMinMax() const;
 
     /*
      *  Computes the aggregate for the given fixed coordinates.
@@ -339,7 +346,7 @@ bool AggrFuncExpr::CheckSupport() const {
     return true;
 }
 
-void AggrFuncExpr::ComputeMinMax() const {
+bool AggrFuncExpr::ComputeMinMax() const {
     IntervalValue new_min_max;
     Coordinates new_min_support_low, new_min_support_lens;
     Coordinates new_max_support_low, new_max_support_lens;
@@ -355,7 +362,7 @@ void AggrFuncExpr::ComputeMinMax() const {
 
     if (vars_bound) {
         if (CheckSupport()) {
-            return;
+            return true;
         }
         Coordinates low(dims_), high(dims_), lens(dims_);
         for (size_t i = 0; i < dims_; i++) {
@@ -376,7 +383,7 @@ void AggrFuncExpr::ComputeMinMax() const {
 
         if (reg_num <= INDIVIDUAL_CHECK_THRESHOLD) {
             if (CheckSupport()) {
-                return;
+                return true;
             }
             /*
              * Here we need to go through every possible combination
@@ -475,7 +482,7 @@ void AggrFuncExpr::ComputeMinMax() const {
                  * min_size or max_size here, but this is probably
                  * going to be really rare.
                  */
-                return;
+                return true;
             }
 
             new_min_max = ComputeFuncSub(low, high, min_size, max_size);
@@ -490,7 +497,7 @@ void AggrFuncExpr::ComputeMinMax() const {
      */
     Solver * const s = solver();
     if (new_min_max.state_ == IntervalValue::NUL) {
-        s->Fail();
+        return false;
     }
 
     /*
@@ -516,6 +523,8 @@ void AggrFuncExpr::ComputeMinMax() const {
         SaveCoordinate(&max_support_low_[i], new_max_support_low[i]);
         SaveCoordinate(&max_support_lens_[i], new_max_support_lens[i]);
     }
+
+    return true;
 }
 
 extern "C"

@@ -283,6 +283,21 @@ public:
     }
 
     /**
+     * Creates a new defaul SL search heuristic. The caller is responsible
+     * for destruction.
+     *
+     * @param primary_vars primary decision variables
+     * @param secondary_vars secondary variables
+     * @param splits number of interval splits for primary variables
+     * @param search_time_limit time limit in seconds (<0 -- no limit)
+     *
+     * @return SL search heuristic
+     */
+    DecisionBuilder *CreateDefaultHeuristic(const IntVarVector &primary_vars,
+            const IntVarVector &secondary_vars, size_t splits,
+            int64_t search_time_limit);
+
+    /**
      * Registers a solution collector for handling the exact results. SL is
      * not responsible for deleting it.
      *
@@ -290,6 +305,17 @@ public:
      */
     void RegisterCollector(SearchlightCollector *collector) {
         collector_ = collector;
+    }
+
+    /**
+     * Returns monitors attached to the main solver during the search.
+     * Calling this function before starting the search via Solve() is
+     * meaningless, since that function establishes monitors.
+     *
+     * @return main solver monitors
+     */
+    const std::vector<SearchMonitor *> &GetMainMonitors() const {
+        return main_solver_monitors_;
     }
 
     /**
@@ -337,6 +363,8 @@ private:
     // Total time spent on solving
     std::chrono::microseconds total_solve_time_;
 
+    // Monitors on the main solver
+    std::vector<SearchMonitor *> main_solver_monitors_;
 };
 
 /**

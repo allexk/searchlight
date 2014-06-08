@@ -62,11 +62,6 @@ public:
     RestoreAssignment(AssignmentPtr asgn) : asgn_(asgn) {}
 
     /**
-     * The destructor.
-     */
-    virtual ~RestoreAssignment() {}
-
-    /**
      * The left branch. In this case it restores the assignment.
      *
      * @param s the solver

@@ -37,6 +37,7 @@
 #include <string>
 #include <vector>
 #include <set>
+#include <unordered_map>
 
 #include <log4cxx/log4cxx.h>
 

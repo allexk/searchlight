@@ -31,6 +31,7 @@
 #include "searchlight.h"
 #include "validator.h"
 #include "searchlight_collector.h"
+#include "default_search.h"
 
 namespace searchlight {
 
@@ -77,19 +78,19 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
     boost::thread validator_thread(boost::ref(validator));
 
     // Establish monitors: validator (to transfer leaves) and terminator
-    std::vector<SearchMonitor *> solver_monitors(monitors);
+    main_solver_monitors_ = monitors;
     ValidatorMonitor val_monitor(validator, vars, &solver_);
     SearchLimit *terminator = solver_.MakeCustomLimit(
             NewPermanentCallback(this, &Searchlight::CheckTerminate));
-    solver_monitors.push_back(&val_monitor);
-    solver_monitors.push_back(terminator);
+    main_solver_monitors_.push_back(&val_monitor);
+    main_solver_monitors_.push_back(terminator);
 
     // starting the timer
     const auto solve_start_time = std::chrono::steady_clock::now();
 
     // start the search
     LOG4CXX_INFO(logger, "Starting the main search");
-    solver_.Solve(db, solver_monitors);
+    solver_.Solve(db, main_solver_monitors_);
 
     // Terminate validator
     LOG4CXX_INFO(logger, "Signaling the validator and waiting");
@@ -143,5 +144,13 @@ bool ValidatorMonitor::AtSolution() {
     }
 
     return true;
+}
+
+DecisionBuilder *Searchlight::CreateDefaultHeuristic(
+        const IntVarVector &primary_vars,
+        const IntVarVector &secondary_vars, size_t splits,
+        int64_t search_time_limit) {
+    return new SLSearch(*this, solver_, primary_vars, secondary_vars, splits,
+            search_time_limit);
 }
 } /* namespace searchlight */

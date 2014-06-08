@@ -99,6 +99,9 @@ void SemWindowsAvg(Searchlight *sl, const std::string &params) {
     } else if (search_heuristic == "split") {
         db = solver.MakePhase(all_vars, Solver::CHOOSE_MAX_SIZE,
             Solver::SPLIT_LOWER_HALF);
+    } else if (search_heuristic == "sl") {
+        db = solver.RevAlloc(
+                sl->CreateDefaultHeuristic(coords, lens, 100, 3600));
     } else {
         db = solver.MakePhase(all_vars, Solver::CHOOSE_FIRST_UNBOUND,
             Solver::ASSIGN_MIN_VALUE);
