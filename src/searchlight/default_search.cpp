@@ -260,7 +260,7 @@ public:
      * @return the next decision; nullptr is at a leaf
      */
     virtual Decision* Next(Solver* const s) override {
-        LOG4CXX_DEBUG(logger, "Sampling interval for " << var_->DebugString()
+        LOG4CXX_TRACE(logger, "Sampling interval for " << var_->DebugString()
                 << ", [" << min_ << ", " << max_ << "]");
 
         var_->SetRange(min_, max_);

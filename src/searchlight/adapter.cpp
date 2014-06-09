@@ -50,7 +50,7 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
         const Coordinates &high, AttributeID attr,
         const StringVector &aggr_names) const {
 
-    if (logger->isDebugEnabled()) {
+    if (logger->isTraceEnabled()) {
         std::ostringstream deb_str;
         deb_str << "Aggregate request: Low: ";
         std::copy(low.begin(), low.end(),
@@ -113,7 +113,7 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
     total_req_time_ += std::chrono::duration_cast<decltype(total_req_time_)>(
             req_end_time - req_start_time);
 
-    if (logger->isDebugEnabled()) {
+    if (logger->isTraceEnabled()) {
         std::ostringstream deb_str;
         deb_str << "Computed aggregates: ";
         std::copy(res.begin(), res.end(),
@@ -127,7 +127,7 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
 IntervalValue Adapter::GetElement(const Coordinates &point,
         AttributeID attr) const {
 
-    if (logger->isDebugEnabled()) {
+    if (logger->isTraceEnabled()) {
         std::ostringstream deb_str;
         deb_str << "Element request: Point: ";
         std::copy(point.begin(), point.end(),
@@ -177,7 +177,7 @@ IntervalValue Adapter::GetElement(const Coordinates &point,
     total_req_time_ += std::chrono::duration_cast<decltype(total_req_time_)>(
             req_end_time - req_start_time);
 
-    LOG4CXX_DEBUG(logger, "Computed element: " << res);
+    LOG4CXX_TRACE(logger, "Computed element: " << res);
 
     return res;
 }

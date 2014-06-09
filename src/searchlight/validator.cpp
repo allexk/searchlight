@@ -67,7 +67,7 @@ public:
      * @param s the solver
      */
     virtual void Apply(Solver* const s) {
-        LOG4CXX_DEBUG(logger, "Validating: " << asgn_->DebugString());
+        LOG4CXX_TRACE(logger, "Validating: " << asgn_->DebugString());
         asgn_->Restore();
     }
 
@@ -175,7 +175,7 @@ public:
             }
             asgns_.insert(asgns_.end(), new_asgns->begin(), new_asgns->end());
 
-            LOG4CXX_INFO(logger, "Got " << asgns_.size() << " new assignments "
+            LOG4CXX_TRACE(logger, "Got " << asgns_.size() << " new assignments "
                     "to check");
             delete new_asgns;
         }
@@ -227,7 +227,7 @@ public:
             } else {
                 // Restart the search for garbage collecting
                 if (solver()->SearchDepth() > MAX_ASSGNS_BEFORE_RESTART) {
-                    LOG4CXX_INFO(logger,
+                    LOG4CXX_DEBUG(logger,
                             "Restarting the validator for garbage collecting");
                     RestartCurrentSearch();
                     solver()->Fail();
@@ -345,7 +345,7 @@ void Validator::AddSolution(const Assignment &sol) {
         // The only thing we ignore here is "Activated", which is not needed
     }
 
-    LOG4CXX_DEBUG(logger, "New solution to validate: " << sol.DebugString());
+    LOG4CXX_TRACE(logger, "New solution to validate: " << sol.DebugString());
 
     boost::unique_lock<boost::mutex> validate_lock(to_validate_mtx_);
     to_validate_.push_back(AssignmentPtr(asgn));
@@ -354,7 +354,7 @@ void Validator::AddSolution(const Assignment &sol) {
          * It is safe to use the same condition since the validator will be
          * certainly non-blocked.
          */
-        LOG4CXX_DEBUG(logger, "Waiting for the validator to catch up"
+        LOG4CXX_TRACE(logger, "Waiting for the validator to catch up"
                 ", queue size=" << to_validate_.size());
         validate_cond_.wait(validate_lock);
     }

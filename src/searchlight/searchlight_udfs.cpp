@@ -323,7 +323,7 @@ IntervalValue AggrFuncExpr::ComputeFuncSub(const Coordinates &low,
             break;
     }
 
-    LOG4CXX_DEBUG(logger, "Computed MBR value: " << res);
+    LOG4CXX_TRACE(logger, "Computed MBR value: " << res);
 
     return res;
 }

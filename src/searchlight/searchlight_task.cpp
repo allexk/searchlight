@@ -74,7 +74,8 @@ std::string SearchlightTask::GetNextSolution() {
     std::string res(solutions_queue_.front());
     solutions_queue_.pop_front();
 
-    LOG4CXX_DEBUG(logger, "A new final solution: " << res);
+    LOG4CXX_TRACE(logger, "A solution is found: " << res);
+
     return res;
 }
 

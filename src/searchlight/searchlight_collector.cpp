@@ -37,6 +37,10 @@ namespace searchlight {
 static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.collector"));
 
+// The logger for results
+static log4cxx::LoggerPtr result_logger(
+        log4cxx::Logger::getLogger("searchlight.result"));
+
 TaskSolutionCollector::TaskSolutionCollector(SearchlightTask &task, Solver *s) :
     SolutionCollector(s),
     task_(task) {}
@@ -58,8 +62,12 @@ bool TaskSolutionCollector::AtSolution() {
             sol_string << ", ";
         }
     }
+    const std::string solution = sol_string.str();
 
-    task_.AddSolution(sol_string.str());
+    LOG4CXX_TRACE(logger, "Collected a new solution: " << solution);
+    LOG4CXX_TRACE(result_logger, solution);
+
+    task_.AddSolution(solution);
     return true;
 }
 }
