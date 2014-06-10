@@ -91,11 +91,14 @@ void SemWindowsAvg(Searchlight *sl, const std::string &params) {
     // create the search phase
     const std::string &search_heuristic = pmap["db"];
     DecisionBuilder *db;
+    std::vector<SearchMonitor *> mons;
     if (search_heuristic == "impact") {
         db = solver.MakeDefaultPhase(all_vars);
     } else if (search_heuristic == "random") {
         db = solver.MakePhase(all_vars, Solver::CHOOSE_RANDOM,
             Solver::ASSIGN_RANDOM_VALUE);
+        mons.push_back(solver.MakeLubyRestart(1));
+        mons.push_back(solver.MakeTimeLimit(3600 * 1000));
     } else if (search_heuristic == "split") {
         db = solver.MakePhase(all_vars, Solver::CHOOSE_MAX_SIZE,
             Solver::SPLIT_LOWER_HALF);
@@ -108,7 +111,6 @@ void SemWindowsAvg(Searchlight *sl, const std::string &params) {
     }
 
     // solve!
-    std::vector<SearchMonitor *> mons;
     sl->Solve(db, all_vars, mons);
 }
 } /* namespace searchlight */
