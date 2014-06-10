@@ -308,9 +308,11 @@ public:
     }
 
     /**
-     * Returns monitors attached to the main solver during the search.
-     * Calling this function before starting the search via Solve() is
-     * meaningless, since that function establishes monitors.
+     * Returns monitors attached to the main solver during the search. Since
+     * this function returns a reference to the internal list, it is safe to
+     * call before the Solve(). The list will be populated there. This also
+     * means that checking the list before the search starts is meaningless,
+     * since the list will be empty or incomplete.
      *
      * @return main solver monitors
      */
@@ -398,12 +400,27 @@ public:
      */
     virtual bool AtSolution();
 
+    /**
+     * Returns the number of candidates encountered. This monitor tracks them,
+     * since the number of leaves is not transfered between searches in the
+     * or-tools solver. Thus, it creates problems when nested searches are
+     * used.
+     *
+     * @return the number of candidates
+     */
+    int64_t CandidatesNumber() const {
+        return candidates_;
+    }
+
 private:
     // The validator to pass the solution to
     Validator &validator_;
 
     // The vector of vars (managed outside)
     const IntVarVector &vars_;
+
+    // Candidates encountered
+    int64_t candidates_ = 0;
 };
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_SEARCHLIGHT_H_ */

@@ -242,15 +242,16 @@ public:
      * @param var the var to bind to an interval
      * @param min the left interval bound
      * @param max the right interval bound
-     * @param interval_monitor monitor to collect statistics
+     * @param monitors monitors to establish, vector will be modified inside,
+     *     but left unchanged at exit
      */
     IntervalImpactBuilder(IntVarVector &search_vars, IntVar * const var,
             const int64_t min, const int64_t max,
-            IntervalImpactMonitor &interval_monitor) :
+            std::vector<SearchMonitor *> &monitors) :
 
             search_vars_(search_vars),
             var_(var), min_(min), max_(max),
-            interval_monitor_(interval_monitor) {}
+            monitors_(monitors) {}
 
     /**
      * Produces a new decision. In this case it sets the interval and initiates
@@ -273,7 +274,9 @@ public:
         SearchMonitor * const luby_restart = s->MakeLubyRestart(1);
 
         // Nested search
-        s->Solve(random_db, luby_restart, &interval_monitor_);
+        monitors_.push_back(luby_restart);
+        s->Solve(random_db, monitors_);
+        monitors_.pop_back();
 
         // After the nested search, we have nothing to do. Exit
         return nullptr;
@@ -298,8 +301,8 @@ private:
     // The interval to set
     const int64_t min_, max_;
 
-    // The monitor to establish for the explorer search
-    IntervalImpactMonitor &interval_monitor_;
+    // Monitors to establish for the explorer search
+    std::vector<SearchMonitor *> &monitors_;
 };
 }
 
@@ -377,6 +380,7 @@ Decision* SLSearch::Next(Solver* const s) {
 
 void SLSearch::InitIntervals(Solver * const s, const int64_t steps_limit) {
     LOG4CXX_DEBUG(logger, "Exploring interval impacts");
+    std::vector<SearchMonitor *> nested_monitors(solver_montors_);
     for (auto &var_impact: var_impacts_) {
         for (auto &interval_impact: var_impact.impacts_) {
             const int64 min = interval_impact.first;
@@ -388,9 +392,11 @@ void SLSearch::InitIntervals(Solver * const s, const int64_t steps_limit) {
 
             // TODO: play with the limit?
             IntervalImpactMonitor explorer_monitor{s, 1000};
+            nested_monitors.push_back(&explorer_monitor);
             IntervalImpactBuilder explorer{all_vars_, var_impact.var_,
-                    min, max, explorer_monitor};
+                    min, max, nested_monitors};
             s->Solve(&explorer);
+            nested_monitors.pop_back();
 
             Impact &imp = interval_impact.second;
             imp.tried_assigns_ = explorer_monitor.GetTotalFails();

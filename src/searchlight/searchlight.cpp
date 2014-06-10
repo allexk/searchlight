@@ -111,7 +111,7 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
      * the number of true fails.
      */
     int64 total_fails = solver_.failures();
-    int64 total_candidates = solver_.solutions();
+    int64_t total_candidates = val_monitor.CandidatesNumber();
     LOG4CXX_INFO(logger, "Main search stats: fails=" << total_fails <<
             ", true fails=" << (total_fails - total_candidates) <<
             ", candidates=" << total_candidates);
@@ -140,6 +140,7 @@ bool ValidatorMonitor::AtSolution() {
     }
 
     if (complete) {
+        candidates_++;
         validator_.AddSolution(*asgn);
     }
 
