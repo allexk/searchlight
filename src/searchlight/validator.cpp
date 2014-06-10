@@ -227,7 +227,7 @@ public:
             } else {
                 // Restart the search for garbage collecting
                 if (solver()->SearchDepth() > MAX_ASSGNS_BEFORE_RESTART) {
-                    LOG4CXX_DEBUG(logger,
+                    LOG4CXX_TRACE(logger,
                             "Restarting the validator for garbage collecting");
                     RestartCurrentSearch();
                     solver()->Fail();

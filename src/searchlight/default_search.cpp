@@ -304,6 +304,65 @@ private:
     // Monitors to establish for the explorer search
     std::vector<SearchMonitor *> &monitors_;
 };
+
+/**
+ * This monitors checks the number of fails and leaves reached periodically,
+ * and finishes the search if the ratio is below the threshold.
+ */
+class FinishOnFailsMonitor : public SearchMonitor {
+public:
+    /**
+     * Creates a new check-fail-and-finish monitor.
+     *
+     * @param s the solver
+     * @param period the length of checking period in fails
+     * @param threshold the threshold of finish
+     */
+    FinishOnFailsMonitor(Solver *s, int64_t period, double threshold) :
+        SearchMonitor(s),
+        fails_period_(period), finish_threshold_(threshold) {}
+
+    /**
+     * Called when the solver begins the fail.
+     */
+    virtual void BeginFail() override {
+        fails_++;
+        if (fails_ == fails_period_) {
+            const double ratio = double(leaves_) / fails_;
+            if (ratio <= finish_threshold_) {
+                FinishCurrentSearch();
+            }
+            LOG4CXX_DEBUG(logger, "Finishing the search because "
+                    "of a large fail ratio: " << ratio);
+
+            fails_ = leaves_ = 0;
+        }
+    }
+
+    /**
+     * Called at a leaf.
+     *
+     * @return true, since we want to continue
+     */
+    virtual bool AtSolution() override {
+        leaves_++;
+        return true;
+    }
+
+private:
+    // The length of checking period in fails
+    const int64_t fails_period_;
+
+    // Fails since the last check
+    int64_t fails_ = 0;
+
+    // The number of leaves since the last check
+    int64_t leaves_ = 0;
+
+    // Threshold of leaves/fails at which the search will be finished
+    const double finish_threshold_;
+};
+
 }
 
 Decision* SLSearch::Next(Solver* const s) {
@@ -343,22 +402,46 @@ Decision* SLSearch::Next(Solver* const s) {
     DecisionBuilder * const random_db = s->MakePhase(all_vars_,
             Solver::CHOOSE_RANDOM, Solver::ASSIGN_RANDOM_VALUE);
 
-    // with Luby restarts. TODO: change the scale factor?
-    std::vector<SearchMonitor *> monitors(solver_montors_);
-    monitors.push_back(s->MakeLubyRestart(1));
-
     // set the time limit if needed
+    std::vector<SearchMonitor *> monitors(solver_montors_);
     if (search_time_limit_ >= 0) {
         LOG4CXX_DEBUG(logger, "In-interval search, time left: " <<
                 search_time_limit_);
         monitors.push_back(s->MakeTimeLimit(search_time_limit_ / 2 * 1000));
-    }
 
+        // Make Luby restarts for better coverage. TODO: play the scale factor?
+        monitors.push_back(s->MakeLubyRestart(1));
+    }
+    /*
+     * Establish a finish-on-frequent fails monitor. The rationale behind this
+     * is that if we fail often before a leaf is reached, we are probably
+     * wasting our time, since the search is random. If we don't have a time
+     * limit, we might finish this search faster.
+     *
+     * Note, we don't establish Luby restarts if we don't have a time limit,
+     * since the search will run infinitely long.
+     */
+    monitors.push_back(s->RevAlloc(new FinishOnFailsMonitor{s, 1000, 0.2}));
+
+    // starting the timer
+    const auto solve_start_time = std::chrono::steady_clock::now();
     s->Solve(random_db, monitors);
+    // starting the timer
+    const auto solve_end_time = std::chrono::steady_clock::now();
+
+    // time elapsed (might be less than a half of search_time_limit_, if
+    // FinishOnFails finished the search.
+    int64_t solve_secodns =
+            std::chrono::duration_cast<std::chrono::seconds>
+            (solve_end_time - solve_start_time).count();
+    LOG4CXX_DEBUG(logger, "The search went for " << solve_secodns << "s.");
 
     // Finished this combination of intervals, can safely fail
     if (search_time_limit_ > 0) {
-        search_time_limit_ /= 2;
+        search_time_limit_ -= solve_secodns;
+        if (search_time_limit_ < 0) {
+            search_time_limit_ = 0;
+        }
     }
 
     if (search_time_limit_ == 0) {
