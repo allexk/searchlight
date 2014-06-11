@@ -41,9 +41,15 @@
 #include <dlfcn.h>
 #include <boost/thread.hpp>
 #include <boost/make_shared.hpp>
+#include <boost/property_tree/ptree.hpp>
 #include <chrono>
 
 namespace searchlight {
+
+/**
+ * Property tree used to store configuration options.
+ */
+using SearchlightConfig = boost::property_tree::ptree;
 
 class Validator;
 class SearchlightCollector;
@@ -343,6 +349,22 @@ public:
         return terminate_;
     }
 
+    /**
+     * Returns the property tree containing configuration options.
+     *
+     * @return property tree with the config
+     */
+    const SearchlightConfig &GetConfig() const {
+        return config_;
+    }
+
+    /**
+     * Reads config from the specified file. Only JSON is supported for now.
+     *
+     * @param file_name path to the file containing config
+     */
+    void ReadConfig(const std::string &file_name);
+
 private:
     // The solver
     Solver solver_;
@@ -367,6 +389,9 @@ private:
 
     // Monitors on the main solver
     std::vector<SearchMonitor *> main_solver_monitors_;
+
+    // Contains various configuration options
+    SearchlightConfig config_;
 };
 
 /**

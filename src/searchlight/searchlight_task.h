@@ -56,17 +56,17 @@ public:
      * @param library_name the name of the DLL library with the task
      *  (without .so extension)
      * @param task_name the name of the task (basically, the function name)
-     * @param task_params params for the task (parsed by the task itself)
+     * @param config_file_name config file for the task (parsed by searchlight)
      */
     SearchlightTask(const std::string &library_name,
-            const std::string &task_name, const std::string &task_params) :
+            const std::string &task_name, const std::string &config_file_name) :
                 searchlight_(task_name, dll_handler_),
                 collector_(*this),
-                task_params_(task_params),
                 search_ended_(false) {
 
         ResolveTask(library_name, task_name);
         searchlight_.RegisterCollector(&collector_);
+        searchlight_.ReadConfig(config_file_name);
     }
 
     /**
@@ -75,13 +75,18 @@ public:
      */
     void operator()() {
         try {
-            task_(&searchlight_, task_params_);
+            task_(&searchlight_);
         } catch (const scidb::Exception &ex) {
             /*
              *  boost::thread would call std::terminate(), so
              *  we have to take care of proper error reporting
              */
             sl_error_ = ex.copy();
+            OnFinishSearch();
+        } catch (const std::exception &e) {
+            // Catch other C++ and library exceptions and translate them
+            sl_error_ = (SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                    SCIDB_LE_ILLEGAL_OPERATION) << e.what()).copy();
             OnFinishSearch();
         }
     }
@@ -145,7 +150,7 @@ private:
     }
 
     // Type of the task function (called from the library)
-    typedef void (*SLTaskFunc)(Searchlight *, const std::string &);
+    typedef void (*SLTaskFunc)(Searchlight *);
 
     // The main DLL Handler (we need it to be destroyed last!)
     DLLHandler dll_handler_;
@@ -156,9 +161,8 @@ private:
     // The solution collector for exact results
     SearchlightCollector collector_;
 
-    // Task and its params
+    // The task function
     SLTaskFunc task_;
-    const std::string task_params_;
 
     // Stringified solutions.
     std::list<std::string> solutions_queue_;

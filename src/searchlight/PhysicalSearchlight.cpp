@@ -77,8 +77,7 @@ public:
                         _parameters[0])->getExpression()->
                         evaluate().getString();
         typedef boost::tokenizer<boost::char_separator<char>> tokenizer;
-        tokenizer tokens(lib_func_param, boost::char_separator<char>(":", 0,
-                boost::keep_empty_tokens));
+        tokenizer tokens(lib_func_param, boost::char_separator<char>(":", 0));
         searchlight::StringVector str_tokens;
         for (tokenizer::iterator it = tokens.begin(); it != tokens.end();
                 ++it) {
@@ -86,8 +85,7 @@ public:
         }
 
         // FIXME: should probably check this in the logical part
-        if (str_tokens.size() != 3 || str_tokens[0].empty()
-                ||str_tokens[1].empty()) {
+        if (str_tokens.size() != 3) {
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
                     SCIDB_LE_ILLEGAL_OPERATION) <<
                             "Illegal searchlight parameters!";

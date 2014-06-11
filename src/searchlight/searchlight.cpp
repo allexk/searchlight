@@ -33,6 +33,16 @@
 #include "searchlight_collector.h"
 #include "default_search.h"
 
+/*
+ * FIXME:
+ * This is a local patched copy of the corresponding Boost file. It fixes a
+ * well-known bug on C++11. Since I do not have a newer version of Boost on
+ * the development machine, thus the hack. The bug is fixed upstream.
+ */
+#include "json_parser_read.hpp"
+
+#include <boost/property_tree/json_parser.hpp>
+
 namespace searchlight {
 
 // The logger
@@ -154,4 +164,14 @@ DecisionBuilder *Searchlight::CreateDefaultHeuristic(
     return new SLSearch(*this, solver_, primary_vars, secondary_vars, splits,
             search_time_limit);
 }
+
+void Searchlight::ReadConfig(const std::string &file_name) {
+    try {
+        boost::property_tree::read_json(file_name, config_);
+    } catch (const boost::property_tree::json_parser_error &e) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << e.what();
+    }
+}
+
 } /* namespace searchlight */

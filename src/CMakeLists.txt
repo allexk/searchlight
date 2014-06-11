@@ -22,7 +22,7 @@ add_library(searchlight_udfs SHARED searchlight/searchlight_udfs.cpp)
 target_link_libraries(searchlight_udfs searchlight_udo)
 
 # example tasks
-add_library(searchlight_sw SHARED tasks/common.cpp tasks/sw.cpp)
+add_library(searchlight_sw SHARED tasks/sw.cpp)
 target_link_libraries(searchlight_sw searchlight_udo)
 
 #install rules for the Searchlight libs

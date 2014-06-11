@@ -28,7 +28,6 @@
  * @author Alexander Kalinin
  */
 
-#include "common.h"
 #include <searchlight/searchlight.h>
 
 #include <boost/lexical_cast.hpp>
@@ -36,27 +35,26 @@
 namespace searchlight {
 
 extern "C"
-void SemWindowsAvg(Searchlight *sl, const std::string &params) {
+void SemWindowsAvg(Searchlight *sl) {
     // get the solver
     Solver &solver = sl->GetSolver();
 
     // parse the params
-    ParamsMap pmap;
-    ParseParameters(params, pmap);
+    const SearchlightConfig &config = sl->GetConfig();
 
     // task params
-    const int32 start_x = boost::lexical_cast<int32>(pmap["lx"]);
-    const int32 end_x = boost::lexical_cast<int32>(pmap["ux"]);
-    const int32 start_y = boost::lexical_cast<int32>(pmap["ly"]);
-    const int32 end_y = boost::lexical_cast<int32>(pmap["uy"]);
-    const int32 avg_l = boost::lexical_cast<int32>(pmap["avg_l"]);
-    const int32 avg_u = boost::lexical_cast<int32>(pmap["avg_u"]);
-    const int32 size_l = boost::lexical_cast<int32>(pmap["size_l"]);
-    const int32 size_u = boost::lexical_cast<int32>(pmap["size_u"]);
-    const int32 len_lx = boost::lexical_cast<int32>(pmap["len_lx"]);
-    const int32 len_ux = boost::lexical_cast<int32>(pmap["len_ux"]);
-    const int32 len_ly = boost::lexical_cast<int32>(pmap["len_ly"]);
-    const int32 len_uy = boost::lexical_cast<int32>(pmap["len_uy"]);
+    const int32 start_x = config.get<int32>("sw.lx");
+    const int32 end_x   = config.get<int32>("sw.ux");
+    const int32 start_y = config.get<int32>("sw.ly");
+    const int32 end_y   = config.get<int32>("sw.uy");
+    const int32 avg_l   = config.get<int32>("sw.avg_l");
+    const int32 avg_u   = config.get<int32>("sw.avg_u");
+    const int32 size_l  = config.get<int32>("sw.size_l");
+    const int32 size_u  = config.get<int32>("sw.size_u");
+    const int32 len_lx  = config.get<int32>("sw.len_lx");
+    const int32 len_ux  = config.get<int32>("sw.len_ux");
+    const int32 len_ly  = config.get<int32>("sw.len_ly");
+    const int32 len_uy  = config.get<int32>("sw.len_uy");
 
     // problem params
     std::vector<IntVar *> coords(2);
@@ -89,7 +87,7 @@ void SemWindowsAvg(Searchlight *sl, const std::string &params) {
     solver.AddConstraint(solver.MakeBetweenCt(avg, avg_l, avg_u));
 
     // create the search phase
-    const std::string &search_heuristic = pmap["db"];
+    const std::string search_heuristic = config.get<std::string>("sw.db");
     DecisionBuilder *db;
     std::vector<SearchMonitor *> mons;
     if (search_heuristic == "impact") {
