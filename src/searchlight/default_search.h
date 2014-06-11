@@ -68,7 +68,8 @@ public:
         sl_(sl),
         solver_(solver),
         solver_montors_(sl.GetMainMonitors()),
-        dummy_monitor_(&solver) {
+        dummy_monitor_(&solver),
+        search_config_(sl.GetConfig()) {
 
         for (auto int_var: primary_vars) {
             if (!int_var->Bound()) {
@@ -133,6 +134,65 @@ public:
     }
 
 private:
+    // This is struct containing config params
+    struct SLConfig {
+        // How to spread time between intervals
+        enum TimeStrategy {
+            CONST, // constant
+            EXP
+        };
+        TimeStrategy time_strategy_;
+
+        // The length of the time interval (or down coeff. for EXP)
+        int64_t time_interval_;
+
+        // Number of intervals to probe during init
+        int intervals_to_probe_;
+
+        // Penalty for the interval after it is chosen again
+        double interval_penalty_;
+
+        // Scale factor for Luby restarts
+        int luby_scale_;
+
+        // Periodicity of restart-on-fails monitor (in fails)
+        int64_t fails_restart_probes_;
+
+        // Leaves-to-fails threshold of restart for the monitor above
+        double fails_restart_thr_;
+
+        SLConfig(const SearchlightConfig &sl_config) {
+            const std::string time_strategy =
+                    sl_config.get("searchlight.sl.time_strategy",
+                            std::string("exp"));
+            int64_t def_time_interval;
+            if (time_strategy == "exp") {
+                time_strategy_ = EXP;
+                def_time_interval = 2;
+            } else if (time_strategy == "const") {
+                time_strategy_ = CONST;
+                def_time_interval = 600; // 10 minutes
+            } else {
+                throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                        SCIDB_LE_ILLEGAL_OPERATION) << "unknown time strategy";
+            }
+
+            time_interval_ = sl_config.get("searchlight.sl.time_interval",
+                    def_time_interval);
+            intervals_to_probe_ =
+                    sl_config.get("searchlight.sl.probe_intervals", 1000);
+            interval_penalty_ =
+                    sl_config.get("searchlight.sl.interval_penalty", 0.5);
+
+            luby_scale_ = sl_config.get("searchlight.sl.luby_scale", 1);
+
+            fails_restart_probes_ =
+                    sl_config.get("searchlight.sl.fails_restart_probes",
+                            int64_t(1000));
+            fails_restart_thr_ =
+                    sl_config.get("searchlight.sl.fails_restart_thr", 0.2);
+        }
+    };
     // This describes information discovered for a variable's interval
     struct Impact {
         // Assignments tried for this interval
@@ -201,7 +261,7 @@ private:
      * Explores all intervals. It will try steps_limit steps. A "step"
      * basically runs until a fail (leaf one or in-tree).
      */
-    void InitIntervals(Solver *s, int64_t steps_limit);
+    void InitIntervals(Solver *s, int steps_limit);
 
     /*
      * Finds the best variable from the ones that are still interval unbound.
@@ -239,6 +299,9 @@ private:
 
     // SearchMonitor used to restart and finish the current search (hackish)
     SearchMonitor dummy_monitor_;
+
+    // Search parameters
+    const SLConfig search_config_;
 };
 
 } /* namespace searchlight */

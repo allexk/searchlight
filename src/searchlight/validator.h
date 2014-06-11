@@ -161,6 +161,20 @@ private:
 
     // The resulting status of the validator solver
     bool solver_status_;
+
+    /*
+     * The maximum number of pending validations. If the number is exceeded the
+     * main solver will block until the validator catches up.
+     */
+    int max_pending_validations_;
+
+    /*
+     * This parameter specifies the maximum number of assignments to check
+     * before the validator makes a restart. This can be seen as periodic
+     * garbage collecting, since restarting destroys elements Alloced with
+     * the solver.
+     */
+    int restart_period_;
 };
 
 

@@ -247,11 +247,13 @@ public:
      */
     IntervalImpactBuilder(IntVarVector &search_vars, IntVar * const var,
             const int64_t min, const int64_t max,
-            std::vector<SearchMonitor *> &monitors) :
+            std::vector<SearchMonitor *> &monitors,
+            int luby_scale) :
 
             search_vars_(search_vars),
             var_(var), min_(min), max_(max),
-            monitors_(monitors) {}
+            monitors_(monitors),
+            luby_scale_(luby_scale) {}
 
     /**
      * Produces a new decision. In this case it sets the interval and initiates
@@ -270,8 +272,7 @@ public:
         DecisionBuilder * const random_db = s->MakePhase(search_vars_,
                 Solver::CHOOSE_RANDOM, Solver::ASSIGN_RANDOM_VALUE);
 
-        // with Luby restarts. TODO: change the scale factor?
-        SearchMonitor * const luby_restart = s->MakeLubyRestart(1);
+        SearchMonitor * const luby_restart = s->MakeLubyRestart(luby_scale_);
 
         // Nested search
         monitors_.push_back(luby_restart);
@@ -303,6 +304,9 @@ private:
 
     // Monitors to establish for the explorer search
     std::vector<SearchMonitor *> &monitors_;
+
+    // Scale factor for Luby restarts
+    int luby_scale_;
 };
 
 /**
@@ -367,7 +371,7 @@ private:
 
 Decision* SLSearch::Next(Solver* const s) {
     if (!intervals_explored_) {
-        InitIntervals(s, 1000);
+        InitIntervals(s, search_config_.intervals_to_probe_);
         intervals_explored_ = true; // no rev on backtracking -- compute once
     }
 
@@ -388,7 +392,8 @@ Decision* SLSearch::Next(Solver* const s) {
                 int_max << "]" << ", Impact: " << impact);
 
         // we should penalize the interval
-        var_impacts_[var_ind].impacts_[int_ind].second.penalty_ /= 2;
+        var_impacts_[var_ind].impacts_[int_ind].second.penalty_ *=
+                search_config_.interval_penalty_;
 
         // and try to set it
         return s->RevAlloc(new SetIntervalDecision(*this, int_ind,
@@ -407,10 +412,21 @@ Decision* SLSearch::Next(Solver* const s) {
     if (search_time_limit_ >= 0) {
         LOG4CXX_DEBUG(logger, "In-interval search, time left: " <<
                 search_time_limit_);
-        monitors.push_back(s->MakeTimeLimit(search_time_limit_ / 2 * 1000));
+        // Determine the time limit
+        int64_t curr_search_limit = 0;
+        switch (search_config_.time_strategy_) {
+            case SLConfig::EXP:
+                curr_search_limit = search_time_limit_ /
+                    search_config_.time_interval_;
+                break;
+            case SLConfig::CONST:
+                curr_search_limit = search_config_.time_interval_;
+                break;
+        }
+        monitors.push_back(s->MakeTimeLimit(curr_search_limit * 1000));
 
-        // Make Luby restarts for better coverage. TODO: play the scale factor?
-        monitors.push_back(s->MakeLubyRestart(1));
+        // Make Luby restarts for better coverage.
+        monitors.push_back(s->MakeLubyRestart(search_config_.luby_scale_));
     }
     /*
      * Establish a finish-on-frequent fails monitor. The rationale behind this
@@ -421,7 +437,9 @@ Decision* SLSearch::Next(Solver* const s) {
      * Note, we don't establish Luby restarts if we don't have a time limit,
      * since the search will run infinitely long.
      */
-    monitors.push_back(s->RevAlloc(new FinishOnFailsMonitor{s, 1000, 0.2}));
+    monitors.push_back(s->RevAlloc(new FinishOnFailsMonitor{s,
+        search_config_.fails_restart_probes_,
+        search_config_.fails_restart_thr_}));
 
     // starting the timer
     const auto solve_start_time = std::chrono::steady_clock::now();
@@ -461,7 +479,7 @@ Decision* SLSearch::Next(Solver* const s) {
     return s->MakeFailDecision();
 }
 
-void SLSearch::InitIntervals(Solver * const s, const int64_t steps_limit) {
+void SLSearch::InitIntervals(Solver * const s, const int steps_limit) {
     LOG4CXX_DEBUG(logger, "Exploring interval impacts");
     std::vector<SearchMonitor *> nested_monitors(solver_montors_);
     for (auto &var_impact: var_impacts_) {
@@ -473,11 +491,10 @@ void SLSearch::InitIntervals(Solver * const s, const int64_t steps_limit) {
                     min << ", " << max << "] for " <<
                     var_impact.var_->DebugString());
 
-            // TODO: play with the limit?
-            IntervalImpactMonitor explorer_monitor{s, 1000};
+            IntervalImpactMonitor explorer_monitor{s, steps_limit};
             nested_monitors.push_back(&explorer_monitor);
             IntervalImpactBuilder explorer{all_vars_, var_impact.var_,
-                    min, max, nested_monitors};
+                    min, max, nested_monitors, search_config_.luby_scale_};
             s->Solve(&explorer);
             nested_monitors.pop_back();
 

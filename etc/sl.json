@@ -1,6 +1,22 @@
 {
     "searchlight": {
+        "sl": {
+            "probe_intervals": 1000,
+            "interval_penalty": 0.5,
 
+            "time_strategy": "exp",
+            "time_interval": 2,
+
+            "luby_scale": 1,
+
+            "fails_restart_probes": 1000,
+            "fails_restart_thr": 0.2,
+        },
+
+        "validator": {
+            "max_validations": 1000000,
+            "restart_period": 1024
+        }
     },
 
     "sw": {

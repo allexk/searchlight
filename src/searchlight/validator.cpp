@@ -35,12 +35,6 @@
 
 #include <constraint_solver/model.pb.h>
 
-/**
- * The maximum number of pending validations. If the number is exceeded the
- * main solver will block until the validator catches up.
- */
-static const int MAX_PENDING_VALIDATIONS = 1000000;
-
 namespace searchlight {
 
 // The logger
@@ -120,11 +114,13 @@ public:
      *
      * @param validator the validator producing assignments
      * @param s the solver
+     * @param restart_period validator restart period
      */
-    explicit RestoreAssignmentBuilder(Validator &validator, Solver *s)
+    explicit RestoreAssignmentBuilder(Validator &validator, Solver *s,
+            int restart_period)
         : validator_(validator),
           just_restored_(false),
-          aux_monitor_(&just_restored_, s) {}
+          aux_monitor_(&just_restored_, s, restart_period) {}
 
 
     /**
@@ -213,9 +209,11 @@ public:
          * accept_flag is the flag to toggle at the decision builder after a
          * successful validation.
          */
-        AuxRestoreMonitor(bool *accept_flag, Solver *solver) :
+        AuxRestoreMonitor(bool *accept_flag, Solver *solver,
+                int restart_period) :
             SearchMonitor(solver),
-            accept_flag_(accept_flag) {}
+            accept_flag_(accept_flag),
+            restart_period_(restart_period) {}
 
         /*
          * Called after a decision was successfully accepted/refuted.
@@ -226,7 +224,7 @@ public:
                 *accept_flag_ = true;
             } else {
                 // Restart the search for garbage collecting
-                if (solver()->SearchDepth() > MAX_ASSGNS_BEFORE_RESTART) {
+                if (solver()->SearchDepth() > restart_period_) {
                     LOG4CXX_TRACE(logger,
                             "Restarting the validator for garbage collecting");
                     RestartCurrentSearch();
@@ -239,13 +237,8 @@ public:
         // Flag to change when the next assignment is validated
         bool *accept_flag_;
 
-        /*
-         * This parameter specifies the maximum number of assignments to check
-         * before the validator makes a restart. This can be seen as periodic
-         * garbage collecting, since restarting destroys elements Alloced with
-         * the solver.
-         */
-        static const int MAX_ASSGNS_BEFORE_RESTART = 1024;
+        // Restart period of the validator
+        int restart_period_;
     };
 
     // The validator producing the assignments
@@ -329,6 +322,12 @@ Validator::Validator(const Searchlight &sl, const StringVector &var_names,
         search_vars_prototype_.Add(const_cast<IntVar *>(var->second));
         collector_->Add(const_cast<IntVar *>(var->second));
     }
+
+    const SearchlightConfig &sl_config = sl.GetConfig();
+    max_pending_validations_ =
+            sl_config.get("searchlight.validator.max_validations", 1000000);
+    restart_period_ = sl_config.get("searchlight.validator.restart_period",
+            1024);
 }
 
 void Validator::AddSolution(const Assignment &sol) {
@@ -349,7 +348,7 @@ void Validator::AddSolution(const Assignment &sol) {
 
     boost::unique_lock<boost::mutex> validate_lock(to_validate_mtx_);
     to_validate_.push_back(AssignmentPtr(asgn));
-    while (to_validate_.size() > MAX_PENDING_VALIDATIONS) {
+    while (to_validate_.size() > max_pending_validations_) {
         /*
          * It is safe to use the same condition since the validator will be
          * certainly non-blocked.
@@ -366,7 +365,8 @@ void Validator::AddSolution(const Assignment &sol) {
 void Validator::operator()() {
     LOG4CXX_INFO(logger, "Starting the validator search");
     DecisionBuilder *db =
-            solver_.RevAlloc(new RestoreAssignmentBuilder(*this, &solver_));
+            solver_.RevAlloc(new RestoreAssignmentBuilder(*this, &solver_,
+                    restart_period_));
     solver_status_ = solver_.Solve(db, collector_);
 }
 
