@@ -10,7 +10,7 @@
             "luby_scale": 1,
 
             "fails_restart_probes": 1000,
-            "fails_restart_thr": 0.2,
+            "fails_restart_thr": 0.2
         },
 
         "validator": {
