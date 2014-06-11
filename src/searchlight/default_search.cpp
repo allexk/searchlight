@@ -335,9 +335,9 @@ public:
             const double ratio = double(leaves_) / fails_;
             if (ratio <= finish_threshold_) {
                 FinishCurrentSearch();
+                LOG4CXX_DEBUG(logger, "Finishing the search because "
+                        "of a large fail ratio: " << ratio);
             }
-            LOG4CXX_DEBUG(logger, "Finishing the search because "
-                    "of a large fail ratio: " << ratio);
 
             fails_ = leaves_ = 0;
         }
