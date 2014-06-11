@@ -39,7 +39,7 @@
  * The maximum number of pending validations. If the number is exceeded the
  * main solver will block until the validator catches up.
  */
-static const int MAX_PENDING_VALIDATIONS = 500;
+static const int MAX_PENDING_VALIDATIONS = 1000000;
 
 namespace searchlight {
 
