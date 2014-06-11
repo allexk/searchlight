@@ -56,6 +56,10 @@ void SemWindowsAvg(Searchlight *sl) {
     const int32 len_ly  = config.get<int32>("sw.len_ly");
     const int32 len_uy  = config.get<int32>("sw.len_uy");
 
+    const int32 time_limit = config.get("sw.time_limit", 3600);
+    const int luby_scale = config.get("searchlight.sl", 1);
+    const int splits = config.get("sw.splits", 100);
+
     // problem params
     std::vector<IntVar *> coords(2);
     std::vector<IntVar *> lens(2);
@@ -95,14 +99,14 @@ void SemWindowsAvg(Searchlight *sl) {
     } else if (search_heuristic == "random") {
         db = solver.MakePhase(all_vars, Solver::CHOOSE_RANDOM,
             Solver::ASSIGN_RANDOM_VALUE);
-        mons.push_back(solver.MakeLubyRestart(1));
-        mons.push_back(solver.MakeTimeLimit(3600 * 1000));
+        mons.push_back(solver.MakeLubyRestart(luby_scale));
+        mons.push_back(solver.MakeTimeLimit(time_limit * 1000));
     } else if (search_heuristic == "split") {
         db = solver.MakePhase(all_vars, Solver::CHOOSE_MAX_SIZE,
             Solver::SPLIT_LOWER_HALF);
     } else if (search_heuristic == "sl") {
         db = solver.RevAlloc(
-                sl->CreateDefaultHeuristic(coords, lens, 100, 3600));
+                sl->CreateDefaultHeuristic(coords, lens, splits, time_limit));
     } else {
         db = solver.MakePhase(all_vars, Solver::CHOOSE_FIRST_UNBOUND,
             Solver::ASSIGN_MIN_VALUE);
