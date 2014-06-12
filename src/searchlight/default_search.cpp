@@ -449,14 +449,15 @@ Decision* SLSearch::Next(Solver* const s) {
 
     // time elapsed (might be less than a half of search_time_limit_, if
     // FinishOnFails finished the search.
-    int64_t solve_secodns =
+    int64_t solve_seconds =
             std::chrono::duration_cast<std::chrono::seconds>
             (solve_end_time - solve_start_time).count();
-    LOG4CXX_DEBUG(logger, "The search went for " << solve_secodns << "s.");
+    LOG4CXX_DEBUG(logger, "The search went for " << solve_seconds << "s.");
 
     // Finished this combination of intervals, can safely fail
     if (search_time_limit_ > 0) {
-        search_time_limit_ -= solve_secodns;
+        // Subtract at least 1sec; needed for a large number of fail-on-0s
+        search_time_limit_ -= (solve_seconds == 0 ? 1 : solve_seconds);
         if (search_time_limit_ < 0) {
             search_time_limit_ = 0;
         }
