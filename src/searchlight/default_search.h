@@ -133,6 +133,14 @@ public:
         }
     }
 
+    /**
+     * Outputs variable impacts to a stream.
+     *
+     * @param os stream for output
+     * @return the same stream
+     */
+    std::ostream &OutputImpacts(std::ostream &os) const;
+
 private:
     // This is struct containing config params
     struct SLConfig {

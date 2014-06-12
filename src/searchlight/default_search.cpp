@@ -94,7 +94,7 @@ public:
         var_->RemoveInterval(min_, max_);
         // Temporarily deactivate the interval
         sl_search_.DeactivateVarInterval(var_, var_int_ind_, true);
-        LOG4CXX_TRACE(logger, "Permanently deactivating interval for  " <<
+        LOG4CXX_TRACE(logger, "Temporarily deactivating interval for  " <<
                 var_->DebugString() << ", [" << min_ << ", " << max_ << "]");
     }
 
@@ -511,6 +511,12 @@ void SLSearch::InitIntervals(Solver * const s, const int steps_limit) {
         }
     }
     LOG4CXX_DEBUG(logger, "Finished exploring interval impacts");
+    if (logger->isDebugEnabled()) {
+        std::ostringstream deb;
+        deb << "SLSearch impacts for primary variables follow:\n";
+        OutputImpacts(deb);
+        logger->debug(deb.str(), LOG4CXX_LOCATION);
+    }
 }
 
 SLSearch::VarImpactInfo SLSearch::FindBestVar() const {
@@ -561,5 +567,18 @@ SLSearch::VarImpactInfo SLSearch::FindBestVar() const {
     return res;
 }
 
+std::ostream &SLSearch::OutputImpacts(std::ostream &os) const {
+    for (const auto &var_imps: var_impacts_) {
+        const size_t len = var_imps.interval_length_;
+        os << "Impacts for " << var_imps.var_->DebugString() << '\n';
+        for (const auto &imp: var_imps.impacts_) {
+            const int64_t min = imp.first;
+            const int64_t max = min + len - 1;
+            os << '\t[' << min << ", " << max << "]: " << imp.second << '\n';
+        }
+    }
+
+    return os;
+}
 
 } /* namespace searchlight */
