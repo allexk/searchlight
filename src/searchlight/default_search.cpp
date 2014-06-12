@@ -574,7 +574,7 @@ std::ostream &SLSearch::OutputImpacts(std::ostream &os) const {
         for (const auto &imp: var_imps.impacts_) {
             const int64_t min = imp.first;
             const int64_t max = min + len - 1;
-            os << '\t[' << min << ", " << max << "]: " << imp.second << '\n';
+            os << "\t[" << min << ", " << max << "]: " << imp.second << '\n';
         }
     }
 
