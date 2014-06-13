@@ -172,6 +172,13 @@ void Searchlight::ReadConfig(const std::string &file_name) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << e.what();
     }
+
+    if (logger->isDebugEnabled()) {
+        std::ostringstream deb;
+        deb << "Config for the task follows:\n";
+        boost::property_tree::write_json(deb, config_, true);
+        logger->debug(deb.str(), LOG4CXX_LOCATION);
+    }
 }
 
 } /* namespace searchlight */
