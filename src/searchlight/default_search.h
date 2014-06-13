@@ -141,6 +141,14 @@ public:
      */
     std::ostream &OutputImpacts(std::ostream &os) const;
 
+    /**
+     * Outputs the search configuration.
+     *
+     * @param os stream to output to
+     * @return the same stream
+     */
+    std::ostream &OutputConfig(std::ostream &os) const;
+
 private:
     // This is struct containing config params
     struct SLConfig {

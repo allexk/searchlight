@@ -371,6 +371,13 @@ private:
 
 Decision* SLSearch::Next(Solver* const s) {
     if (!intervals_explored_) {
+        if (logger->isDebugEnabled()) {
+            std::ostringstream deb;
+            deb << "SLSearch config follows:\n";
+            OutputConfig(deb);
+            logger->debug(deb.str(), LOG4CXX_LOCATION);
+        }
+
         InitIntervals(s, search_config_.intervals_to_probe_);
         intervals_explored_ = true; // no rev on backtracking -- compute once
     }
@@ -578,6 +585,28 @@ std::ostream &SLSearch::OutputImpacts(std::ostream &os) const {
             os << "\t[" << min << ", " << max << "]: " << imp.second << '\n';
         }
     }
+
+    return os;
+}
+
+std::ostream &SLSearch::OutputConfig(std::ostream &os) const {
+    os << "Time strategy: ";
+    switch (search_config_.time_strategy_) {
+        case SLConfig::CONST:
+            os << "constant :" << search_config_.time_interval_ << "seconds";
+            break;
+        case SLConfig::EXP:
+            os << "exponential decrease: " << search_config_.time_interval_ <<
+                " times";
+            break;
+    }
+
+    os << "\nIntervals to probe: " << search_config_.intervals_to_probe_;
+    os << "\nPenalty coefficient: " << search_config_.interval_penalty_;
+    os << "\nLuby restarts scale: " << search_config_.luby_scale_;
+    os << "\nRestart-on-fails probes: " << search_config_.fails_restart_probes_;
+    os << "\nRestart-on-fails threshold: " << search_config_.fails_restart_thr_;
+    os << '\n';
 
     return os;
 }
