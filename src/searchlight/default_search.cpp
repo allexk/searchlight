@@ -476,8 +476,10 @@ Decision* SLSearch::Next(Solver* const s) {
         dummy_monitor_.FinishCurrentSearch();
     } else {
         // wait for the validator
-        LOG4CXX_DEBUG(logger, "Waiting for the validator...");
-        sl_.GetValidator()->Synchronize();
+        if (search_config_.validator_synchronize_) {
+            LOG4CXX_DEBUG(logger, "Waiting for the validator...");
+            sl_.GetValidator()->Synchronize();
+        }
 
         /*
          *  Will try a different interval combination. Since we penalize
@@ -532,8 +534,10 @@ void SLSearch::InitIntervals(Solver * const s, const int steps_limit) {
     }
 
     // wait for the validator
-    LOG4CXX_DEBUG(logger, "Waiting for the validator...");
-    sl_.GetValidator()->Synchronize();
+    if (search_config_.validator_synchronize_) {
+        LOG4CXX_DEBUG(logger, "Waiting for the validator...");
+        sl_.GetValidator()->Synchronize();
+    }
 }
 
 SLSearch::VarImpactInfo SLSearch::FindBestVar() const {
@@ -602,7 +606,7 @@ std::ostream &SLSearch::OutputConfig(std::ostream &os) const {
     os << "Time strategy: ";
     switch (search_config_.time_strategy_) {
         case SLConfig::CONST:
-            os << "constant :" << search_config_.time_interval_ << "seconds";
+            os << "constant: " << search_config_.time_interval_ << " seconds";
             break;
         case SLConfig::EXP:
             os << "exponential decrease: " << search_config_.time_interval_ <<
@@ -615,6 +619,8 @@ std::ostream &SLSearch::OutputConfig(std::ostream &os) const {
     os << "\nLuby restarts scale: " << search_config_.luby_scale_;
     os << "\nRestart-on-fails probes: " << search_config_.fails_restart_probes_;
     os << "\nRestart-on-fails threshold: " << search_config_.fails_restart_thr_;
+    os << "\nSynchronize with the validator:" << std::boolalpha <<
+            search_config_.validator_synchronize_;
     os << '\n';
 
     return os;

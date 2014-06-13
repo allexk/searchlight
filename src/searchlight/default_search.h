@@ -177,6 +177,9 @@ private:
         // Leaves-to-fails threshold of restart for the monitor above
         double fails_restart_thr_;
 
+        // Syncronize with the validator?
+        bool validator_synchronize_;
+
         SLConfig(const SearchlightConfig &sl_config) {
             const std::string time_strategy =
                     sl_config.get("searchlight.sl.time_strategy",
@@ -207,6 +210,8 @@ private:
                             int64_t(1000));
             fails_restart_thr_ =
                     sl_config.get("searchlight.sl.fails_restart_thr", 0.2);
+            validator_synchronize_ =
+                    sl_config.get("searchlight.sl.val_sync", 1);
         }
     };
     // This describes information discovered for a variable's interval
