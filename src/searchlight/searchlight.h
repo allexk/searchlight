@@ -153,8 +153,9 @@ public:
      */
     explicit Searchlight(const std::string &name, DLLHandler &dll_handler) :
         solver_(name),
-        collector_(NULL),
-        array_desc_(NULL),
+        collector_(nullptr),
+        validator_(nullptr),
+        array_desc_(nullptr),
         dl_udf_handle_(dll_handler.LoadDLL("searchlight_udfs")),
         terminate_(false) {}
 
@@ -365,12 +366,24 @@ public:
      */
     void ReadConfig(const std::string &file_name);
 
+    /**
+     * Returns the validator for the current search, if any.
+     *
+     * @return current validator or nullptr, if no exists
+     */
+    const Validator *GetValidator() const {
+        return validator_;
+    }
+
 private:
     // The solver
     Solver solver_;
 
     // Solution collector for main (exact) results
     SearchlightCollector *collector_;
+
+    // Validator for the search
+    Validator *validator_;
 
     // The array descriptor
     SearchArrayDesc *array_desc_;

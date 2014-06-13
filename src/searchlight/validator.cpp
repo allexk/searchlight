@@ -362,6 +362,15 @@ void Validator::AddSolution(const Assignment &sol) {
     validate_cond_.notify_one();
 }
 
+void Validator::Synchronize() const {
+    boost::unique_lock<boost::mutex> validate_lock(to_validate_mtx_);
+    while (!to_validate_.empty()) {
+        LOG4CXX_TRACE(logger, "Synchronizing with the validator"
+                ", queue size=" << to_validate_.size());
+        validate_cond_.wait(validate_lock);
+    }
+}
+
 void Validator::operator()() {
     LOG4CXX_INFO(logger, "Starting the validator search");
     DecisionBuilder *db =

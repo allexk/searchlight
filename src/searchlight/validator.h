@@ -75,6 +75,13 @@ public:
     void AddSolution(const Assignment &sol);
 
     /**
+     * Blocks until the validor clears the validator queue. This allows the
+     * caller to sync with the validator and make sure the validator can
+     * accept further requests.
+     */
+    void Synchronize() const;
+
+    /**
      * Signal to the validator that the search ended.
      *
      * The validator is not necessarily terminated
@@ -151,7 +158,7 @@ private:
     SolutionCollector *collector_;
 
     // Condition var to wait for solutions to validate
-    boost::condition_variable validate_cond_;
+    mutable boost::condition_variable validate_cond_;
 
     // Mutex to guard the validation array
     mutable boost::mutex to_validate_mtx_;

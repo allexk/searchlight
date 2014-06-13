@@ -29,6 +29,7 @@
  */
 
 #include "default_search.h"
+#include "validator.h"
 
 namespace searchlight {
 
@@ -474,6 +475,10 @@ Decision* SLSearch::Next(Solver* const s) {
         LOG4CXX_DEBUG(logger, "In-interval search, no time left, terminating");
         dummy_monitor_.FinishCurrentSearch();
     } else {
+        // wait for the validator
+        LOG4CXX_DEBUG(logger, "Waiting for the validator...");
+        sl_.GetValidator()->Synchronize();
+
         /*
          *  Will try a different interval combination. Since we penalize
          *  intervals we choose we should end up with a different combination,
@@ -525,6 +530,10 @@ void SLSearch::InitIntervals(Solver * const s, const int steps_limit) {
         OutputImpacts(deb);
         logger->debug(deb.str(), LOG4CXX_LOCATION);
     }
+
+    // wait for the validator
+    LOG4CXX_DEBUG(logger, "Waiting for the validator...");
+    sl_.GetValidator()->Synchronize();
 }
 
 SLSearch::VarImpactInfo SLSearch::FindBestVar() const {

@@ -85,6 +85,7 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
     }
     LOG4CXX_INFO(logger, "Initiating the validator");
     Validator validator(*this, var_names, *collector_);
+    validator_ = &validator;
     boost::thread validator_thread(boost::ref(validator));
 
     // Establish monitors: validator (to transfer leaves) and terminator
@@ -105,6 +106,7 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
     // Terminate validator
     LOG4CXX_INFO(logger, "Signaling the validator and waiting");
     validator.SignalEnd();
+    validator_ = nullptr;
     validator_thread.join();
 
     // stopping the timer
