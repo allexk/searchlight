@@ -379,8 +379,20 @@ Decision* SLSearch::Next(Solver* const s) {
             logger->debug(deb.str(), LOG4CXX_LOCATION);
         }
 
+        const auto init_start_time = std::chrono::steady_clock::now();
         InitIntervals(s, search_config_.intervals_to_probe_);
         intervals_explored_ = true; // no rev on backtracking -- compute once
+        const auto init_end_time = std::chrono::steady_clock::now();
+        const int64_t init_seconds =
+                std::chrono::duration_cast<std::chrono::seconds>
+                (init_end_time - init_start_time).count();
+        LOG4CXX_DEBUG(logger, "The init went for " << init_seconds << "s.");
+        if (search_time_limit_ > 0) {
+            search_time_limit_ -= init_seconds;
+            if (search_time_limit_ < 0) {
+                search_time_limit_ = 0;
+            }
+        }
     }
 
     // Here, we have all impacts computed
