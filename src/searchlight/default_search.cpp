@@ -381,28 +381,33 @@ Decision* SLSearch::Next(Solver* const s) {
     }
 
     // Here, we have all impacts computed
-    const VarImpactInfo best_var_imp = FindBestVar();
-    if (best_var_imp.var_index >= 0) {
-        const int var_ind = best_var_imp.var_index;
-        const int int_ind = best_var_imp.int_index;
+    if (!VarsIntervalBound()) {
+        const VarImpactInfo best_var_imp = FindBestVar();
+        if (best_var_imp.var_index >= 0) {
+            const int var_ind = best_var_imp.var_index;
+            const int int_ind = best_var_imp.int_index;
 
-        IntVar * const var = var_impacts_[var_ind].var_;
-        const Impact &impact = var_impacts_[var_ind].impacts_[int_ind].second;
-        const int64 int_min = var_impacts_[var_ind].impacts_[int_ind].first;
-        const int64 int_max = int_min +
-                var_impacts_[var_ind].interval_length_ - 1;
+            IntVar * const var = var_impacts_[var_ind].var_;
+            const Impact &impact = var_impacts_[var_ind].impacts_[int_ind].second;
+            const int64 int_min = var_impacts_[var_ind].impacts_[int_ind].first;
+            const int64 int_max = int_min +
+                    var_impacts_[var_ind].interval_length_ - 1;
 
-        LOG4CXX_TRACE(logger, "Determined the next best interval for " <<
-                var << ", [" << int_min << ", " <<
-                int_max << "]" << ", Impact: " << impact);
+            LOG4CXX_TRACE(logger, "Determined the next best interval for " <<
+                    var << ", [" << int_min << ", " <<
+                    int_max << "]" << ", Impact: " << impact);
 
-        // we should penalize the interval
-        var_impacts_[var_ind].impacts_[int_ind].second.penalty_ *=
-                search_config_.interval_penalty_;
+            // we should penalize the interval
+            var_impacts_[var_ind].impacts_[int_ind].second.penalty_ *=
+                    search_config_.interval_penalty_;
 
-        // and try to set it
-        return s->RevAlloc(new SetIntervalDecision(*this, int_ind,
-                var, int_min, int_max));
+            // and try to set it
+            return s->RevAlloc(new SetIntervalDecision(*this, int_ind,
+                    var, int_min, int_max));
+        } else {
+            // cannot find a suitable interval: exhausted
+            return s->MakeFailDecision();
+        }
     }
 
     LOG4CXX_DEBUG(logger, "Initiating an in-interval search");
@@ -573,6 +578,21 @@ SLSearch::VarImpactInfo SLSearch::FindBestVar() const {
     }
 
     return res;
+}
+
+bool SLSearch::VarsIntervalBound() const {
+    bool bound = true;
+    for (const auto &var_impact: var_impacts_) {
+        const IntVar * const var = var_impact.var_;
+        const int64_t domain_len = var->Max() - var->Min() + 1;
+        const int64_t var_int_len = var_impact.interval_length_;
+
+        if (domain_len > var_int_len) {
+            bound = false;
+            break;
+        }
+    }
+    return bound;
 }
 
 std::ostream &SLSearch::OutputImpacts(std::ostream &os) const {

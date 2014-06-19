@@ -304,6 +304,11 @@ private:
      */
     VarImpactInfo FindBestVar() const;
 
+    /*
+     * Checks if all primary variables are bound to intervals.
+     */
+    bool VarsIntervalBound() const;
+
     // Primary variables guiding the interval search (var --> index)
     std::unordered_map<const IntVar *, int> var_to_index_;
 
