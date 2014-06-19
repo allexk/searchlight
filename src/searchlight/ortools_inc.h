@@ -61,6 +61,8 @@ using operations_research::SearchLimit;
 #include "ortools_loader.h"
 using operations_research::CPModelLoader;
 
+using operations_research::ACMRandom;
+
 /**
  * A vector of Int Variables.
  */

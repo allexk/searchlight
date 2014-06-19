@@ -39,6 +39,9 @@ void SemWindowsAvg(Searchlight *sl) {
     // get the solver
     Solver &solver = sl->GetSolver();
 
+    // or-tools is deterministic by default
+    solver.ReSeed(ACMRandom::HostnamePidTimeSeed());
+
     // parse the params
     const SearchlightConfig &config = sl->GetConfig();
 
