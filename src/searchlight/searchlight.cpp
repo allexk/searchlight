@@ -79,35 +79,46 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
     }
 
     // establish the validator
-    if (!collector_) {
+    if (!search_monitors_.collector_) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << "No solution collector registered!";
     }
     LOG4CXX_INFO(logger, "Initiating the validator");
-    Validator validator(*this, var_names, *collector_);
+    Validator validator(*this, var_names, *search_monitors_.collector_);
     validator_ = &validator;
     boost::thread validator_thread(boost::ref(validator));
 
     // Establish monitors: validator (to transfer leaves) and terminator
-    main_solver_monitors_ = monitors;
+    search_monitors_.user_monitors_ = monitors;
+
     ValidatorMonitor val_monitor(validator, vars, &solver_);
+    search_monitors_.validator_ = &val_monitor;
+
     SearchLimit *terminator = solver_.MakeCustomLimit(
             NewPermanentCallback(this, &Searchlight::CheckTerminate));
-    main_solver_monitors_.push_back(&val_monitor);
-    main_solver_monitors_.push_back(terminator);
+    search_monitors_.aux_monitors_.push_back(terminator);
 
     // starting the timer
     const auto solve_start_time = std::chrono::steady_clock::now();
 
     // start the search
     LOG4CXX_INFO(logger, "Starting the main search");
-    solver_.Solve(db, main_solver_monitors_);
+    std::vector<SearchMonitor *> solve_monitors(
+            search_monitors_.user_monitors_);
+    solve_monitors.insert(solve_monitors.end(),
+            search_monitors_.aux_monitors_.begin(),
+            search_monitors_.aux_monitors_.end());
+    solve_monitors.push_back(search_monitors_.validator_);
+    solver_.Solve(db, solve_monitors);
 
     // Terminate validator
     LOG4CXX_INFO(logger, "Signaling the validator and waiting");
     validator.SignalEnd();
     validator_ = nullptr;
     validator_thread.join();
+
+    // Reset monitors
+    search_monitors_.Clear();
 
     // stopping the timer
     const auto solve_end_time = std::chrono::steady_clock::now();
@@ -161,10 +172,8 @@ bool ValidatorMonitor::AtSolution() {
 
 DecisionBuilder *Searchlight::CreateDefaultHeuristic(
         const IntVarVector &primary_vars,
-        const IntVarVector &secondary_vars, size_t splits,
-        int64_t search_time_limit) {
-    return new SLSearch(*this, solver_, primary_vars, secondary_vars, splits,
-            search_time_limit);
+        const IntVarVector &secondary_vars, size_t splits) {
+    return new SLSearch(*this, solver_, primary_vars, secondary_vars, splits);
 }
 
 void Searchlight::ReadConfig(const std::string &file_name) {

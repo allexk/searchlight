@@ -2,17 +2,19 @@
     "searchlight": {
         "sl": {
             "probe_intervals": 1000,
+            "probe_submit": 0,
             "interval_penalty": 0.5,
 
             "time_strategy": "exp",
             "time_interval": 2,
+            "restarts":0,
 
             "luby_scale": 1,
 
             "fails_restart_probes": 1000,
             "fails_restart_thr": 0.2,
 
-            "val_sync": 1
+            "val_sync": 1,
         },
 
         "validator": {

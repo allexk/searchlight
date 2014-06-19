@@ -60,14 +60,11 @@ public:
     SLSearch(const Searchlight &sl,
             Solver &solver,
             const IntVarVector &primary_vars,
-            const IntVarVector &secondary_vars, size_t splits,
-            int64_t search_time_limit) :
+            const IntVarVector &secondary_vars, size_t splits) :
         secondary_vars_(secondary_vars),
         intervals_explored_(false),
-        search_time_limit_(search_time_limit),
         sl_(sl),
         solver_(solver),
-        solver_montors_(sl.GetMainMonitors()),
         dummy_monitor_(&solver),
         search_config_(sl.GetConfig()) {
 
@@ -155,7 +152,8 @@ private:
         // How to spread time between intervals
         enum TimeStrategy {
             CONST, // constant
-            EXP
+            EXP,   // exponential decrease
+            NO,    // run each zoom-in region until exhaustion
         };
         TimeStrategy time_strategy_;
 
@@ -180,6 +178,12 @@ private:
         // Syncronize with the validator?
         bool validator_synchronize_;
 
+        // Submit probes to the validator?
+        bool submit_probes_;
+
+        // Perform restarts after each interval?
+        bool do_restarts_;
+
         SLConfig(const SearchlightConfig &sl_config) {
             const std::string time_strategy =
                     sl_config.get("searchlight.sl.time_strategy",
@@ -191,6 +195,9 @@ private:
             } else if (time_strategy == "const") {
                 time_strategy_ = CONST;
                 def_time_interval = 600; // 10 minutes
+            } else if (time_strategy == "fin") {
+                time_strategy_ = NO;
+                def_time_interval = -1; // doesn't matter
             } else {
                 throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
                         SCIDB_LE_ILLEGAL_OPERATION) << "unknown time strategy";
@@ -212,6 +219,12 @@ private:
                     sl_config.get("searchlight.sl.fails_restart_thr", 0.2);
             validator_synchronize_ =
                     sl_config.get("searchlight.sl.val_sync", 1);
+
+            submit_probes_ =
+                    sl_config.get("searchlight.sl.probe_submit", 0);
+
+            do_restarts_ =
+                    sl_config.get("searchlight.sl.restarts", 0);
         }
     };
     // This describes information discovered for a variable's interval
@@ -306,17 +319,11 @@ private:
     // True, if we already explored the intervals
     bool intervals_explored_;
 
-    // Time limit on the search in milliseconds (<0 -- no limit)
-    int64_t search_time_limit_;
-
     // The searchlight instance
     const Searchlight &sl_;
 
     // The main solver
     Solver &solver_;
-
-    // Monitors attached to the solver (at the searchlight)
-    const std::vector<SearchMonitor *> &solver_montors_;
 
     // SearchMonitor used to restart and finish the current search (hackish)
     SearchMonitor dummy_monitor_;

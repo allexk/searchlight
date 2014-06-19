@@ -123,6 +123,60 @@ private:
 };
 
 /**
+ * This is a monitor that catches complete, but approximate, solutions
+ * (assignments) and passed them along to the Validator.
+ */
+class ValidatorMonitor : public SolutionCollector {
+public:
+    /**
+     * Creates a new validator monitor. This monitor looks for complete
+     * assignments during the search and passed them along to the validator.
+     *
+     * @param validator the validator for checking assignments
+     * @param vars a vector of decision variables (externally managed)
+     * @param solver the main solver
+     */
+    ValidatorMonitor(Validator &validator, const IntVarVector &vars,
+            Solver *solver) :
+        SolutionCollector(solver),
+        validator_(validator),
+        vars_(vars) {
+        Add(vars);
+    }
+
+    /**
+     * This function is called at a leaf of the search tree. At this point
+     * a leaf is accepted as being a solution. This function checks if
+     * it is a complete assignment and passed it along to the validator.
+     *
+     * @return true if we want to continue after the leaf; false otherwise
+     */
+    virtual bool AtSolution();
+
+    /**
+     * Returns the number of candidates encountered. This monitor tracks them,
+     * since the number of leaves is not transfered between searches in the
+     * or-tools solver. Thus, it creates problems when nested searches are
+     * used.
+     *
+     * @return the number of candidates
+     */
+    int64_t CandidatesNumber() const {
+        return candidates_;
+    }
+
+private:
+    // The validator to pass the solution to
+    Validator &validator_;
+
+    // The vector of vars (managed outside)
+    const IntVarVector &vars_;
+
+    // Candidates encountered
+    int64_t candidates_ = 0;
+};
+
+/**
  * The type for a UDF function creator. It produces an or-tools IntExpr
  * representing the function. Takes as parameters: the solver to use
  * with, the adapter for accessing data, a vector of variables to work
@@ -153,7 +207,6 @@ public:
      */
     explicit Searchlight(const std::string &name, DLLHandler &dll_handler) :
         solver_(name),
-        collector_(nullptr),
         validator_(nullptr),
         array_desc_(nullptr),
         dl_udf_handle_(dll_handler.LoadDLL("searchlight_udfs")),
@@ -296,13 +349,11 @@ public:
      * @param primary_vars primary decision variables
      * @param secondary_vars secondary variables
      * @param splits number of interval splits for primary variables
-     * @param search_time_limit time limit in seconds (<0 -- no limit)
      *
      * @return SL search heuristic
      */
     DecisionBuilder *CreateDefaultHeuristic(const IntVarVector &primary_vars,
-            const IntVarVector &secondary_vars, size_t splits,
-            int64_t search_time_limit);
+            const IntVarVector &secondary_vars, size_t splits);
 
     /**
      * Registers a solution collector for handling the exact results. SL is
@@ -311,20 +362,44 @@ public:
      * @param collector collector for exact results
      */
     void RegisterCollector(SearchlightCollector *collector) {
-        collector_ = collector;
+        search_monitors_.collector_ = collector;
     }
 
     /**
-     * Returns monitors attached to the main solver during the search. Since
-     * this function returns a reference to the internal list, it is safe to
-     * call before the Solve(). The list will be populated there. This also
+     * Returns user monitors attached to the main solver during the search.
+     * Since this function returns a reference to the internal list, it is safe
+     * to call before the Solve(). The list will be populated there. This also
      * means that checking the list before the search starts is meaningless,
      * since the list will be empty or incomplete.
      *
-     * @return main solver monitors
+     * @return solver monitors defined by the user
      */
-    const std::vector<SearchMonitor *> &GetMainMonitors() const {
-        return main_solver_monitors_;
+    const std::vector<SearchMonitor *> &GetUserMonitors() const {
+        return search_monitors_.user_monitors_;
+    }
+
+    /**
+     * Returns monitors established by Searchlight during the search.
+     * Since this function returns a reference to the internal list, it is safe
+     * to call before the Solve(). The list will be populated there. This also
+     * means that checking the list before the search starts is meaningless,
+     * since the list will be empty or incomplete.
+     *
+     * @return solver monitors defined by Searchlight
+     */
+    const std::vector<SearchMonitor *> &GetAuxMonitors() const {
+        return search_monitors_.aux_monitors_;
+    }
+
+    /**
+     * Returns the monitor that submits candidates to the validator. While it
+     * is safe to call before Solve(), the function will return nullptr if
+     * no monitor was established yet.
+     *
+     * @return the validator monitor or nullptr, if there is none
+     */
+    SearchMonitor *GetValidatorMonitor() const {
+        return search_monitors_.validator_;
     }
 
     /**
@@ -376,11 +451,31 @@ public:
     }
 
 private:
+    // Monitors participating in the search
+    struct SearchMonitors {
+        // Solution collector for main (exact) results
+        SearchlightCollector *collector_ = nullptr;;
+
+        // Validator for the search
+        ValidatorMonitor *validator_ = nullptr;
+
+        // User monitors
+        std::vector<SearchMonitor *> user_monitors_;
+
+        // Auxiliary monitors established by SL
+        std::vector<SearchMonitor *> aux_monitors_;
+
+        // Clears the structure of all monitors
+        void Clear() {
+            collector_ = nullptr;
+            validator_ = nullptr;
+            user_monitors_.clear();
+            aux_monitors_.clear();
+        }
+    } search_monitors_;
+
     // The solver
     Solver solver_;
-
-    // Solution collector for main (exact) results
-    SearchlightCollector *collector_;
 
     // Validator for the search
     Validator *validator_;
@@ -400,65 +495,8 @@ private:
     // Total time spent on solving
     std::chrono::microseconds total_solve_time_;
 
-    // Monitors on the main solver
-    std::vector<SearchMonitor *> main_solver_monitors_;
-
     // Contains various configuration options
     SearchlightConfig config_;
-};
-
-/**
- * This is a monitor that catches complete, but approximate, solutions
- * (assignments) and passed them along to the Validator.
- */
-class ValidatorMonitor : public SolutionCollector {
-public:
-    /**
-     * Creates a new validator monitor. This monitor looks for complete
-     * assignments during the search and passed them along to the validator.
-     *
-     * @param validator the validator for checking assignments
-     * @param vars a vector of decision variables (externally managed)
-     * @param solver the main solver
-     */
-    ValidatorMonitor(Validator &validator, const IntVarVector &vars,
-            Solver *solver) :
-        SolutionCollector(solver),
-        validator_(validator),
-        vars_(vars) {
-        Add(vars);
-    }
-
-    /**
-     * This function is called at a leaf of the search tree. At this point
-     * a leaf is accepted as being a solution. This function checks if
-     * it is a complete assignment and passed it along to the validator.
-     *
-     * @return true if we want to continue after the leaf; false otherwise
-     */
-    virtual bool AtSolution();
-
-    /**
-     * Returns the number of candidates encountered. This monitor tracks them,
-     * since the number of leaves is not transfered between searches in the
-     * or-tools solver. Thus, it creates problems when nested searches are
-     * used.
-     *
-     * @return the number of candidates
-     */
-    int64_t CandidatesNumber() const {
-        return candidates_;
-    }
-
-private:
-    // The validator to pass the solution to
-    Validator &validator_;
-
-    // The vector of vars (managed outside)
-    const IntVarVector &vars_;
-
-    // Candidates encountered
-    int64_t candidates_ = 0;
 };
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_SEARCHLIGHT_H_ */

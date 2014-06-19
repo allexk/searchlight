@@ -387,12 +387,6 @@ Decision* SLSearch::Next(Solver* const s) {
                 std::chrono::duration_cast<std::chrono::seconds>
                 (init_end_time - init_start_time).count();
         LOG4CXX_DEBUG(logger, "The init went for " << init_seconds << "s.");
-        if (search_time_limit_ > 0) {
-            search_time_limit_ -= init_seconds;
-            if (search_time_limit_ < 0) {
-                search_time_limit_ = 0;
-            }
-        }
     }
 
     // Here, we have all impacts computed
@@ -428,31 +422,29 @@ Decision* SLSearch::Next(Solver* const s) {
             Solver::CHOOSE_RANDOM, Solver::ASSIGN_RANDOM_VALUE);
 
     // set the time limit if needed
-    std::vector<SearchMonitor *> monitors(solver_montors_);
-    if (search_time_limit_ >= 0) {
-        LOG4CXX_DEBUG(logger, "In-interval search, time left: " <<
-                search_time_limit_);
-        // Determine the time limit
-        int64_t curr_search_limit = 0;
-        switch (search_config_.time_strategy_) {
-            case SLConfig::EXP:
-                curr_search_limit = search_time_limit_ /
-                    search_config_.time_interval_;
-                break;
-            case SLConfig::CONST:
-                curr_search_limit = search_config_.time_interval_;
-                break;
-        }
-        monitors.push_back(s->MakeTimeLimit(curr_search_limit * 1000));
+    std::vector<SearchMonitor *> monitors(sl_.GetAuxMonitors());
+    const auto &user_monitors = sl_.GetUserMonitors();
+    monitors.insert(monitors.end(), user_monitors.begin(),
+            user_monitors.end());
+    monitors.push_back(sl_.GetValidatorMonitor());
 
-        // Make Luby restarts for better coverage.
+    if (search_config_.time_strategy_ == SLConfig::CONST) {
+        monitors.push_back(s->MakeTimeLimit(
+                search_config_.time_interval_ * 1000));
+        /*
+         * Make Luby restarts for better coverage.
+         *
+         * Note, we don't establish Luby restarts if we don't have a time limit,
+         * since the search will run infinitely long.
+         */
         monitors.push_back(s->MakeLubyRestart(search_config_.luby_scale_));
     }
+
     /*
-     * Establish a finish-on-frequent fails monitor. The rationale behind this
-     * is that if we fail often before a leaf is reached, we are probably
-     * wasting our time, since the search is random. If we don't have a time
-     * limit, we might finish this search faster.
+     * Establish a finish-on-frequent fails monitor. The rationale behind
+     * this is that if we fail often before a leaf is reached, we are
+     * probably wasting our time, since the search is random. If we don't
+     * have a time limit, we might finish this search faster.
      *
      * Note, we don't establish Luby restarts if we don't have a time limit,
      * since the search will run infinitely long.
@@ -464,7 +456,6 @@ Decision* SLSearch::Next(Solver* const s) {
     // starting the timer
     const auto solve_start_time = std::chrono::steady_clock::now();
     s->Solve(random_db, monitors);
-    // starting the timer
     const auto solve_end_time = std::chrono::steady_clock::now();
 
     // time elapsed (might be less than a half of search_time_limit_, if
@@ -474,31 +465,19 @@ Decision* SLSearch::Next(Solver* const s) {
             (solve_end_time - solve_start_time).count();
     LOG4CXX_DEBUG(logger, "The search went for " << solve_seconds << "s.");
 
-    // Finished this combination of intervals, can safely fail
-    if (search_time_limit_ > 0) {
-        // Subtract at least 1sec; needed for a large number of fail-on-0s
-        search_time_limit_ -= (solve_seconds == 0 ? 1 : solve_seconds);
-        if (search_time_limit_ < 0) {
-            search_time_limit_ = 0;
-        }
+    // wait for the validator
+    if (search_config_.validator_synchronize_) {
+        LOG4CXX_DEBUG(logger, "Waiting for the validator...");
+        sl_.GetValidator()->Synchronize();
     }
 
-    if (search_time_limit_ == 0) {
-        LOG4CXX_DEBUG(logger, "In-interval search, no time left, terminating");
-        dummy_monitor_.FinishCurrentSearch();
-    } else {
-        // wait for the validator
-        if (search_config_.validator_synchronize_) {
-            LOG4CXX_DEBUG(logger, "Waiting for the validator...");
-            sl_.GetValidator()->Synchronize();
-        }
-
-        /*
-         *  Will try a different interval combination. Since we penalize
-         *  intervals we choose we should end up with a different combination,
-         *  unless the current intervals are _reall_ promising (having a
-         *  high impact).
-         */
+    /*
+     *  Will try a different interval combination. Since we penalize
+     *  intervals we choose we should end up with a different combination,
+     *  unless the current intervals are _reall_ promising (having a
+     *  high impact).
+     */
+    if (search_config_.do_restarts_) {
         LOG4CXX_DEBUG(logger, "In-interval search, restarting.");
         dummy_monitor_.RestartCurrentSearch();
     }
@@ -508,33 +487,38 @@ Decision* SLSearch::Next(Solver* const s) {
 
 void SLSearch::InitIntervals(Solver * const s, const int steps_limit) {
     LOG4CXX_DEBUG(logger, "Exploring interval impacts");
-    std::vector<SearchMonitor *> nested_monitors(solver_montors_);
+    std::vector<SearchMonitor *> nested_monitors(sl_.GetAuxMonitors());
+    if (search_config_.submit_probes_) {
+        nested_monitors.push_back(sl_.GetValidatorMonitor());
+    }
     for (auto &var_impact: var_impacts_) {
-        for (auto &interval_impact: var_impact.impacts_) {
-            const int64 min = interval_impact.first;
-            const int64 max = min + var_impact.interval_length_ - 1;
+        if (var_impact.impacts_.size() > 1) { // multiple intervals
+            for (auto &interval_impact: var_impact.impacts_) {
+                const int64 min = interval_impact.first;
+                const int64 max = min + var_impact.interval_length_ - 1;
 
-            LOG4CXX_TRACE(logger, "Exploring interval [" <<
-                    min << ", " << max << "] for " <<
-                    var_impact.var_->DebugString());
+                LOG4CXX_TRACE(logger, "Exploring interval [" <<
+                        min << ", " << max << "] for " <<
+                        var_impact.var_->DebugString());
 
-            IntervalImpactMonitor explorer_monitor{s, steps_limit};
-            nested_monitors.push_back(&explorer_monitor);
-            IntervalImpactBuilder explorer{all_vars_, var_impact.var_,
-                    min, max, nested_monitors, search_config_.luby_scale_};
-            s->Solve(&explorer);
-            nested_monitors.pop_back();
+                IntervalImpactMonitor explorer_monitor{s, steps_limit};
+                nested_monitors.push_back(&explorer_monitor);
+                IntervalImpactBuilder explorer{all_vars_, var_impact.var_,
+                        min, max, nested_monitors, search_config_.luby_scale_};
+                s->Solve(&explorer);
+                nested_monitors.pop_back();
 
-            Impact &imp = interval_impact.second;
-            imp.tried_assigns_ = explorer_monitor.GetTotalFails();
-            imp.succ_assigns_ = explorer_monitor.GetLeavesReached();
-            if (explorer_monitor.ProblemInfeasible()) {
-                // We should deactivate the interval
-                LOG4CXX_TRACE(logger, "The interval is infeasible");
-                imp.active = false;
+                Impact &imp = interval_impact.second;
+                imp.tried_assigns_ = explorer_monitor.GetTotalFails();
+                imp.succ_assigns_ = explorer_monitor.GetLeavesReached();
+                if (explorer_monitor.ProblemInfeasible()) {
+                    // We should deactivate the interval
+                    LOG4CXX_TRACE(logger, "The interval is infeasible");
+                    imp.active = false;
+                }
+                LOG4CXX_TRACE(logger, "Determined impact for " <<
+                        "[" << min << ", " << max << "]: " << imp);
             }
-            LOG4CXX_TRACE(logger, "Determined impact for " <<
-                    "[" << min << ", " << max << "]: " << imp);
         }
     }
     LOG4CXX_DEBUG(logger, "Finished exploring interval impacts");
@@ -623,6 +607,9 @@ std::ostream &SLSearch::OutputConfig(std::ostream &os) const {
         case SLConfig::EXP:
             os << "exponential decrease: " << search_config_.time_interval_ <<
                 " times";
+            break;
+        case SLConfig::NO:
+            os << "no limit";
             break;
     }
 
