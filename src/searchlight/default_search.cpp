@@ -145,7 +145,7 @@ public:
         fails_(0),
         leaves_(0),
         fails_limit_(fails_limit),
-        problem_infeasible_(false) {}
+        problem_infeasible_(true) {}
 
     /**
      * Returns the number of true fails. A true fail is any fail except
@@ -188,13 +188,12 @@ public:
     }
 
     /**
-     * Callback at the end of search
+     * Callback before the root node starts (after the initial propagation).
      */
-    virtual void ExitSearch() override {
-        if (solver()->state() == Solver::PROBLEM_INFEASIBLE) {
-            problem_infeasible_ = true;
-        }
+    virtual void EndInitialPropagation() override {
+        problem_infeasible_ = false;
     }
+
 
     /**
      * Determines if the problem was infeasible.
@@ -618,8 +617,12 @@ std::ostream &SLSearch::OutputConfig(std::ostream &os) const {
     os << "\nLuby restarts scale: " << search_config_.luby_scale_;
     os << "\nRestart-on-fails probes: " << search_config_.fails_restart_probes_;
     os << "\nRestart-on-fails threshold: " << search_config_.fails_restart_thr_;
-    os << "\nSynchronize with the validator:" << std::boolalpha <<
+    os << "\nSynchronize with the validator: " << std::boolalpha <<
             search_config_.validator_synchronize_;
+    os << "\nSubmit probes to the validator: " << std::boolalpha <<
+            search_config_.submit_probes_;
+    os << "\nRestart after interval: " << std::boolalpha <<
+            search_config_.do_restarts_;
     os << '\n';
 
     return os;
