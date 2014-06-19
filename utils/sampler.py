@@ -38,7 +38,7 @@ def GetMeta(iquery, array, what):
 
     return res
 
-def SampleAttribute(iquery, array, chunks, attr, aid, total_chunks):
+def SampleAttribute(iquery, array, chunks, attr, aid, total_chunks, region):
     """ Samples the specified attribute from the array.
 
     The result is returned as a StringIO object.
@@ -50,13 +50,20 @@ def SampleAttribute(iquery, array, chunks, attr, aid, total_chunks):
         attr         -- the attribute to sample
         aid          -- the attribute's id
         total_chunks -- the total number of sample chunks
+        region      -- particular region to sample
     """
     args = [iquery, '-a', '-o', 'csv+', '-q']
-    regrid_cmd = 'regrid(' + array
-    for c in chunks:
-        regrid_cmd += ', %d' % c
-    regrid_cmd += ''', min(%s) as min, max(%s) as max, sum(%s) as sum,
-        count(%s) as count)''' % ((attr, ) * 4)
+    array_spec = array
+    if region:
+        region_lbs = ', '.join([str(i) for i in region[0]])
+        region_rbs = ', '.join([str(i) for i in region[1]])
+        array_spec = 'between(%s, %s, %s)' % (array, region_lbs, region_rbs)
+
+    chunks_spec = ', '.join([str(i) for i in chunks])
+    regrid_cmd = 'regrid(%s, %s, ' % (array_spec, chunks_spec)
+    
+    regrid_cmd += 'min(%s) as min, max(%s) as max, sum(%s) as sum,'\
+        'count(%s) as count)' % ((attr, ) * 4)
 
     # reshape ignores attribute specs, but...
     reshape_cmd = 'reshape(' + regrid_cmd + ', <a: double>'
@@ -64,6 +71,7 @@ def SampleAttribute(iquery, array, chunks, attr, aid, total_chunks):
     # we need to specify proper dimensions
     reshape_cmd += '[chunk=0:%d,%d,0, attr=%d:%d,1,0])' % \
         (total_chunks - 1, total_chunks, aid, aid)
+    print 'Sampling with the command: %s' % reshape_cmd
 
     # the full command
     args.append(reshape_cmd)
@@ -88,6 +96,9 @@ parser.add_argument('--outcsv', metavar='filepath', default=None,
     help='File to write the sample CSV')
 parser.add_argument('--outsh', metavar='filepath', default=None,
     help='File to write the shell script for loading the sample from CSV')
+parser.add_argument('--region', metavar='N', default=None, nargs='+', type=int,
+                    help='Specific region to sample: [lbs, rbs),  ... '
+                    '(must be aligned with the chunks)')
 parser.add_argument('array', help='Array to sample')
 
 # parse
@@ -103,6 +114,23 @@ attrs = GetMeta(iquery_path, opts.array, 'attrs')
 # one chunk size per dimension
 if len(dims) != len(opts.chunks):
     raise ValueError, "The number of chunk sizes should be %d" % len(dims)
+
+# check the area
+regions = None
+if opts.region:
+    regions = []
+    if len(opts.region) % (2 * len(dims)) != 0:
+        raise ValueError, 'Sample regions must have %d dimensions' % len(dims)
+    for i in range(0, len(opts.region), 2 * len(dims)):
+        region_lbs = opts.region[i:i + len(dims)]
+        region_rbs = opts.region[i + len(dims):i + 2 * len(dims)]
+        for i in range(len(region_lbs)):
+            chunk_i = opts.chunks[i]
+            len_i = region_rbs[i] - region_lbs[i] + 1
+            if region_lbs[i] % chunk_i != 0 or len_i % chunk_i != 0:
+                raise ValueError, 'Area bounds must be aligned with the chunk!'
+        regions.append((region_lbs, region_rbs))
+    print 'Detected the following sample regions: %s' % str(regions)
 
 attr_ids = {} # map of attribute names to ids
 for oa in opts.attrs:
@@ -139,15 +167,27 @@ csv_file = open(csv_file_name, 'w')
 
 csv_header_needed = True
 for (i, attr) in enumerate(opts.attrs):
-    sample = SampleAttribute(iquery_path, opts.array, opts.chunks,
-        attr, attr_ids[attr], total_chunks)
-    header = sample.readline().strip()
+    samples = []
+    header = None
+    if regions:
+        for r in regions:
+            sample = SampleAttribute(iquery_path, opts.array, opts.chunks,
+                                     attr, attr_ids[attr], total_chunks, r)
+            # header is the same and we remove it from every StringIO "file"
+            header = sample.readline().strip()
+            samples.append(sample)
+    else:
+        sample = SampleAttribute(iquery_path, opts.array, opts.chunks,
+                                 attr, attr_ids[attr], total_chunks, None)
+        header = sample.readline().strip()
+        samples.append(sample)
     if csv_header_needed:
         csv_file.write(header)
         csv_header_needed = False
-    for l in sample:
-        l = l.strip()
-        csv_file.write('\n%s' % l)
+    for s in samples:
+        for l in s:
+            l = l.strip()
+            csv_file.write('\n%s' % l)
 csv_file.close()
 
 # create the script
