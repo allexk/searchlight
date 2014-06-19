@@ -192,4 +192,8 @@ void Searchlight::ReadConfig(const std::string &file_name) {
     }
 }
 
+SearchMonitor *MakeCumulativeTimeLimit(Solver &s, int64 time_ms) {
+    return s.MakeLimit(time_ms, kint64max, kint64max, kint64max, true, true);
+}
+
 } /* namespace searchlight */

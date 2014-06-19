@@ -106,7 +106,7 @@ void SemWindowsAvg(Searchlight *sl) {
             Solver::SPLIT_LOWER_HALF);
     } else if (search_heuristic == "sl") {
         if (time_limit != 0) {
-            mons.push_back(solver.MakeTimeLimit(time_limit * 1000));
+            mons.push_back(MakeCumulativeTimeLimit(solver, time_limit * 1000));
         }
         db = solver.RevAlloc(
                 sl->CreateDefaultHeuristic(coords, lens, splits));

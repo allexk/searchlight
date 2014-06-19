@@ -498,5 +498,22 @@ private:
     // Contains various configuration options
     SearchlightConfig config_;
 };
+
+/**
+ * Creates a cumulative time limit, applied to all nested searched combined.
+ *
+ * Users of the SL heuristic should use this time limit, since SL heuristic
+ * might run a lot of nested searches. Unfortunately, or-tools doesn't have
+ * an interface function that allows to set the ccumulativity. Thus, this
+ * function.
+ *
+ * Users don't need to take care of freeing the memory. The solver will do it.
+ *
+ * @param s the solver to use the timer for
+ * @param time_ms the cumulative time limit in ms
+ * @return the time limit monitor
+ */
+SearchMonitor *MakeCumulativeTimeLimit(Solver &s, int64 time_ms);
+
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_SEARCHLIGHT_H_ */
