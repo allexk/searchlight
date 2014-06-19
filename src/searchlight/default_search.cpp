@@ -144,8 +144,7 @@ public:
         SearchMonitor(s),
         fails_(0),
         leaves_(0),
-        fails_limit_(fails_limit),
-        problem_infeasible_(true) {}
+        fails_limit_(fails_limit) {}
 
     /**
      * Returns the number of true fails. A true fail is any fail except
@@ -188,24 +187,6 @@ public:
     }
 
     /**
-     * Callback before the root node starts (after the initial propagation).
-     */
-    virtual void EndInitialPropagation() override {
-        problem_infeasible_ = false;
-    }
-
-
-    /**
-     * Determines if the problem was infeasible.
-     *
-     * @return true, if the problem was infeasible; false, otherwise
-     */
-    bool ProblemInfeasible() const {
-        return problem_infeasible_;
-    }
-
-
-    /**
      * Callback called when a leaf is reached.
      *
      * @return true, if we want to backtrack and continue; false, otherwise
@@ -224,9 +205,6 @@ private:
 
     // The maximum number of fails
     const int fails_limit_;
-
-    // True, if the problem was infeasible (i.e., the interval is infeasible)
-    bool problem_infeasible_;
 };
 
 /**
@@ -253,7 +231,8 @@ public:
             search_vars_(search_vars),
             var_(var), min_(min), max_(max),
             monitors_(monitors),
-            luby_scale_(luby_scale) {}
+            luby_scale_(luby_scale),
+            problem_infeasible_(true) {}
 
     /**
      * Produces a new decision. In this case it sets the interval and initiates
@@ -267,6 +246,7 @@ public:
                 << ", [" << min_ << ", " << max_ << "]");
 
         var_->SetRange(min_, max_);
+        problem_infeasible_ = false;
 
         // We are going to conduct a random search...
         DecisionBuilder * const random_db = s->MakePhase(search_vars_,
@@ -281,6 +261,15 @@ public:
 
         // After the nested search, we have nothing to do. Exit
         return nullptr;
+    }
+
+    /**
+     * Determines if the problem was infeasible.
+     *
+     * @return true, if the problem was infeasible; false, otherwise
+     */
+    bool ProblemInfeasible() const {
+        return problem_infeasible_;
     }
 
     /**
@@ -307,6 +296,9 @@ private:
 
     // Scale factor for Luby restarts
     int luby_scale_;
+
+    // True, if the problem was infeasible (i.e., the interval is infeasible)
+    bool problem_infeasible_;
 };
 
 /**
@@ -510,7 +502,7 @@ void SLSearch::InitIntervals(Solver * const s, const int steps_limit) {
                 Impact &imp = interval_impact.second;
                 imp.tried_assigns_ = explorer_monitor.GetTotalFails();
                 imp.succ_assigns_ = explorer_monitor.GetLeavesReached();
-                if (explorer_monitor.ProblemInfeasible()) {
+                if (explorer.ProblemInfeasible()) {
                     // We should deactivate the interval
                     LOG4CXX_TRACE(logger, "The interval is infeasible");
                     imp.active = false;
