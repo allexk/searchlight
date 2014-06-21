@@ -102,6 +102,14 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
                 }
             }
         }
+    } else if (mode_ == DUMB) {
+        // We are being dumb: (-inf; +inf) and it may be NULL
+        for (auto &int_val: res) {
+            int_val.min_ = std::numeric_limits<double>::lowest();
+            int_val.max_ = std::numeric_limits<double>::max();
+            int_val.state_ = IntervalValue::MAY_NULL;
+            int_val.val_ = 0;
+        }
     } else {
         // cannot happen
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
@@ -166,6 +174,12 @@ IntervalValue Adapter::GetElement(const Coordinates &point,
                 res.state_ = IntervalValue::NON_NULL;
             }
         }
+    } else if (mode_ == DUMB) {
+        // We are being dumb: (-inf; +inf) and it may be NULL
+        res.min_ = std::numeric_limits<double>::lowest();
+        res.max_ = std::numeric_limits<double>::max();
+        res.state_ = IntervalValue::MAY_NULL;
+        res.val_ = 0;
     } else {
         // cannot happen
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)

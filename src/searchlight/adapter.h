@@ -127,6 +127,8 @@ public:
         APPROX,
         /** The adapter gives a precise interval of possible values */
         INTERVAL,
+        /** The adapter always gives (-inf, +inf) estimations */
+        DUMB,
     };
 
     /**
