@@ -37,6 +37,27 @@ namespace searchlight {
 static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.udfs"));
 
+// A couple of utility functions
+namespace {
+    // Rounds a right bound up
+    int64 RBoundToInt64(double rbound) {
+        if (rbound == std::numeric_limits<double>::max()) {
+            return std::numeric_limits<int64>::max();
+        } else {
+            return ceil(rbound);
+        }
+    }
+
+    // Rounds a left bound down
+    int64 LBoundToInt64(double lbound) {
+        if (lbound == std::numeric_limits<double>::lowest()) {
+            return std::numeric_limits<int64>::min();
+        } else {
+            return floor(lbound);
+        }
+    }
+}
+
 /**
  * This class allows to compute aggregate functions on arrays that are
  * expressed in terms of integer variables
@@ -507,8 +528,8 @@ bool AggrFuncExpr::ComputeMinMax() const {
      *
      * TODO: revisit later if floats/doubles become available in or-tools.
      */
-    int64 new_min = floor(new_min_max.min_);
-    int64 new_max = ceil(new_min_max.max_);
+    int64 new_min = LBoundToInt64(new_min_max.min_);
+    int64 new_max = RBoundToInt64(new_min_max.max_);
     if (new_min_max.min_ == new_min_max.max_) {
         new_min = new_max = round(new_min_max.min_);
     }
