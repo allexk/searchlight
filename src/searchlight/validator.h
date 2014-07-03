@@ -204,8 +204,25 @@ public:
      * @param delegate the expression this variable is casted for
      */
     virtual void VisitIntegerVariable(const IntVar* const variable,
-                                      IntExpr* const delegate) {
-        if (!delegate && variable->HasName()) { // Ignore cast vars
+                                      IntExpr* const delegate) override {
+        if (variable->HasName()) {
+            var_map_[variable->name()] = variable;
+        }
+    }
+
+    /**
+     * Visits "optimized" variables, like x+c, x*c, etc. and some others.
+     *
+     * @param variable the variable itself
+     * @param operation operation name (e.g., sum, product, etc.)
+     * @param value the value if any (e.g., c in x+c)
+     * @param delegate the original variable (e.g., x in x+c)
+     */
+    virtual void VisitIntegerVariable(const IntVar* const variable,
+                                      const std::string& operation, int64 value,
+                                      IntVar* const delegate) override {
+        // We don't need the original var here -- just the main var
+        if (variable->HasName()) {
             var_map_[variable->name()] = variable;
         }
     }
