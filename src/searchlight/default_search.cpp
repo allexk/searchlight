@@ -252,12 +252,14 @@ public:
         DecisionBuilder * const random_db = s->MakePhase(search_vars_,
                 Solver::CHOOSE_RANDOM, Solver::ASSIGN_RANDOM_VALUE);
 
-        SearchMonitor * const luby_restart = s->MakeLubyRestart(luby_scale_);
-
         // Nested search
-        monitors_.push_back(luby_restart);
+        if (luby_scale_ != 0) {
+            monitors_.push_back(s->MakeLubyRestart(luby_scale_));
+        }
         s->Solve(random_db, monitors_);
-        monitors_.pop_back();
+        if (luby_scale_ != 0) {
+            monitors_.pop_back();
+        }
 
         // After the nested search, we have nothing to do. Exit
         return nullptr;
@@ -433,7 +435,9 @@ Decision* SLSearch::Next(Solver* const s) {
          * Note, we don't establish Luby restarts if we don't have a time limit,
          * since the search will run infinitely long.
          */
-        monitors.push_back(s->MakeLubyRestart(search_config_.luby_scale_));
+        if (search_config_.luby_scale_ != 0) {
+            monitors.push_back(s->MakeLubyRestart(search_config_.luby_scale_));
+        }
     }
 
     /*

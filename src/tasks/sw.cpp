@@ -62,7 +62,7 @@ void SemWindowsAvg(Searchlight *sl) {
     const int32 step_y  = config.get<int32>("sw.step_y", 1);
 
     const int32 time_limit = config.get("sw.time_limit", 3600);
-    const int luby_scale = config.get("searchlight.sl", 1);
+    const int luby_scale = config.get("searchlight.sl.luby_scale", 1);
     const int splits = config.get("sw.splits", 100);
 
     // problem params
@@ -120,7 +120,9 @@ void SemWindowsAvg(Searchlight *sl) {
     } else if (search_heuristic == "random") {
         db = solver.MakePhase(all_vars, Solver::CHOOSE_RANDOM,
             Solver::ASSIGN_RANDOM_VALUE);
-        mons.push_back(solver.MakeLubyRestart(luby_scale));
+        if (luby_scale != 0) {
+            mons.push_back(solver.MakeLubyRestart(luby_scale));
+        }
         mons.push_back(solver.MakeTimeLimit(time_limit * 1000));
     } else if (search_heuristic == "split") {
         db = solver.MakePhase(all_vars, Solver::CHOOSE_MAX_SIZE,
