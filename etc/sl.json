@@ -36,6 +36,8 @@
         "len_ux": 500,
         "len_ly": 400,
         "len_uy": 500,
+        "step_x": 500,
+        "step_y": 500,
 
         "db": "sl",
         "time_limit": 3600,
