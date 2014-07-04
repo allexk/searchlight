@@ -76,10 +76,6 @@ void SemWindowsAvg(Searchlight *sl) {
             vals.push_back(v);
         }
         coords[0] = solver.MakeIntVar(vals, "x");
-        if (!coords[0]->HasName()) {
-            // Might happen because of or-tools optimizations
-            coords[0]->set_name("x_opt");
-        }
     }
     if (step_y == 1) {
         coords[1] = solver.MakeIntVar(start_y, end_y, "y");
@@ -89,10 +85,6 @@ void SemWindowsAvg(Searchlight *sl) {
             vals.push_back(v);
         }
         coords[1] = solver.MakeIntVar(vals, "y");
-        if (!coords[1]->HasName()) {
-            // Might happen because of or-tools optimizations
-            coords[1]->set_name("y_opt");
-        }
     }
     lens[0] = solver.MakeIntVar(len_lx, len_ux, "lx");
     lens[1] = solver.MakeIntVar(len_ly, len_uy, "ly");

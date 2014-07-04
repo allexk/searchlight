@@ -221,9 +221,13 @@ public:
     virtual void VisitIntegerVariable(const IntVar* const variable,
                                       const std::string& operation, int64 value,
                                       IntVar* const delegate) override {
-        // We don't need the original var here -- just the main var
-        if (variable->HasName()) {
-            var_map_[variable->name()] = variable;
+        /*
+         * A trick here: we assume the name stands for the delegate, but
+         * the var is the main var. This is made consistent with the SL's
+         * Solve() method, which finds variable names.
+         */
+        if (delegate && delegate->HasName()) {
+            var_map_[delegate->name()] = variable;
         }
     }
 

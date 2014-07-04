@@ -49,6 +49,46 @@ namespace searchlight {
 static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.searchlight"));
 
+
+namespace {
+/**
+ * This class is a visitor that determines the name of the delegate variable,
+ * i.e., if the main variable is a special cast for the original variable,
+ * it determines the name of the original variable.
+ */
+class VariableDelegateNamer : public ModelVisitor {
+public:
+    /**
+     * Visits "optimized" variables, like x+c, x*c, etc. and some others.
+     *
+     * @param variable the variable itself
+     * @param operation operation name (e.g., sum, product, etc.)
+     * @param value the value if any (e.g., c in x+c)
+     * @param delegate the original variable (e.g., x in x+c)
+     */
+    virtual void VisitIntegerVariable(const IntVar* const variable,
+                                      const std::string& operation, int64 value,
+                                      IntVar* const delegate) override {
+        if (delegate && delegate->HasName()) {
+            name_ = delegate->name();
+        }
+    }
+
+    /**
+     * Return the name of the delegeate variable.
+     *
+     * @return the name of the delegate variable
+     */
+    const std::string &GetName() const {
+        return name_;
+    }
+
+private:
+    // The delegate var name
+    std::string name_;
+};
+}
+
 Searchlight::~Searchlight() {
     const auto secs = std::chrono::duration_cast<std::chrono::seconds>(
             total_solve_time_).count();
@@ -71,11 +111,21 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
     for (IntVarVector::const_iterator cit = vars.begin(); cit != vars.end();
             cit++) {
         const IntVar * const var = *cit;
+        std::string var_name;
         if (!var->HasName()) {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << "Every decision variable must have a name!";
+            VariableDelegateNamer namer;
+            var->Accept(&namer);
+            if (!namer.GetName().empty()) {
+                var_name = namer.GetName();
+            } else {
+                throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                        SCIDB_LE_ILLEGAL_OPERATION)
+                        << "Every decision variable must have a name!";
+            }
+        } else {
+            var_name = var->name();
         }
-        var_names[i++] = var->name();
+        var_names[i++] = var_name;
     }
 
     // establish the validator
