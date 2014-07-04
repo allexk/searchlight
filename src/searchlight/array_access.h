@@ -33,6 +33,8 @@
 #include "scidb_inc.h"
 #include "base.h"
 
+#include <chrono>
+
 namespace searchlight {
 
 /**
@@ -63,6 +65,11 @@ public:
                      Config::getInstance()->
                         getOption<int>(scidb::CONFIG_TILE_SIZE) > 1;
     }
+
+    /**
+     * Destructor.
+     */
+    ~ArrayAccess();
 
     /**
      * Computes aggregates over a region of the array. The aggregate is taken
@@ -138,12 +145,12 @@ private:
     typedef std::vector<SmallAggr> SmallAggrVector;
 
     // Aggregate computation for tile-based inputs.
-    static void ComputeGeneralAggregateTile(const Array &array,
-            AttributeID attr, SmallAggrVector &aggrs, bool need_nulls);
+    void ComputeGeneralAggregateTile(const Array &array,
+        AttributeID attr, SmallAggrVector &aggrs, bool need_nulls) const;
 
     // General aggregate for non-tile computations
-    static void ComputeGeneralAggregate(const Array &array, AttributeID attr,
-            SmallAggrVector &aggrs, bool need_nulls);
+    void ComputeGeneralAggregate(const Array &array, AttributeID attr,
+        SmallAggrVector &aggrs, bool need_nulls) const;
 
     // The data array
     const ArrayPtr data_array_;
@@ -164,6 +171,9 @@ private:
     // Last used iterator for faster access
     mutable ConstItemIteratorPtr last_iter_;
     mutable AttributeID last_attr_;
+
+    // Total time of aggregate requests (without disk I/O)
+    mutable std::chrono::microseconds total_agg_time_;
 };
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_ARRAY_ACCESS_H_ */

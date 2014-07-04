@@ -37,6 +37,19 @@ using scidb::CountingAggregate;
 
 namespace searchlight {
 
+// The logger
+static log4cxx::LoggerPtr logger(
+        log4cxx::Logger::getLogger("searchlight.array_access"));
+
+ArrayAccess::~ArrayAccess() {
+    const auto secs = std::chrono::duration_cast<std::chrono::seconds>(
+            total_agg_time_).count();
+    const auto usecs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            total_agg_time_).count();
+    LOG4CXX_INFO(logger, "Array Access, total aggregates time: " <<
+            secs << '.' << usecs << 's');
+}
+
 TypedValueVector ArrayAccess::ComputeAggreagate(const Coordinates &low,
         const Coordinates &high, AttributeID attr,
         const StringVector &aggr_names) const {
@@ -82,7 +95,7 @@ TypedValueVector ArrayAccess::ComputeAggreagate(const Coordinates &low,
 }
 
 void ArrayAccess::ComputeGeneralAggregateTile(const Array &array,
-        AttributeID attr, SmallAggrVector &aggrs, bool need_nulls) {
+        AttributeID attr, SmallAggrVector &aggrs, bool need_nulls) const {
     boost::shared_ptr<ConstArrayIterator> array_iter =
             array.getConstIterator(attr);
 
@@ -97,6 +110,10 @@ void ArrayAccess::ComputeGeneralAggregateTile(const Array &array,
         const ConstChunk &chunk = array_iter->getChunk();
         boost::shared_ptr<ConstChunkIterator> chunk_iter =
                 chunk.getConstIterator(chunk_iter_mode);
+
+        // starting the timer
+        const auto agg_start_time = std::chrono::steady_clock::now();
+
         while (!chunk_iter->end()) {
             const Value &v = chunk_iter->getItem();
             const RLEPayload *tile = v.getTile();
@@ -111,12 +128,19 @@ void ArrayAccess::ComputeGeneralAggregateTile(const Array &array,
             }
             ++(*chunk_iter);
         }
+
+        // stopping the timer
+        const auto agg_end_time = std::chrono::steady_clock::now();
+
+        total_agg_time_ += std::chrono::duration_cast<decltype(total_agg_time_)>(
+                agg_end_time - agg_start_time);
+
         ++(*array_iter);
     }
 }
 
 void ArrayAccess::ComputeGeneralAggregate(const Array &array,
-        AttributeID attr, SmallAggrVector &aggrs, bool need_nulls) {
+        AttributeID attr, SmallAggrVector &aggrs, bool need_nulls) const {
     boost::shared_ptr<ConstArrayIterator> array_iter =
             array.getConstIterator(attr);
 
@@ -131,6 +155,10 @@ void ArrayAccess::ComputeGeneralAggregate(const Array &array,
         const ConstChunk &chunk = array_iter->getChunk();
         boost::shared_ptr<ConstChunkIterator> chunk_iter =
                 chunk.getConstIterator(chunk_iter_mode);
+
+        // starting the timer
+        const auto agg_start_time = std::chrono::steady_clock::now();
+
         while (!chunk_iter->end()) {
             const Value &v = chunk_iter->getItem();
             total_count++;
@@ -149,6 +177,13 @@ void ArrayAccess::ComputeGeneralAggregate(const Array &array,
             }
             ++(*chunk_iter);
         }
+
+        // stopping the timer
+        const auto agg_end_time = std::chrono::steady_clock::now();
+
+        total_agg_time_ += std::chrono::duration_cast<decltype(total_agg_time_)>(
+                agg_end_time - agg_start_time);
+
         ++(*array_iter);
     }
 
