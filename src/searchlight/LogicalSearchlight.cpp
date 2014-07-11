@@ -91,8 +91,7 @@ public:
         LogicalOperator(logicalName, alias) {
 
         ADD_PARAM_INPUT(); // array
-        //ADD_PARAM_INPUT() // sample
-        //ADD_PARAM_CONSTANT(TID_STRING) // params
+        ADD_PARAM_INPUT(); // primary sample
         ADD_PARAM_VARIES();
     }
 
@@ -102,17 +101,16 @@ public:
      * @return a vector of possible options
      */
     virtual std::vector<boost::shared_ptr<OperatorParamPlaceholder>>
-        nextVaryParamPlaceholder(const std::vector<ArrayDesc> &schemas) override {
+        nextVaryParamPlaceholder(
+                const std::vector<ArrayDesc> &schemas) override {
 
         std::vector<boost::shared_ptr<OperatorParamPlaceholder>> res;
         if (_parameters.empty()) {
-            // need at least one grid array
-            res.push_back(PARAM_INPUT());
-        } else if (_parameters[_parameters.size() - 1]->getParamType() !=
-                PARAM_LOGICAL_EXPRESSION) {
+            // aux sample or the task spec
             res.push_back(PARAM_INPUT());
             res.push_back(PARAM_CONSTANT(TID_STRING));
         } else {
+            // we already have the task spec (inputs are not added to params)
             res.push_back(END_OF_VARIES_PARAMS());
         }
 
