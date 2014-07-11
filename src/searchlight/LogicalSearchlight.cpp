@@ -28,7 +28,8 @@
  *
  * @par Synopsis:
  *   <br/>
- *   searchlight(input_array, sample_array, 'library:function:task_params').
+ *   searchlight(input_array, grid_array [, grid_array]*,
+ *      'library:function:task_json_spec').
  *
  * @par Summary:
  *   <br/>
@@ -44,14 +45,19 @@
  *
  * @par Input:
  *   <br> input_array -- any SciDB array
- *   <br> sample_array -- a sample array for the specified array. The array
+ *   <br> grid_array -- grid arrays for the specified array. The array
  *      must correspond to the following format: dimensions[chunk: 0, *;
  *      sampled_attribute: original attribute index], attributes:[min:double,
- *      max: double, count: uint64, sum: double].
- *   <br> 'library:function:task_params'  -- the name of the DLL where the
+ *      max: double, count: uint64, sum: double]. The user can specify several
+ *      of them, in which case the first one will be used as the sample, and
+ *      others will be used to optimize aggregate windows computation. It is
+ *      assumed that array are listed from lower to higher "resolutions".
+ *      The name of each must contain suffix "_NxNx...", where N specifies the
+ *      step of the grid for each dimension.
+ *   <br> 'library:function:task_json_spec'  -- the name of the DLL where the
  *      tasks come from. The name of the task (function), which should take
- *      Searchlight & and string as parameters. The parameters, which are
- *      parsed by the function itself.
+ *      a ref to Searchlight and a path to the JSON taks specification. It will
+ *      be parsed by the task itself.
  *
  * @par Output array:
  *   <br> <
@@ -84,9 +90,33 @@ public:
             const std::string& alias) :
         LogicalOperator(logicalName, alias) {
 
-        ADD_PARAM_INPUT() // array
-        ADD_PARAM_INPUT() // sample
-        ADD_PARAM_CONSTANT(TID_STRING) // params
+        ADD_PARAM_INPUT(); // array
+        //ADD_PARAM_INPUT() // sample
+        //ADD_PARAM_CONSTANT(TID_STRING) // params
+        ADD_PARAM_VARIES();
+    }
+
+    /**
+     * Returns options for the next parameter in the variable parameter list
+     * @param schemas input schemas parsed before
+     * @return a vector of possible options
+     */
+    virtual std::vector<boost::shared_ptr<OperatorParamPlaceholder>>
+        nextVaryParamPlaceholder(const std::vector<ArrayDesc> &schemas) override {
+
+        std::vector<boost::shared_ptr<OperatorParamPlaceholder>> res;
+        if (_parameters.empty()) {
+            // need at least one grid array
+            res.push_back(PARAM_INPUT());
+        } else if (_parameters[_parameters.size() - 1]->getParamType() !=
+                PARAM_LOGICAL_EXPRESSION) {
+            res.push_back(PARAM_INPUT());
+            res.push_back(PARAM_CONSTANT(TID_STRING));
+        } else {
+            res.push_back(END_OF_VARIES_PARAMS());
+        }
+
+        return res;
     }
 
     /**
@@ -97,8 +127,8 @@ public:
      * @param query the query context
      * @return the schema of the output
      */
-    ArrayDesc inferSchema(std::vector<ArrayDesc> schemas,
-            boost::shared_ptr<Query> query) {
+    virtual ArrayDesc inferSchema(std::vector<ArrayDesc> schemas,
+            boost::shared_ptr<Query> query) override {
 
         return searchlight::SearchlightResultsArray::GetArrayDesc();
     }

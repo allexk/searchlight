@@ -91,10 +91,17 @@ public:
                             "Illegal searchlight parameters!";
         }
 
+        // Gather all samples
+        ArrayPtrVector samples;
+        for (size_t i = 1; i < inputArrays.size(); i++) {
+            samples.push_back(inputArrays[i]);
+        }
+        assert(!samples.empty());
+
         searchlight::SearchlightTaskPtr sl_task =
                 boost::make_shared<searchlight::SearchlightTask>(str_tokens[0],
                         str_tokens[1], str_tokens[2]);
-        sl_task->GetSearchlight().RegisterArray(inputArrays[0], inputArrays[1]);
+        sl_task->GetSearchlight().RegisterArray(inputArrays[0], samples);
         return ArrayPtr(new searchlight::SearchlightResultsArray(sl_task,
                 _schema, query));
     }

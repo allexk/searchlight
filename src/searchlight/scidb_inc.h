@@ -87,6 +87,11 @@ using scidb::SCIDB_LE_ILLEGAL_OPERATION;
 typedef boost::shared_ptr<Array> ArrayPtr;
 
 /**
+ * Vector of SciDb array pointers.
+ */
+typedef std::vector<ArrayPtr> ArrayPtrVector;
+
+/**
  * A vector of Values
  */
 typedef std::vector<Value> ValueVector;

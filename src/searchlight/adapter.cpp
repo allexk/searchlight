@@ -66,33 +66,55 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
         logger->debug(deb_str.str(), LOG4CXX_LOCATION);
     }
 
+    // The original attribute
+    const AttributeID o_attr = array_desc_.GetArrayAttrributeID(attr);
+
     // starting the timer
     const auto req_start_time = std::chrono::steady_clock::now();
 
     IntervalValueVector res(aggr_names.size()); // NULLs by default
     if (mode_ == EXACT) {
-        // First, resolve the attribute
-        AttributeID real_id = array_desc_.GetArrayAttrributeID(attr);
+        // First, we want to check the samplers
+        const Sampler *sampler = &array_desc_.GetSampler();
+        if (!sampler->RegionValidForSample(low, high)) {
+            // Check auxiliary samples
+            sampler = nullptr;
+            const std::vector<Sampler> &aux_samplers =
+                    array_desc_.GetAuxSamplers();
+            for (const Sampler &s: aux_samplers) {
+                if (s.RegionValidForSample(low, high)) {
+                    sampler = &s;
+                    break;
+                }
+            }
+        }
 
-        // Compute
-        const ArrayAccess &array = array_desc_.GetAccessor();
-        TypedValueVector value_res = array.ComputeAggreagate(low, high, real_id,
-                aggr_names);
+        // Can we use sample?
+        if (sampler) {
+            LOG4CXX_TRACE(logger, "Switching to a sample in the exact mode");
+            res = sampler->ComputeAggregate(low, high, o_attr, attr,
+                    aggr_names);
+        } else {
+            // Compute
+            const ArrayAccess &array = array_desc_.GetAccessor();
+            TypedValueVector value_res = array.ComputeAggreagate(low, high,
+                    o_attr, aggr_names);
 
-        // Convert to the interval format
-        for (size_t i = 0; i < value_res.size(); i++) {
-            const TypedValue &val_type = value_res[i];
-            if (!val_type.first.isNull()) {
-               IntervalValue &r = res[i];
-               r.state_ = IntervalValue::NON_NULL;
-               r.min_ = r.max_ = r.val_ = scidb::ValueToDouble(
-                       val_type.second.typeId(),
-                       val_type.first);
+            // Convert to the interval format
+            for (size_t i = 0; i < value_res.size(); i++) {
+                const TypedValue &val_type = value_res[i];
+                if (!val_type.first.isNull()) {
+                   IntervalValue &r = res[i];
+                   r.state_ = IntervalValue::NON_NULL;
+                   r.min_ = r.max_ = r.val_ = scidb::ValueToDouble(
+                           val_type.second.typeId(),
+                           val_type.first);
+                }
             }
         }
     } else if (mode_ == APPROX || mode_ == INTERVAL) {
         const Sampler &sampler = array_desc_.GetSampler();
-        res = sampler.ComputeAggregate(low, high, attr, aggr_names);
+        res = sampler.ComputeAggregate(low, high, o_attr, attr, aggr_names);
         if (mode_ == APPROX) {
             for (IntervalValueVector::iterator it = res.begin();
                     it != res.end(); it++) {

@@ -40,6 +40,11 @@ namespace searchlight {
 class SampleAggregate;
 
 /**
+ * A vector of shared pointers to sample aggregates.
+ */
+typedef std::vector<boost::shared_ptr<SampleAggregate>> SampleAggregatePtrVector;
+
+/**
  * Sample Aggregate Factory.
  */
 typedef SampleAggregate *(*SampleAggregateFactory)();
@@ -102,6 +107,17 @@ public:
     }
 
     /**
+     * Checks if the region specified by the coorindates can be computed by
+     * using this sample.
+     *
+     * @param low leftmost coordinates
+     * @param high rightmost coordinates
+     * @return true, if this sample can compute the region; false, otherwise
+     */
+    bool RegionValidForSample(const Coordinates &low,
+            const Coordinates &high) const;
+
+    /**
      * Computes specified aggregates for the specified regions for the
      * specified attribute. The aggregates must be registered in the sampler or
      * be default ones. The boundaries returned for the aggregate are guaranteed
@@ -111,13 +127,14 @@ public:
      *
      * @param low the low coordinates of the region
      * @param high the upper coordinates for the region
-     * @param attr the attribute to compute for
+     * @param o_attr the original attribute
+     * @param s_attr the search (internal) attribute
      * @param aggr_names the names of the aggregates
      * @return results, one per aggregate in the form of intervals; see the
      *  definition of the interval for details
      */
     IntervalValueVector ComputeAggregate(const Coordinates &low,
-            const Coordinates &high, AttributeID attr,
+            const Coordinates &high, AttributeID o_attr, AttributeID s_attr,
             const StringVector &aggr_names) const;
 
     /**
@@ -342,6 +359,17 @@ private:
     };
 
     /*
+     * Functions to compute aggregates. Called from the public wrapper.
+     *
+     * The first one is called when we have all chunks in cache. The second --
+     * when we need to read chunks from the array.
+     */
+    void ComputeAggregateCache(RegionIterator &region_iter,
+            SampleAggregatePtrVector &aggs, AttributeID s_aid) const;
+    void ComputeAggregateDisk(RegionIterator &region_iter,
+            SampleAggregatePtrVector &aggs, AttributeID o_aid) const;
+
+    /*
      *  Parses chunk sizes out of the string. The string is suppposed to
      *  have the format "x_size,y_size,...".
      */
@@ -363,13 +391,22 @@ private:
      */
     uint64_t ComputeShapeChunkSize() const;
 
+    /*
+     * Computes the sample chunk for the specified position.
+     */
+    Chunk GetChunkFromArray(const ConstItemIteratorPtr &min_iterator,
+            const ConstItemIteratorPtr &max_iterator,
+            const ConstItemIteratorPtr &sum_iterator,
+            const ConstItemIteratorPtr &count_iterator,
+            const Coordinates &pos) const;
+
     // Attribute IDs for min/max/count/sum elements in the sample array
-    AttributeID min_id_, max_id_, count_id_, sum_id_;;
+    AttributeID min_id_, max_id_, count_id_, sum_id_;
 
     // The number of sample chunks
     Coordinate chunks_num_;
 
-    // The sampple array
+    // The sample array
     const ArrayPtr sample_array_;
 
     // Sample chunks as a linearized array (multiple attributes)
@@ -387,7 +424,7 @@ private:
     // The number of chunks per each dimension
     Coordinates chunk_nums_;
 
-    // Aggregate map to reso;ve aggregates
+    // Aggregate map to resolve aggregates
     typedef std::map<const std::string, SampleAggregateFactory> AggrMap;
     AggrMap aggrs_;
 };
@@ -427,12 +464,6 @@ public:
      */
     virtual ~SampleAggregate() {}
 };
-
-/**
- * A vectort of shared pointers to sample aggregates.
- */
-typedef std::vector<boost::shared_ptr<SampleAggregate>> SampleAggregatePtrVector;
-
 
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_SAMPLER_H_ */

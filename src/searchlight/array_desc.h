@@ -51,15 +51,26 @@ namespace searchlight {
 class SearchArrayDesc {
 public:
     /**
-     * Creates a search array descriptor.
+     * Creates a search array descriptor. We pass a vector of samples to it.
+     * The first in the vector becomes the primary sample, while others
+     * become auxiliary samples to optimize region reads.
      *
      * @param array the scidb's original array
-     * @param sample the sample array
+     * @param samples available samples
      */
-    SearchArrayDesc(const ArrayPtr &array, const ArrayPtr &sample) :
+    SearchArrayDesc(const ArrayPtr &array, const ArrayPtrVector &samples) :
         array_(array),
-        sampler_(sample, array->getArrayDesc()),
-        data_accessor_(array) {}
+        sampler_(samples[0], array->getArrayDesc()),
+        data_accessor_(array) {
+
+        if (samples.size() > 1) {
+            aux_samplers_.reserve(samples.size() - 1);
+            for (size_t i = 1; i < samples.size(); i++) {
+                aux_samplers_.emplace_back(samples[i], array->getArrayDesc());
+            }
+        }
+
+    }
 
     /**
      * Registers a search attribute with the descriptor. The sample for this
@@ -124,6 +135,16 @@ public:
         return search_orig_ids_[attr];
     }
 
+    /**
+     * Return a vector of auxiliary samplers.
+     *
+     * @return auxiliary samples in a vector
+     */
+    const std::vector<Sampler> &GetAuxSamplers() const {
+        return aux_samplers_;
+    }
+
+
 private:
     // The data array
     const ArrayPtr array_;
@@ -138,6 +159,9 @@ private:
 
     // The sampler
     Sampler sampler_;
+
+    // Auxiliary samplers
+    std::vector<Sampler> aux_samplers_;
 
     // The data accessor
     ArrayAccess data_accessor_;

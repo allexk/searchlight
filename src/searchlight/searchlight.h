@@ -242,10 +242,10 @@ public:
      * there are probably no means to do that.
      *
      * @param data the data array
-     * @param sample the sample for the data array
+     * @param samples samples available for the data array
      */
-    void RegisterArray(ArrayPtr &data, ArrayPtr &sample) {
-        array_desc_ = new SearchArrayDesc(data, sample);
+    void RegisterArray(ArrayPtr &data, const ArrayPtrVector &samples) {
+        array_desc_ = new SearchArrayDesc(data, samples);
     }
 
     /**
@@ -454,7 +454,7 @@ private:
     // Monitors participating in the search
     struct SearchMonitors {
         // Solution collector for main (exact) results
-        SearchlightCollector *collector_ = nullptr;;
+        SearchlightCollector *collector_ = nullptr;
 
         // Validator for the search
         ValidatorMonitor *validator_ = nullptr;

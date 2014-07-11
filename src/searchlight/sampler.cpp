@@ -537,16 +537,50 @@ Sampler::Sampler(const ArrayPtr &array, const ArrayDesc &data_desc) :
     aggrs_["max"] = MinMaxSampleAggregate::CreateMax;
 }
 
+Sampler::Chunk Sampler::GetChunkFromArray(
+        const ConstItemIteratorPtr &min_iterator,
+        const ConstItemIteratorPtr &max_iterator,
+        const ConstItemIteratorPtr &sum_iterator,
+        const ConstItemIteratorPtr &count_iterator,
+        const Coordinates &pos) const {
+
+    if (count_iterator->setPosition(pos) && !count_iterator->isEmpty()) {
+        const uint64_t count = count_iterator->getItem().getUint64();
+        if (count == 0) {
+            // empty chunk (old case, when we have all chunks in the array)
+            return Chunk();
+        } else {
+            // should be a non-empty chunk for sure
+            if (!min_iterator->setPosition(pos) ||
+                !max_iterator->setPosition(pos) ||
+                !sum_iterator->setPosition(pos)) {
+
+                std::ostringstream err_msg;
+                err_msg << "Cannot get info from sample, chunk=" <<
+                        pos[0] << ", attr=" << pos[1];
+                throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                        SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
+            }
+
+            const double minv = min_iterator->getItem().getDouble();
+            const double maxv = max_iterator->getItem().getDouble();
+            const double sumv = sum_iterator->getItem().getDouble();
+            return Chunk(minv, maxv, sumv, count);
+        }
+    } else {
+        // empty chunk (new case, where empty array areas == empty chunks)
+        return Chunk();
+    }
+}
+
 void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,
         AttributeID attr_search_id) {
 
-    boost::shared_ptr<ConstItemIterator> min_iterator =
-            sample_array_->getItemIterator(min_id_);
-    boost::shared_ptr<ConstItemIterator> max_iterator =
-            sample_array_->getItemIterator(max_id_);
-    boost::shared_ptr<ConstItemIterator> count_iterator =
+    ConstItemIteratorPtr min_iterator = sample_array_->getItemIterator(min_id_);
+    ConstItemIteratorPtr max_iterator = sample_array_->getItemIterator(max_id_);
+    ConstItemIteratorPtr count_iterator =
             sample_array_->getItemIterator(count_id_);
-    boost::shared_ptr<ConstItemIterator> sum_iterator =
+    ConstItemIteratorPtr sum_iterator =
             sample_array_->getItemIterator(sum_id_);
 
     // Sample: first dimension -- region, second -- the original attribute
@@ -563,33 +597,8 @@ void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,
     Coordinates pos(2);
     pos[1] = attr_orig_id;
     for (pos[0] = 0; pos[0] < chunks_num_; pos[0]++) {
-        if (count_iterator->setPosition(pos) && !count_iterator->isEmpty()) {
-            const uint64_t count = count_iterator->getItem().getUint64();
-            if (count == 0) {
-                // empty chunk (old case, when we have all chunks in the array)
-                chunks.push_back(Chunk());
-            } else {
-                // should be a non-empty chunk for sure
-                if (!min_iterator->setPosition(pos) ||
-                    !max_iterator->setPosition(pos) ||
-                    !sum_iterator->setPosition(pos)) {
-
-                    std::ostringstream err_msg;
-                    err_msg << "Cannot get info from sample, chunk=" <<
-                            pos[0] << ", attr=" << pos[1];
-                    throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
-                            SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
-                }
-
-                const double minv = min_iterator->getItem().getDouble();
-                const double maxv = max_iterator->getItem().getDouble();
-                const double sumv = sum_iterator->getItem().getDouble();
-                chunks.push_back(Chunk(minv, maxv, sumv, count));
-            }
-        } else {
-            // empty chunk (new case, where empty array areas == empty chunks)
-            chunks.push_back(Chunk());
-        }
+        chunks.push_back(GetChunkFromArray(min_iterator, max_iterator,
+                sum_iterator, count_iterator, pos));
     }
 }
 
@@ -656,8 +665,70 @@ uint64_t Sampler::ComputeShapeChunkSize() const {
     return res;
 }
 
+bool Sampler::RegionValidForSample(const Coordinates &low,
+        const Coordinates &high) const {
+    // copy to check correctness and align
+    Coordinates inlow(low), inhigh(high);
+    CheckAndCorrectBounds(inlow, inhigh);
+
+    for (size_t i = 0; i < inlow.size(); i++) {
+        const Coordinate cs = chunk_sizes_[i];
+        const Coordinate len = inhigh[i] - inlow[i] + 1;
+        const Coordinate low_off = inlow[i] - sample_origin_[i];
+        if (low_off % cs != 0 || len % cs != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void Sampler::ComputeAggregateCache(RegionIterator &region_iter,
+        SampleAggregatePtrVector &aggs, AttributeID s_aid) const {
+
+    const ChunkVector &chunks = sample_chunks_[s_aid];
+    assert(!chunks.empty());
+    while (!region_iter.end()) {
+        const Chunk &chunk = chunks[region_iter.GetChunk()];
+        const uint64_t part_size = region_iter.GetPartSize();
+        for (size_t i = 0; i < aggs.size(); i++) {
+            if (chunk.count_ > 0) {
+                aggs[i].get()->AccumulateChunk(shape_chunk_size_,
+                        part_size, chunk);
+            }
+        }
+        ++region_iter;
+    }
+}
+
+void Sampler::ComputeAggregateDisk(RegionIterator &region_iter,
+        SampleAggregatePtrVector &aggs, AttributeID o_aid) const {
+
+    // Create necessary iterators
+    ConstItemIteratorPtr min_iterator = sample_array_->getItemIterator(min_id_);
+    ConstItemIteratorPtr max_iterator = sample_array_->getItemIterator(max_id_);
+    ConstItemIteratorPtr count_iterator =
+            sample_array_->getItemIterator(count_id_);
+    ConstItemIteratorPtr sum_iterator =
+            sample_array_->getItemIterator(sum_id_);
+    Coordinates pos{-1, o_aid};
+
+    while (!region_iter.end()) {
+        pos[0] = region_iter.GetChunk();
+        const Chunk chunk = GetChunkFromArray(min_iterator, max_iterator,
+                sum_iterator, count_iterator, pos);
+        const uint64_t part_size = region_iter.GetPartSize();
+        for (size_t i = 0; i < aggs.size(); i++) {
+            if (chunk.count_ > 0) {
+                aggs[i].get()->AccumulateChunk(shape_chunk_size_,
+                        part_size, chunk);
+            }
+        }
+        ++region_iter;
+    }
+}
+
 IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
-        const Coordinates &high, AttributeID attr,
+        const Coordinates &high, AttributeID o_attr, AttributeID s_attr,
         const StringVector &aggr_names) const {
     // copy to check correctness and align
     Coordinates inlow(low), inhigh(high);
@@ -679,17 +750,10 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
 
     // go through the chunks
     RegionIterator iter(*this, inlow, inhigh);
-    const ChunkVector &chunks = sample_chunks_[attr];
-    while (!iter.end()) {
-        const Chunk &chunk = chunks[iter.GetChunk()];
-        const uint64_t part_size = iter.GetPartSize();
-        for (size_t i = 0; i < aggs.size(); i++) {
-            if (chunk.count_ > 0) {
-                aggs[i].get()->AccumulateChunk(shape_chunk_size_,
-                        part_size, chunk);
-            }
-        }
-        ++iter;
+    if (sample_chunks_[s_attr].empty()) {
+        ComputeAggregateDisk(iter, aggs, o_attr);
+    } else {
+        ComputeAggregateCache(iter, aggs, s_attr);
     }
 
     // finalize the result
