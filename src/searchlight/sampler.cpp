@@ -750,7 +750,7 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
 
     // go through the chunks
     RegionIterator iter(*this, inlow, inhigh);
-    if (sample_chunks_[s_attr].empty()) {
+    if (sample_chunks_.size() < s_attr + 1  || sample_chunks_[s_attr].empty()) {
         ComputeAggregateDisk(iter, aggs, o_attr);
     } else {
         ComputeAggregateCache(iter, aggs, s_attr);
