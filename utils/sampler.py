@@ -18,12 +18,19 @@ def GetMeta(iquery, array, what):
         array  -- the name of the array to query
         what   -- what to query: dims, attrs
     """
+    # get rid of any version ids
+    ver_pos = array.rfind('@')
+    if ver_pos != -1:
+        array_nover = array[:ver_pos]
+    else:
+        array_nover = array
+
     # we want AFL and CSV output with a header
     args = [iquery, '-a', '-o', 'csv+']
     if what == 'dims':
-        query = 'dimensions(%s)' % array
+        query = 'dimensions(%s)' % array_nover
     elif what == 'attrs':
-        query = 'attributes(%s)' % array
+        query = 'attributes(%s)' % array_nover
     else:
         raise ValueError, 'Unknown type of metadata: %s' % what
     args.extend(['-q', query])
@@ -97,8 +104,8 @@ parser.add_argument('--outcsv', metavar='filepath', default=None,
 parser.add_argument('--outsh', metavar='filepath', default=None,
     help='File to write the shell script for loading the sample from CSV')
 parser.add_argument('--region', metavar='N', default=None, nargs='+', type=int,
-                    help='Specific region to sample: [lbs, rbs),  ... '
-                    '(must be aligned with the chunks)')
+    help='Specific region to sample: [lbs1, lbs2, ... rbs1, rbs2, ...], ...'
+        '(inclusive, must be aligned with the chunks)')
 parser.add_argument('array', help='Array to sample')
 
 # parse
