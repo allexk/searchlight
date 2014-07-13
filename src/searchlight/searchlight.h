@@ -260,7 +260,8 @@ public:
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                     << "No array registered with SL to register an attribute";
         }
-        return array_desc_->RegisterAttribute(name);
+        return array_desc_->RegisterAttribute(name,
+                config_.get("searchlight.load_aux_samples", 0));
     }
 
     /**

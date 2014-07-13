@@ -81,9 +81,11 @@ public:
      * the same access id as previously.
      *
      * @param attr_name the name of the attribute to register
+     * @param load_aux_samples load auxiliary samples for the attribute
      * @return the access id for the attribute
      */
-    AttributeID RegisterAttribute(const std::string &attr_name);
+    AttributeID RegisterAttribute(const std::string &attr_name,
+            bool load_aux_samples);
 
     /**
      * Returns the id of the specified attribute in the given vector. Note,

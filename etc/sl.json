@@ -20,7 +20,9 @@
         "validator": {
             "max_validations": 1000000,
             "restart_period": 1024
-        }
+        },
+
+        "load_aux_samples": 1
     },
 
     "sw": {
