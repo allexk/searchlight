@@ -40,6 +40,8 @@
         "len_uy": 500,
         "step_x": 500,
         "step_y": 500,
+        "step_lx": 10,
+        "step_ly": 10,
 
         "neighborhood": {
             "size": 200,

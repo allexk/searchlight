@@ -60,6 +60,8 @@ void SemWindowsAvg(Searchlight *sl) {
     const int32 len_uy  = config.get<int32>("sw.len_uy");
     const int32 step_x  = config.get<int32>("sw.step_x", 1);
     const int32 step_y  = config.get<int32>("sw.step_y", 1);
+    const int32 step_lx  = config.get<int32>("sw.step_lx", 1);
+    const int32 step_ly  = config.get<int32>("sw.step_ly", 1);
 
     const int32 time_limit = config.get("sw.time_limit", 3600);
     const int luby_scale = config.get("searchlight.sl.luby_scale", 1);
@@ -68,6 +70,8 @@ void SemWindowsAvg(Searchlight *sl) {
     // problem params
     std::vector<IntVar *> coords(2);
     std::vector<IntVar *> lens(2);
+
+    // coords
     if (step_x == 1) {
         coords[0] = solver.MakeIntVar(start_x, end_x, "x");
     } else {
@@ -86,8 +90,26 @@ void SemWindowsAvg(Searchlight *sl) {
         }
         coords[1] = solver.MakeIntVar(vals, "y");
     }
-    lens[0] = solver.MakeIntVar(len_lx, len_ux, "lx");
-    lens[1] = solver.MakeIntVar(len_ly, len_uy, "ly");
+
+    // lens
+    if (step_lx == 1) {
+        lens[0] = solver.MakeIntVar(len_lx, len_ux, "lx");
+    } else {
+        std::vector<int64> vals;
+        for (int64 v = len_lx; v <= len_ux; v += step_lx) {
+            vals.push_back(v);
+        }
+        lens[0] = solver.MakeIntVar(vals, "lx");
+    }
+    if (step_ly == 1) {
+        lens[1] = solver.MakeIntVar(len_ly, len_uy, "ly");
+    } else {
+        std::vector<int64> vals;
+        for (int64 v = len_ly; v <= len_uy; v += step_ly) {
+            vals.push_back(v);
+        }
+        lens[1] = solver.MakeIntVar(vals, "ly");
+    }
 
     // convenience -- all vars in a single vector
     std::vector<IntVar *> all_vars(coords);
