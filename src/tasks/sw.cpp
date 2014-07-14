@@ -107,9 +107,43 @@ void SemWindowsAvg(Searchlight *sl) {
     UDFFunctionCreator avg_fab = sl->GetUDFFunctionCreator("avg");
 
     std::vector<int64> udf_params(1, int64(attr));
-    IntExpr *avg = solver.RevAlloc(avg_fab(&solver, adapter, all_vars,
+    IntExpr * const avg = solver.RevAlloc(avg_fab(&solver, adapter, all_vars,
             udf_params));
     solver.AddConstraint(solver.MakeBetweenCt(avg, avg_l, avg_u));
+
+    // neighborhood
+    const int32 neighb_size  = config.get("sw.neighborhood.size", 0);
+    if (neighb_size) {
+        std::vector<IntVar *> n_coords(2);
+        std::vector<IntVar *> n_lens(2);
+
+        n_coords[0] = solver.MakeSum(coords[0], -neighb_size)->Var();
+        n_coords[1] = solver.MakeSum(coords[1], -neighb_size)->Var();
+        n_lens[0] = solver.MakeSum(lens[0], neighb_size)->Var();
+        n_lens[1] = solver.MakeSum(lens[1], neighb_size)->Var();
+
+        std::vector<IntVar *> all_n_vars(n_coords);
+        all_n_vars.insert(all_n_vars.end(), n_lens.begin(), n_lens.end());
+
+        // sums
+        UDFFunctionCreator sum_fab = sl->GetUDFFunctionCreator("sum");
+        IntExpr * const t_sum = solver.RevAlloc(sum_fab(&solver,
+                adapter, all_n_vars, udf_params));
+        IntExpr * const r_sum = solver.RevAlloc(sum_fab(&solver,
+                adapter, all_vars, udf_params));
+
+        // avg
+        IntExpr * const n_count = solver.MakeDifference(
+                solver.MakeProd(n_lens[0], n_lens[1]),
+                solver.MakeProd(lens[0], lens[1]));
+        IntExpr * const n_avg = solver.MakeDiv(
+                solver.MakeDifference(t_sum, r_sum),
+                n_count);
+
+        const int32 avg_diff  = config.get("sw.neighborhood.avg_diff", 0);
+        solver.AddConstraint(solver.MakeGreater(
+                solver.MakeDifference(avg, n_avg), avg_diff));
+    }
 
     // create the search phase
     const std::string search_heuristic = config.get<std::string>("sw.db");

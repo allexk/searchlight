@@ -41,6 +41,11 @@
         "step_x": 500,
         "step_y": 500,
 
+        "neighborhood": {
+            "size": 200,
+            "avg_diff": 200
+        },
+
         "db": "sl",
         "time_limit": 3600,
         "splits": 100
