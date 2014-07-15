@@ -136,45 +136,66 @@ void SemWindowsAvg(Searchlight *sl) {
     // neighborhood
     const int32 neighb_size  = config.get("sw.neighborhood.size", 0);
     if (neighb_size) {
-        std::vector<IntVar *> n_coords(2);
-        std::vector<IntVar *> n_lens(2);
-
-        n_coords[0] = solver.MakeSum(coords[0], -neighb_size)->Var();
-        n_coords[1] = solver.MakeSum(coords[1], -neighb_size)->Var();
-        n_lens[0] = solver.MakeSum(lens[0], neighb_size)->Var();
-        n_lens[1] = solver.MakeSum(lens[1], neighb_size)->Var();
-
-        std::vector<IntVar *> all_n_vars(n_coords);
-        all_n_vars.insert(all_n_vars.end(), n_lens.begin(), n_lens.end());
-
-        // sums
-        UDFFunctionCreator sum_fab = sl->GetUDFFunctionCreator("sum");
-        UDFFunctionCreator min_fab = sl->GetUDFFunctionCreator("min");
+        /*
+         * FIXME: This is a mess! And should be rewritten ASAP!
+         */
         UDFFunctionCreator max_fab = sl->GetUDFFunctionCreator("max");
-        IntExpr * const t_sum = solver.RevAlloc(sum_fab(&solver,
-                adapter, all_n_vars, udf_params));
-        IntExpr * const r_sum = solver.RevAlloc(sum_fab(&solver,
-                adapter, all_vars, udf_params));
+        UDFFunctionCreator min_fab = sl->GetUDFFunctionCreator("min");
+        std::vector<IntVar *> part_vars(4);
+        std::vector<IntVar *> part_maxs(4);
 
-        // avg
-        IntExpr * const n_count = solver.MakeDifference(
-                solver.MakeProd(n_lens[0], n_lens[1]),
-                solver.MakeProd(lens[0], lens[1]));
-        IntExpr * const n_avg = solver.MakeDiv(
-                solver.MakeDifference(t_sum, r_sum),
-                n_count);
+        // left
+        part_vars[0] = solver.MakeSum(coords[0], -neighb_size)->Var();
+        part_vars[1] = coords[1];
+        part_vars[2] = solver.MakeIntConst(neighb_size);
+        part_vars[3] = lens[1];
+        part_maxs[0] = solver.RevAlloc(max_fab(&solver,
+                adapter, part_vars, udf_params))->Var();
 
-        // min-max: additional avg constraint: min <= avg <= max
-        IntExpr * const n_min = solver.RevAlloc(min_fab(&solver,
-                adapter, all_n_vars, udf_params));
-        IntExpr * const n_max = solver.RevAlloc(max_fab(&solver,
-                adapter, all_n_vars, udf_params));
-        solver.AddConstraint(solver.MakeGreaterOrEqual(n_avg, n_min));
-        solver.AddConstraint(solver.MakeLessOrEqual(n_avg, n_max));
+        // top
+        part_vars[0] = solver.MakeSum(coords[0], -neighb_size)->Var();
+        part_vars[1] = solver.MakeSum(coords[1], -neighb_size)->Var();
+        part_vars[2] = solver.MakeSum(lens[0], 2 * neighb_size)->Var();
+        part_vars[3] = solver.MakeIntConst(neighb_size);
+        part_maxs[1] = solver.RevAlloc(max_fab(&solver,
+                adapter, part_vars, udf_params))->Var();
 
-        const int32 avg_diff  = config.get("sw.neighborhood.avg_diff", 0);
-        solver.AddConstraint(solver.MakeGreater(
-                solver.MakeDifference(avg, n_avg), avg_diff));
+        // right
+        part_vars[0] = solver.MakeSum(coords[0], lens[0])->Var();
+        part_vars[1] = coords[1];
+        part_vars[2] = solver.MakeIntConst(neighb_size);
+        part_vars[3] = lens[1];
+        part_maxs[2] = solver.RevAlloc(max_fab(&solver,
+                adapter, part_vars, udf_params))->Var();
+
+        // bottom
+        part_vars[0] = solver.MakeSum(coords[0], -neighb_size)->Var();
+        part_vars[1] = solver.MakeSum(coords[1], lens[1])->Var();
+        part_vars[2] = solver.MakeSum(lens[0], 2 * neighb_size)->Var();
+        part_vars[3] = solver.MakeIntConst(neighb_size);
+        part_maxs[3] = solver.RevAlloc(max_fab(&solver,
+                adapter, part_vars, udf_params))->Var();
+
+        // max of the neighborhood
+        IntExpr * const nmax = solver.MakeMax(part_maxs);
+
+        const int32 max_diff  = config.get("sw.neighborhood.max_diff", 0);
+        if (max_diff) {
+            // max of the region
+            IntExpr * const rmax = solver.RevAlloc(max_fab(&solver, adapter,
+                    all_vars, udf_params));
+            solver.AddConstraint(solver.MakeGreater(
+                    solver.MakeDifference(rmax, nmax), max_diff));
+        }
+
+        const int32 min_diff  = config.get("sw.neighborhood.min_diff", 0);
+        if (min_diff) {
+            // min of the region
+            IntExpr * const rmin = solver.RevAlloc(min_fab(&solver, adapter,
+                    all_vars, udf_params));
+            solver.AddConstraint(solver.MakeGreater(
+                    solver.MakeDifference(rmin, nmax), min_diff));
+        }
     }
 
     // create the search phase

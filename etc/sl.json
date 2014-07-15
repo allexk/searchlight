@@ -45,7 +45,8 @@
 
         "neighborhood": {
             "size": 200,
-            "avg_diff": 200
+            "max_diff": 200,
+            "min_diff": 200
         },
 
         "db": "sl",
