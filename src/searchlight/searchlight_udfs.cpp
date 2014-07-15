@@ -71,8 +71,10 @@ public:
      * The type of the aggregate.
      */
     enum AggType {
-        SUM,//!< SUM the sum of elements within
-        AVG,//!< AVG the average of elements within
+        SUM, //!< SUM the sum of elements within
+        AVG, //!< AVG the average of elements within
+        MIN, //!< MIN the minimum of elements within
+        MAX, //!< MAX the maximum of elements within
     };
 
     /**
@@ -214,6 +216,12 @@ public:
             case AVG:
                 tag = "UDF_avg";
                 break;
+            case MIN:
+                tag = "UDF_min";
+                break;
+            case MAX:
+                tag = "UDF_max";
+                break;
         }
 
         visitor->BeginVisitIntegerExpression(tag, this);
@@ -271,6 +279,12 @@ private:
                 break;
             case AVG:
                 name = "avg";
+                break;
+            case MIN:
+                name = "min";
+                break;
+            case MAX:
+                name = "max";
                 break;
         }
         return name;
@@ -341,6 +355,16 @@ IntervalValue AggrFuncExpr::ComputeFuncSub(const Coordinates &low,
         case SUM:
             res.min_ = min_max[0].min_ * min_size;
             res.max_ = min_max[1].max_ * max_size;
+            break;
+        case MIN:
+            // min_max[0] contains min values
+            res.min_ = min_max[0].min_;
+            res.max_ = min_max[0].max_;
+            break;
+        case MAX:
+            // min_max[1] contains max values
+            res.min_ = min_max[1].min_;
+            res.max_ = min_max[1].max_;
             break;
     }
 
@@ -561,6 +585,22 @@ IntExpr *CreateUDF_sum(Solver *solver, AdapterPtr adapter,
         const std::vector<IntVar *> &coord_lens,
         const std::vector<int64> &params) {
     return new AggrFuncExpr(solver, AggrFuncExpr::SUM, adapter, coord_lens,
+            params);
+}
+
+extern "C"
+IntExpr *CreateUDF_min(Solver *solver, AdapterPtr adapter,
+        const std::vector<IntVar *> &coord_lens,
+        const std::vector<int64> &params) {
+    return new AggrFuncExpr(solver, AggrFuncExpr::MIN, adapter, coord_lens,
+            params);
+}
+
+extern "C"
+IntExpr *CreateUDF_max(Solver *solver, AdapterPtr adapter,
+        const std::vector<IntVar *> &coord_lens,
+        const std::vector<int64> &params) {
+    return new AggrFuncExpr(solver, AggrFuncExpr::MAX, adapter, coord_lens,
             params);
 }
 
