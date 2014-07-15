@@ -149,6 +149,8 @@ void SemWindowsAvg(Searchlight *sl) {
 
         // sums
         UDFFunctionCreator sum_fab = sl->GetUDFFunctionCreator("sum");
+        UDFFunctionCreator min_fab = sl->GetUDFFunctionCreator("min");
+        UDFFunctionCreator max_fab = sl->GetUDFFunctionCreator("max");
         IntExpr * const t_sum = solver.RevAlloc(sum_fab(&solver,
                 adapter, all_n_vars, udf_params));
         IntExpr * const r_sum = solver.RevAlloc(sum_fab(&solver,
@@ -161,6 +163,14 @@ void SemWindowsAvg(Searchlight *sl) {
         IntExpr * const n_avg = solver.MakeDiv(
                 solver.MakeDifference(t_sum, r_sum),
                 n_count);
+
+        // min-max: additional avg constraint: min <= avg <= max
+        IntExpr * const n_min = solver.RevAlloc(min_fab(&solver,
+                adapter, all_n_vars, udf_params));
+        IntExpr * const n_max = solver.RevAlloc(max_fab(&solver,
+                adapter, all_n_vars, udf_params));
+        solver.AddConstraint(solver.MakeGreaterOrEqual(n_avg, n_min));
+        solver.AddConstraint(solver.MakeLessOrEqual(n_avg, n_max));
 
         const int32 avg_diff  = config.get("sw.neighborhood.avg_diff", 0);
         solver.AddConstraint(solver.MakeGreater(
