@@ -357,13 +357,11 @@ IntervalValue AggrFuncExpr::ComputeFuncSub(const Coordinates &low,
             res.max_ = min_max[1].max_ * max_size;
             break;
         case MIN:
-            // min_max[0] contains min values
             res.min_ = min_max[0].min_;
-            res.max_ = min_max[0].max_;
+            res.max_ = min_max[1].max_;
             break;
         case MAX:
-            // min_max[1] contains max values
-            res.min_ = min_max[1].min_;
+            res.min_ = min_max[0].min_;
             res.max_ = min_max[1].max_;
             break;
     }
