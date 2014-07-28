@@ -1,4 +1,6 @@
-#includes
+# generate protobuf files
+PROTOBUF_GENERATE_CPP(MSG_SRC MSG_HDRS searchlight/searchlight_messages.proto)
+include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 # searchlight SciDb UDO
 add_library(searchlight_udo SHARED searchlight/adapter.cpp
@@ -7,7 +9,7 @@ add_library(searchlight_udo SHARED searchlight/adapter.cpp
     searchlight/sampler.cpp searchlight/searchlight_task.cpp
     searchlight/searchlight.cpp searchlight/validator.cpp
     searchlight/searchlight_collector.cpp searchlight/plugin.cpp
-    searchlight/default_search.cpp)
+    searchlight/default_search.cpp searchlight/searchlight_messenger.cpp ${MSG_SRC})
 
 # We have to link the libraries since SciDb will not load them during the
 # dynamic operator loading. We don't need to do anything special for SciDb

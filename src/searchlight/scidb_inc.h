@@ -46,6 +46,12 @@ namespace scidb {
 #include <array/StreamArray.h>
 #include <system/Config.h>
 
+#include <util/NetworkMessage.h>
+#include <network/BaseConnection.h>
+#include <network/NetworkManager.h>
+#include <util/Network.h>
+#include <network/proto/scidb_msg.pb.h>
+
 using scidb::SystemCatalog;
 using scidb::Query;
 using scidb::Config;
@@ -61,7 +67,10 @@ using scidb::DimensionDesc;
 using scidb::Address;
 
 using scidb::ConstChunk;
+using scidb::Chunk;
 using scidb::MemChunk;
+using scidb::SharedBuffer;
+using scidb::CompressedBuffer;
 
 using scidb::ConstArrayIterator;
 using scidb::ConstItemIterator;
@@ -77,9 +86,16 @@ using scidb::Type;
 using scidb::Value;
 
 using scidb::RLEPayload;
+using scidb::ConstRLEEmptyBitmap;
 
 using scidb::SCIDB_SE_OPERATOR;
 using scidb::SCIDB_LE_ILLEGAL_OPERATION;
+
+using scidb::MessageID;
+using scidb::MessagePtr;
+using scidb::MessageDescription;
+using scidb::InstanceID;
+using scidb::NetworkManager;
 
 /**
  *  Pointer for an Array (very common in SciDb).

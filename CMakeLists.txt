@@ -15,6 +15,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake/Modules/")
 find_package(SciDB REQUIRED)
 find_package(OrTools REQUIRED)
 find_package(Log4CXX REQUIRED)
+find_package(Protobuf REQUIRED)
 find_package(GFlags REQUIRED)   # needed by or-tools
 find_package(Protobuf REQUIRED) # needed by or-tools
 find_package(Coin REQUIRED)     # needed by or-tools

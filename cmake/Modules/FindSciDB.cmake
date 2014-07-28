@@ -26,4 +26,4 @@ include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(SciDB DEFAULT_MSG SCIDB_SOURCE_DIR)
 
 # set export vars
-set(SCIDB_INCLUDE_DIRS ${SCIDB_SOURCE_DIR}/include ${SCIDB_SOURCE_DIR}/src)
+set(SCIDB_INCLUDE_DIRS ${SCIDB_SOURCE_DIR}/include ${SCIDB_SOURCE_DIR}/src ${SCIDB_SOURCE_DIR}/build/src)
