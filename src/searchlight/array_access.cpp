@@ -70,13 +70,19 @@ TypedValueVector ArrayAccess::ComputeAggreagate(const Coordinates &low,
     /*
      * Then, we use the SciDb's between array for the low-high region.
      *
-     * We need to ensure an empty attribute since BetweenArray will be
-     * expecting it by design. Since the function is const, we make a local
-     * copy (cheap).
+     * Caveat: BetweenArray uses ++ somewhat frivolously. If we have
+     * a DepartArray as the input (surely for distributed environment),
+     * it might cause a number of round-trips to other instances. Data
+     * won't be fetched; only inquires about some remote chunks.
+     *
+     * We're not using SubArray here (also an appropriate choice), since it
+     * doesn't support tile iteration. Performance wise, it should be around
+     * the same, although it uses iterators more carefully.
+     *
+     * FIXME: Rewrite BetweenArray to use setPosition() instead of ++
      */
-    ArrayDesc array_desc_empty_attr = addEmptyTagAttribute(array_desc_);
-    BetweenArray region(array_desc_empty_attr, low, high,
-            data_array_, tile_mode_ /* tile mode */);
+    const BetweenArray region(array_desc_, low, high,
+            data_array_, tile_mode_);
 
     if (tile_mode_) {
         ComputeGeneralAggregateTile(region, attr, aggrs, need_nulls);

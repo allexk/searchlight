@@ -39,8 +39,13 @@
  * well-known bug on C++11. Since I do not have a newer version of Boost on
  * the development machine, thus the hack. The bug is fixed upstream.
  */
-#include "json_parser_read.hpp"
+//#include "json_parser_read.hpp"
 
+/*
+ * FIXME: There is a compile warning here about an always-true comparison in
+ * json_parser_write inside the header. Actually, the warning is
+ * valid for char-based strings, but harmless. See boost bug #5598
+ */
 #include <boost/property_tree/json_parser.hpp>
 
 namespace searchlight {

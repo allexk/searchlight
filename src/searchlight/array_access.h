@@ -52,7 +52,7 @@ public:
      */
     explicit ArrayAccess(ArrayPtr array) :
         data_array_(array),
-        array_desc_(array->getArrayDesc()),
+        array_desc_(addEmptyTagAttribute(array->getArrayDesc())),
         attrs_(array_desc_.getAttributes(false)),
         last_attr_(-1) {
 
@@ -156,7 +156,7 @@ private:
     const ArrayPtr data_array_;
 
     // The array's descriptor
-    const ArrayDesc &array_desc_;
+    const ArrayDesc array_desc_;
 
     // The array's attributes
     const Attributes &attrs_;

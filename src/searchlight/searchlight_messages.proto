@@ -1,0 +1,9 @@
+package searchlight;
+
+message FetchChunk {
+    required string array_name   = 1;  // array name
+    required uint32 attribute_id = 2;  // attribute
+    required bool   confirm_only = 3;  // just confirm existence
+    repeated int64  position     = 4;  // chunk coordinates
+    required uint32 slot         = 5;  // requester's slot (must be returned in the response)
+}

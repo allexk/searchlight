@@ -70,7 +70,7 @@
  * @author Alexander Kalinin
  */
 
-#include "searchlight_task.h"
+#include "../searchlight_task.h"
 #include <query/Operator.h>
 
 namespace scidb {

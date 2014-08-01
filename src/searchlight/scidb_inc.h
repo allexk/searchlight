@@ -33,10 +33,18 @@
 #define SEARCHLIGHT_SCIDB_INC_H_
 
 /*
+ * A workaround to avoid compiler errors when SciDb returns shared_ptrs
+ * from functions with bool return types, which requires explicit conversion.
+ * This works until we move to C++0X, for which Boost dumps the safe bool idiom
+ * and goes with the explicit bool conversion operator.
+ */
+#define BOOST_NO_CXX11_EXPLICIT_CONVERSION_OPERATORS
+
+/*
  * A workaround to avoid std/boost::shared_ptr in SciDb, since we are
  * working with -std=c++0x
  */
-#include <boost/shared_array.hpp>
+#include <boost/shared_ptr.hpp>
 namespace scidb {
     using boost::shared_ptr;
 }
@@ -44,6 +52,7 @@ namespace scidb {
 #include <array/Metadata.h>
 #include <array/Array.h>
 #include <array/StreamArray.h>
+#include <array/DelegateArray.h>
 #include <system/Config.h>
 
 #include <util/NetworkMessage.h>
@@ -52,45 +61,66 @@ namespace scidb {
 #include <util/Network.h>
 #include <network/proto/scidb_msg.pb.h>
 
+namespace searchlight {
+
+// System structures
 using scidb::SystemCatalog;
 using scidb::Query;
 using scidb::Config;
-using scidb::ArrayDesc;
-using scidb::Array;
-using scidb::StreamArray;
+
+// Array strcuctures
 using scidb::Attributes;
 using scidb::AttributeID;
 using scidb::AttributeDesc;
+using scidb::ArrayDesc;
+using scidb::ArrayDistribution;
 using scidb::Coordinate;
 using scidb::Coordinates;
 using scidb::DimensionDesc;
 using scidb::Address;
 
+// Arrays
+using scidb::Array;
+using scidb::MemArray;
+using scidb::StreamArray;
+using scidb::DelegateArray;
+
+// Chunks
 using scidb::ConstChunk;
 using scidb::Chunk;
 using scidb::MemChunk;
 using scidb::SharedBuffer;
 using scidb::CompressedBuffer;
 
+// Iterators
 using scidb::ConstArrayIterator;
+using scidb::ArrayIterator;
+using scidb::DelegateArrayIterator;
 using scidb::ConstItemIterator;
 using scidb::ConstChunkIterator;
 using scidb::ChunkIterator;
 
+// Aggregate stuff
 using scidb::Aggregate;
 using scidb::AggregatePtr;
 using scidb::AggregateLibrary;
 
+// Types
 using scidb::TypeLibrary;
 using scidb::Type;
-using scidb::Value;
 
+// Chunk values
 using scidb::RLEPayload;
 using scidb::ConstRLEEmptyBitmap;
+using scidb::Value;
 
+// Exceptions
 using scidb::SCIDB_SE_OPERATOR;
 using scidb::SCIDB_LE_ILLEGAL_OPERATION;
+using scidb::SCIDB_SE_EXECUTION;
+using scidb::SCIDB_LE_NO_CURRENT_CHUNK;
 
+// Network stuff
 using scidb::MessageID;
 using scidb::MessagePtr;
 using scidb::MessageDescription;
@@ -132,4 +162,20 @@ typedef boost::shared_ptr<ConstItemIterator> ConstItemIteratorPtr;
  */
 typedef boost::shared_ptr<Array> ArrayPtr;
 
+/**
+ * Simple hash for scidb::Address to use with unordered containers.
+ */
+struct AddressHash {
+    size_t operator()(const Address &addr) const {
+        size_t h = 17;
+        h = 31 * h + addr.attId;
+        for (auto x: addr.coords) {
+            h = 31 * h + static_cast<size_t>(x);
+        }
+        return h;
+    }
+};
+}
+
+#undef BOOST_NO_CXX11_EXPLICIT_CONVERSION_OPERATORS
 #endif /* SEARCHLIGHT_SCIDB_INC_H_ */

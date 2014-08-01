@@ -5,11 +5,13 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR})
 # searchlight SciDb UDO
 add_library(searchlight_udo SHARED searchlight/adapter.cpp
     searchlight/array_access.cpp searchlight/array_desc.cpp
-    searchlight/LogicalSearchlight.cpp searchlight/PhysicalSearchlight.cpp
+    searchlight/ops/LogicalSearchlight.cpp searchlight/ops/PhysicalSearchlight.cpp
     searchlight/sampler.cpp searchlight/searchlight_task.cpp
     searchlight/searchlight.cpp searchlight/validator.cpp
-    searchlight/searchlight_collector.cpp searchlight/plugin.cpp
-    searchlight/default_search.cpp searchlight/searchlight_messenger.cpp ${MSG_SRC})
+    searchlight/searchlight_collector.cpp searchlight/ops/plugin.cpp
+    searchlight/default_search.cpp searchlight/searchlight_messenger.cpp ${MSG_SRC}
+    searchlight/ops/LogicalDepart.cpp searchlight/ops/PhysicalDepart.cpp
+    searchlight/ops/DepartArray.cpp)
 
 # We have to link the libraries since SciDb will not load them during the
 # dynamic operator loading. We don't need to do anything special for SciDb

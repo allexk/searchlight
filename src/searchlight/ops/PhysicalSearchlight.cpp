@@ -29,7 +29,7 @@
  * @author Alexander Kalinin
  */
 
-#include "searchlight_task.h"
+#include "../searchlight_task.h"
 
 #include <query/Operator.h>
 #include <boost/tokenizer.hpp>
@@ -92,7 +92,7 @@ public:
         }
 
         // Gather all samples
-        ArrayPtrVector samples;
+        searchlight::ArrayPtrVector samples;
         for (size_t i = 1; i < inputArrays.size(); i++) {
             samples.push_back(inputArrays[i]);
         }
@@ -102,8 +102,8 @@ public:
                 boost::make_shared<searchlight::SearchlightTask>(str_tokens[0],
                         str_tokens[1], str_tokens[2]);
         sl_task->GetSearchlight().RegisterArray(inputArrays[0], samples);
-        return ArrayPtr(new searchlight::SearchlightResultsArray(sl_task,
-                _schema, query));
+        return searchlight::ArrayPtr(new searchlight::SearchlightResultsArray(
+                sl_task, _schema, query));
     }
 };
 

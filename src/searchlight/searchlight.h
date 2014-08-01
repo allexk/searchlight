@@ -205,7 +205,7 @@ public:
      *
      * @param name the name of the search
      */
-    explicit Searchlight(const std::string &name, DLLHandler &dll_handler) :
+    Searchlight(const std::string &name, DLLHandler &dll_handler) :
         solver_(name),
         validator_(nullptr),
         array_desc_(nullptr),

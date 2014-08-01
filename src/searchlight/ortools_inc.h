@@ -35,7 +35,10 @@
 #include <constraint_solver/constraint_solver.h>
 #include <constraint_solver/constraint_solveri.h>
 
-#include <boost/shared_ptr.hpp>
+// Hackish header; see the comment in the header itself.
+#include "ortools_loader.h"
+
+namespace searchlight {
 
 using operations_research::Solver;
 using operations_research::DecisionBuilder;
@@ -58,7 +61,6 @@ using operations_research::StringPrintf;
 
 using operations_research::SearchLimit;
 
-#include "ortools_loader.h"
 using operations_research::CPModelLoader;
 
 using operations_research::ACMRandom;
@@ -76,11 +78,13 @@ typedef std::vector<Assignment *> AssignmentVector;
 /**
  * An assignment shared pointer
  */
-typedef boost::shared_ptr<Assignment> AssignmentPtr;
+typedef std::shared_ptr<Assignment> AssignmentPtr;
 
 /**
  *  A vector of assignment pointers.
  */
 typedef std::vector<AssignmentPtr> AssignmentPtrVector;
+
+}
 
 #endif /* SEARCHLIGHT_ORTOOLS_INC_H_ */
