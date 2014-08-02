@@ -145,6 +145,7 @@ public:
             return inputArrays[0];
         } else {
             boost::shared_ptr<Query> query = Query::getValidQueryPtr(_query);
+            searchlight::SearchlightMessenger::getInstance()->init(query);
             return boost::shared_ptr<Array>(
                     new searchlight::DepartArray(_schema, inputArrays[0],
                             input_distr_, query));
