@@ -94,6 +94,42 @@ protected:
     }
 };
 
+/**
+ * This class is basically a wrapper around CompressedBuffer that is used for
+ * holding data the buffer does not own.
+ *
+ * Why? We create such a buffer from the message to de-compress it in a chunk.
+ * Unfortunately, CompressedBuffer frees its data, which is unacceptable in
+ * our case -- the data still belongs to the message. One solution would be
+ * to create a copy of the binary data and give it to the CompressedBuffer,
+ * although it would be inefficient for large chunks.
+ */
+class CompressedDataHolder : public CompressedBuffer {
+public:
+    CompressedDataHolder(void *compressedData, int compressionMethod,
+            size_t compressedSize, size_t decompressedSize) :
+                CompressedBuffer(compressedData, compressionMethod,
+                        compressedSize, decompressedSize) {}
+
+    CompressedDataHolder() : CompressedBuffer() {}
+
+    virtual void free() override {
+        // Do not free! Cannot assign nullptr to 'data', since it's private.
+    }
+
+    virtual void allocate(size_t size) override {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_EXECUTION,
+                SCIDB_LE_ILLEGAL_OPERATION) <<
+                        "Cannot allocate CompressedDataHolder!";
+    }
+
+    virtual void reallocate(size_t size) override {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_EXECUTION,
+                SCIDB_LE_ILLEGAL_OPERATION) <<
+                        "Cannot reallocate CompressedDataHolder!";
+    }
+};
+
 /*
  *  Helper function to retrieve CompressedBuffer from the MessageDesc.
  *  Why? Because DefaultMessageDescription does not contain an access method
@@ -101,7 +137,7 @@ protected:
  */
 boost::shared_ptr<CompressedBuffer> RetrieveCompressedBuffer(
         const boost::shared_ptr<MessageDescription> &msg_desc,
-        const boost::shared_ptr<scidb_msg::Chunk> chunk_record) {
+        const boost::shared_ptr<scidb_msg::Chunk> &chunk_record) {
     // the buffer tinkering
     const boost::asio::const_buffer &buf = msg_desc->getBinary();
     const size_t compressed_size = boost::asio::buffer_size(buf);
@@ -111,10 +147,10 @@ boost::shared_ptr<CompressedBuffer> RetrieveCompressedBuffer(
     const int compression_method = chunk_record->compression_method();
 
     if (!compressed_data || compressed_size == 0) {
-        return boost::shared_ptr<CompressedBuffer>();
+        return boost::shared_ptr<CompressedDataHolder>();
     } else {
         // const_cast is safe here -- we're going to read and de-compress
-        return boost::make_shared<CompressedBuffer>(
+        return boost::make_shared<CompressedDataHolder>(
                 const_cast<void *>(compressed_data), compression_method,
                 compressed_size, decompressed_size);
     }
