@@ -355,7 +355,7 @@ const ConstChunk &DepartArrayIterator::GetChunk() const {
                         !new_chunk->getAttributeDesc().isEmptyIndicator()) {
                     CheckAndSetBitmapRLE(new_chunk);
                 }
-                new_chunk->unPin(); // new chunk is always pinned
+                new_chunk->write(query); // this will un-pin it
 
                 // erase via addr, not req, since req might've been invalidated
                 cache_.current_requests_.erase(addr);
@@ -368,31 +368,46 @@ const ConstChunk &DepartArrayIterator::GetChunk() const {
 
 void DepartArrayIterator::CheckAndSetBitmapRLE(MemChunk *chunk) const {
     assert(chunk->isRLE());
-
-    // Retrieve the bitmap; it must be here by design!
-    const size_t bitmap_size = chunk->getBitmapSize();
-    const size_t bitmap_offset = chunk->getSize() - bitmap_size;
-    assert(bitmap_size > 0);
-
-    const char *bitmap_raw_data = static_cast<char *>(chunk->getData()) +
-            bitmap_offset;
-    boost::shared_ptr<ConstRLEEmptyBitmap> bitmap =
-            make_shared<ConstRLEEmptyBitmap>(bitmap_raw_data);
-
-    // set it to the MemChunk itself; iterators will use it
-    chunk->setEmptyBitmap(bitmap);
-
-    // now the bitmap chunk (maybe somebody would want to iterate it)
-    // removing const from the pointer is safe here
-    ConstChunk *bitmap_chunk =
+    // Removing const from the pointer is safe here
+    ConstChunk * const bitmap_chunk =
             const_cast<ConstChunk *>(chunk->getBitmapChunk());
     if (bitmap_chunk && bitmap_chunk->getSize() == 0) {
+        // Retrieve the bitmap; it must be here by design!
+        const size_t bitmap_size = chunk->getBitmapSize();
+        const size_t bitmap_offset = chunk->getSize() - bitmap_size;
+        assert(bitmap_size > 0);
+
+        const char * const bitmap_raw_data =
+                static_cast<char *>(chunk->getData()) + bitmap_offset;
+        const boost::shared_ptr<const ConstRLEEmptyBitmap> bitmap =
+                make_shared<const ConstRLEEmptyBitmap>(bitmap_raw_data);
+
+        /*
+         *  Put it in the bitmap chunk. There is a potential for a data race
+         *  here. Since somebody else might be doing bitmap request. In this
+         *  case the request and this write will be served by different threads.
+         *  However, these theads are going to write the same data. So, this
+         *  shoudl be safe.
+         *
+         *  FIXME: Check for the bitmap request in GetChunk() and either create
+         *  the request for the bitmap chunk and fulfill it or wait until
+         *  the "foreign" bitmap chunk request is fulfilled (since we need
+         *  the bitmap for the data chunk to function properly).
+         */
         Chunk *mod_bitmap_chunk =
                 dynamic_cast<Chunk *>(bitmap_chunk);
         assert(mod_bitmap_chunk);
+        mod_bitmap_chunk->pin();
         mod_bitmap_chunk->allocate(bitmap_size);
         bitmap->pack(static_cast<char *>(mod_bitmap_chunk->getDataForLoad()));
         mod_bitmap_chunk->setRLE(true);
+        mod_bitmap_chunk->unPin();
+
+        // Create fetch record
+        cache_.remote_chunks_.emplace(
+                Address(bitmap_chunk->getAttributeDesc().getId(),
+                        bitmap_chunk->getFirstPosition(false)),
+                true);
     }
 }
 

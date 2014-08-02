@@ -103,7 +103,7 @@ boost::shared_ptr<CompressedBuffer> RetrieveCompressedBuffer(
         const boost::shared_ptr<MessageDescription> &msg_desc,
         const boost::shared_ptr<scidb_msg::Chunk> chunk_record) {
     // the buffer tinkering
-    const boost::asio::const_buffer buf = msg_desc->getBinary();
+    const boost::asio::const_buffer &buf = msg_desc->getBinary();
     const size_t compressed_size = boost::asio::buffer_size(buf);
     const void *compressed_data = boost::asio::buffer_cast<const void *>(buf);
     // the rest of the info
@@ -384,8 +384,14 @@ void SearchlightMessenger::HandleSLChunk(
         chunk->setRLE(record->rle());
         chunk->decompress(*compressed_buffer);
         chunk->setCount(record->count());
-        chunk->write(query);
         assert(checkChunkMagic(*chunk));
+        /*
+         *  Note, we do not call chunk->write() here, since the caller might
+         *  want to do something else. write() might cause unpin() for some
+         *  types of chunks (e.g., LRU Chunk) and a potential swap-out. This
+         *  would be inefficient. So, write()/unpin() is the caller's
+         *  responsibility.
+         */
     }
 
     slot.data_ready_ = true;

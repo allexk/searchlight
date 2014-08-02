@@ -96,6 +96,8 @@ public:
      * explicitly specify what instance to request the chunk from. If the
      * caller does not specify a pointer for the chunk to be written, only
      * the existence of the chunk at the specified position is confirmed.
+     * If the chunk is specified, it is supposed to be pinned in memory.
+     * This function does not un-pin it; that is the caller's responsibility.
      *
      * @param inst  instance to requests the chunk from (logical ID)
      * @param array_name name of the array
