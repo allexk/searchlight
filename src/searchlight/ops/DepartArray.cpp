@@ -234,7 +234,7 @@ bool DepartArrayIterator::CheckPosition(const Coordinates &pos) {
         scidb::getInstanceForChunk(query, pos, array_.desc,
                 array_.input_distr_.getPartitioningSchema(),
                 boost::shared_ptr<scidb::DistributionMapper>(),
-                local_instance, 0);
+                0, local_instance);
 
     if (chunk_instance == local_instance) {
         // Check the input array
@@ -289,7 +289,7 @@ const ConstChunk &DepartArrayIterator::GetChunk() const {
         scidb::getInstanceForChunk(query, current_, array_.desc,
                 array_.input_distr_.getPartitioningSchema(),
                 boost::shared_ptr<scidb::DistributionMapper>(),
-                local_instance, 0);
+                0, local_instance);
 
     if (chunk_instance == local_instance) {
         // Check the input array
