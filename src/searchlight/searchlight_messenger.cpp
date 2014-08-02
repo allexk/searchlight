@@ -103,31 +103,29 @@ protected:
  * our case -- the data still belongs to the message. One solution would be
  * to create a copy of the binary data and give it to the CompressedBuffer,
  * although it would be inefficient for large chunks.
+ *
+ * We have to override getData() for that, since these clowns from SciDb's team
+ * call _virtual_ function free() from the destructor. We don't override
+ * other functions, since the usage is really controlled and nothing bad
+ * will happen with the data_ pointer.
  */
 class CompressedDataHolder : public CompressedBuffer {
 public:
     CompressedDataHolder(void *compressedData, int compressionMethod,
             size_t compressedSize, size_t decompressedSize) :
-                CompressedBuffer(compressedData, compressionMethod,
-                        compressedSize, decompressedSize) {}
+                CompressedBuffer(nullptr, compressionMethod,
+                        compressedSize, decompressedSize),
+                data_(compressedData) {}
 
-    CompressedDataHolder() : CompressedBuffer() {}
+    CompressedDataHolder() : CompressedBuffer(), data_(nullptr) {}
 
-    virtual void free() override {
-        // Do not free! Cannot assign nullptr to 'data', since it's private.
+    virtual void *getData() const override {
+        return data_;
     }
 
-    virtual void allocate(size_t size) override {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_EXECUTION,
-                SCIDB_LE_ILLEGAL_OPERATION) <<
-                        "Cannot allocate CompressedDataHolder!";
-    }
-
-    virtual void reallocate(size_t size) override {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_EXECUTION,
-                SCIDB_LE_ILLEGAL_OPERATION) <<
-                        "Cannot reallocate CompressedDataHolder!";
-    }
+private:
+    // Pointer to data we manage instead of CompressedBuf
+    void *data_;
 };
 
 /*
