@@ -154,44 +154,87 @@ boost::shared_ptr<CompressedBuffer> RetrieveCompressedBuffer(
     }
 }
 
-}
+} /* namespace (unanimous) */
 
-void SearchlightMessenger::init(const boost::shared_ptr<Query> &query) {
-    if (!initialized_) {
-        query_ = query;
+void SearchlightMessenger::RegisterQuery(
+        const boost::shared_ptr<Query> &query) {
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    const QueryID query_id = query->getQueryID();
+    const auto &iter = served_queries_.find(query_id);
+    if (iter == served_queries_.end()) {
+        served_queries_.emplace(query_id,
+                std::make_shared<QueryContext>(query));
 
         // Establish query finalizer
         Query::Finalizer f =
                 boost::bind(&SearchlightMessenger::deactivate, this, _1);
         query->pushFinalizer(f);
 
-        // Establish message listeners
-        RegisterHandlers(true);
-
-        initialized_ = true;
+        LOG4CXX_DEBUG(logger, "Registered query, id=" << query_id);
     }
 }
 
-void SearchlightMessenger::deactivate(const boost::shared_ptr<Query> &) {
-    if (initialized_) {
-        reg_arrays_.clear();
-        query_.reset();
-        initialized_ = false;
+void SearchlightMessenger::deactivate(const boost::shared_ptr<Query> &query) {
+    std::lock_guard<std::mutex> lock(mtx_);
 
-        /*
-         * We do not remove message handlers here. First of all, SciDb does not
-         * have API for that -- handlers remain until termination. Secondly,
-         * we just throw an exception if a request came out of context (query).
-         *
-         * An alternative would be to establish empty handlers, so SciDb
-         * would drop messages by itself. However, we won't detect errors
-         * that way.
-         */
-    }
+    const QueryID query_id = query->getQueryID();
+    assert(served_queries_.find(query_id) != served_queries_.end());
+    served_queries_.erase(query_id);
+
+    LOG4CXX_DEBUG(logger, "Removed query, id=" << query_id);
+    /*
+     * We do not remove message handlers here. First of all, SciDb does not
+     * have API for that -- handlers remain until termination. Secondly,
+     * we just throw an exception if a request came out of context (query).
+     *
+     * An alternative would be to establish empty handlers, so SciDb
+     * would drop messages by itself. However, we won't detect errors
+     * that way.
+     */
 }
 
-void SearchlightMessenger::RegisterArray(const ArrayPtr &array) {
-    reg_arrays_[array->getName()] = array;
+SearchlightMessenger::QueryContextPtr SearchlightMessenger::GetQueryContext(
+        QueryID query_id) const {
+    const auto &iter = served_queries_.find(query_id);
+    if (iter == served_queries_.end()) {
+        LOG4CXX_ERROR(logger,
+                "Query is not registered at messenger: id=" << query_id);
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << "Invalid messenger request: no query with this id";
+    }
+    assert(iter->second);
+    return iter->second;
+}
+
+void SearchlightMessenger::RegisterArray(const boost::shared_ptr<Query> &query,
+        const ArrayPtr &array) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    QueryContextPtr query_ctx = GetQueryContext(query->getQueryID());
+    query_ctx->reg_arrays_.emplace(array->getName(),
+            std::make_shared<QueryContext::ServedArray>(array));
+}
+
+SearchlightMessenger::QueryContext::ServedArrayPtr
+SearchlightMessenger::GetRegisteredArray(
+        const boost::shared_ptr<Query> &query, const std::string &name) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    QueryContextPtr query_ctx = GetQueryContext(query->getQueryID());
+    const auto &iter = query_ctx->reg_arrays_.find(name);
+    if (iter == query_ctx->reg_arrays_.end()) {
+        LOG4CXX_ERROR(logger,
+                "Requesting chunk from unregistered array: " << name);
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << "Array is not registered on the messenger!";
+    }
+    return iter->second;
+}
+
+boost::shared_ptr<Query> SearchlightMessenger::GetRegisteredQuery(
+        QueryID query_id) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    QueryContextPtr query_ctx = GetQueryContext(query_id);
+    return Query::getValidQueryPtr(query_ctx->query_);
 }
 
 uint32_t SearchlightMessenger::GetMessageSlot() {
@@ -227,26 +270,21 @@ void SearchlightMessenger::RegisterHandlers(bool init) {
             boost::bind(&SearchlightMessenger::HandleSLChunk, this, _1));
 }
 
-bool SearchlightMessenger::RequestChunk(InstanceID inst,
-        const std::string &array_name, const Coordinates &pos, AttributeID attr,
-        Chunk *chunk) {
+bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
+        InstanceID inst, const std::string &array_name, const Coordinates &pos,
+        AttributeID attr, Chunk *chunk) {
     // check if the array is registered
-    const auto &array_iter = reg_arrays_.find(array_name);
-    if (array_iter == reg_arrays_.end()) {
-        LOG4CXX_ERROR(logger, "Requesting chunk from unregistered array!");
-        return false;
-    }
+    const ArrayPtr array = GetRegisteredArray(query, array_name)->array_;
 
     // message params
     const bool confirm_only = (chunk == nullptr);
-    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     const size_t slot_num = GetMessageSlot();
     MessageSlot &msg_slot = slots_[slot_num];
 
     std::shared_ptr<ChunkRequestData> chunk_req =
             std::make_shared<ChunkRequestData>();
     chunk_req->chunk_ = chunk;
-    chunk_req->array_ = array_iter->second;
+    chunk_req->array_ = array;
     msg_slot.data_ = chunk_req.get();
     msg_slot.data_ready_ = false;
 
@@ -295,11 +333,7 @@ void SearchlightMessenger::HandleSLChunkRequest(
 
     // some correctness checking
     const scidb::QueryID query_id = msg_desc->getQueryId();
-    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
-    if (query_id != query->getQueryID()) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Query IDs on searchlight messengers do not match!";
-    }
+    const boost::shared_ptr<Query> query = GetRegisteredQuery(query_id);
 
     // get the record
     boost::shared_ptr<FetchChunk> record =
@@ -312,13 +346,9 @@ void SearchlightMessenger::HandleSLChunkRequest(
 
     // parse the record and fetch
     const std::string &array_name = record->array_name();
-    const auto &reg_iter = reg_arrays_.find(array_name);
-    if (reg_iter == reg_arrays_.end()) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Array is not registered on the remote messenger!";
-    }
-
-    const ArrayPtr &array = reg_iter->second;
+    const QueryContext::ServedArrayPtr serv_array =
+            GetRegisteredArray(query, array_name);
+    const ArrayPtr array = serv_array->array_;
     const AttributeID attr = record->attribute_id();
     const bool confirm_only = record->confirm_only();
     Coordinates pos(record->position_size());
@@ -326,9 +356,18 @@ void SearchlightMessenger::HandleSLChunkRequest(
         pos[i] = record->position(i);
     }
 
+    // get iterator (and cache it)
+    boost::shared_ptr<ConstArrayIterator> array_iter;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        array_iter = serv_array->iters_[attr];
+        if (!array_iter) {
+            array_iter = array->getConstIterator(attr);
+            serv_array->iters_[attr] = array_iter;
+        }
+    }
+
     // find the chunk
-    // TODO: cache iterators
-    auto array_iter = array->getConstIterator(attr);
     bool exists = array_iter->setPosition(pos);
 
     // create the reply record
@@ -381,11 +420,7 @@ void SearchlightMessenger::HandleSLChunk(
 
     // some correctness checking
     const scidb::QueryID query_id = msg_desc->getQueryId();
-    boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
-    if (query_id != query->getQueryID()) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Query IDs on searchlight messengers do not match!";
-    }
+    boost::shared_ptr<Query> query = GetRegisteredQuery(query_id);
 
     // get the record
     boost::shared_ptr<scidb_msg::Chunk> record =

@@ -66,6 +66,7 @@ namespace searchlight {
 // System structures
 using scidb::SystemCatalog;
 using scidb::Query;
+using scidb::QueryID;
 using scidb::Config;
 
 // Array strcuctures

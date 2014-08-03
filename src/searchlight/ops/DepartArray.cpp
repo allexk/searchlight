@@ -260,8 +260,8 @@ bool DepartArrayIterator::CheckPosition(const Coordinates &pos) {
 
                 // check the chunk via the messenger (no chunk data!)
                 const bool chunk_exists = array_.messenger_->RequestChunk(
-                        chunk_instance, array_.desc.getName(), pos, attr_,
-                        nullptr);
+                        query, chunk_instance, array_.desc.getName(), pos,
+                        attr_, nullptr);
 
                 // Working with structures again
                 lock.lock();
@@ -333,8 +333,8 @@ const ConstChunk &DepartArrayIterator::GetChunk() const {
 
                 // get the chunk from messenger
                 if (!array_.messenger_->RequestChunk(
-                        chunk_instance, array_.desc.getName(), current_, attr_,
-                        new_chunk)) {
+                        query, chunk_instance, array_.desc.getName(), current_,
+                        attr_, new_chunk)) {
                     // make it system exception -- we checked the chunk before!
                     throw SYSTEM_EXCEPTION(SCIDB_SE_EXECUTION,
                             SCIDB_LE_NO_CURRENT_CHUNK);

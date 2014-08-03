@@ -69,7 +69,7 @@ public:
         input_distr_(input_distr) {
 
         // register array at the messenger
-        messenger_->RegisterArray(input);
+        messenger_->RegisterArray(query, input);
     }
 
     /**
