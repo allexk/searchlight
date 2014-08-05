@@ -144,9 +144,15 @@ public:
         if (input_distr_.getPartitioningSchema() == psReplication) {
             return inputArrays[0];
         } else {
+            // Init the messenger and sync
             boost::shared_ptr<Query> query = Query::getValidQueryPtr(_query);
             searchlight::SearchlightMessenger::getInstance()->
                     RegisterQuery(query);
+            searchlight::SearchlightMessenger::getInstance()->
+                    RegisterArray(query, inputArrays[0]);
+            searchlight::SearchlightMessenger::Synchronize(query);
+
+            // Return the array (all the processing is there)
             return boost::shared_ptr<Array>(
                     new searchlight::DepartArray(_schema, inputArrays[0],
                             input_distr_, query));

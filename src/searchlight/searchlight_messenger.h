@@ -123,6 +123,24 @@ public:
             InstanceID inst, const std::string &array_name,
             const Coordinates &pos, AttributeID attr, Chunk *chunk);
 
+
+    /**
+     * Synchronizes all Searchlight Messenger instances. This means it
+     * creates a barrier across instances participating in the query.
+     *
+     * Current implementation uses Scatter/Gather's barrier to achieve this,
+     * since it is exactly what we want, and sg() should not run concurrently
+     * with any operators using the messenger.
+     *
+     * Caveat: only one thread per instance should call this function.
+     * Otherwise, the result is undefined. One good point to do this is during
+     * physical plan preparation or execute(), which SciDb runs in a single
+     * thread.
+     *
+     * @param query the query context
+     */
+    static void Synchronize(const boost::shared_ptr<Query> &query);
+
 private:
 
     struct ChunkRequestData {

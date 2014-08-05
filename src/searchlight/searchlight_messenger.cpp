@@ -31,6 +31,8 @@
 #include "searchlight_messenger.h"
 #include "searchlight_messages.pb.h"
 
+#include <query/Operator.h>
+
 namespace searchlight {
 
 // The logger
@@ -465,6 +467,11 @@ void SearchlightMessenger::HandleSLChunk(
 
     slot.data_ready_ = true;
     slot.cond_.notify_one();
+}
+
+void SearchlightMessenger::Synchronize(const boost::shared_ptr<Query> &query) {
+    // The same id should be okay here, even in case of subsequent barriers
+    scidb::syncBarrier(0, query);
 }
 
 }
