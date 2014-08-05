@@ -156,6 +156,18 @@ boost::shared_ptr<CompressedBuffer> RetrieveCompressedBuffer(
     }
 }
 
+std::ostream &operator<<(std::ostream &os, const Coordinates &coords) {
+    os << '(';
+    for (size_t i = 0; i < coords.size(); i++) {
+        if (i > 0) {
+            os << ", ";
+        }
+        os << coords[i];
+    }
+    os << ')';
+    return os;
+}
+
 } /* namespace (unanimous) */
 
 void SearchlightMessenger::RegisterQuery(
@@ -181,10 +193,17 @@ void SearchlightMessenger::deactivate(const boost::shared_ptr<Query> &query) {
     std::lock_guard<std::mutex> lock(mtx_);
 
     const QueryID query_id = query->getQueryID();
-    assert(served_queries_.find(query_id) != served_queries_.end());
-    served_queries_.erase(query_id);
+    const auto &iter = served_queries_.find(query_id);
+    assert(iter != served_queries_.end());
 
+    std::ostringstream os;
+    os << "Query statistics follows (id=" << query_id << "):\n";
+    iter->second->stats_.print(os);
+    logger->info(os.str(), LOG4CXX_LOCATION);
+
+    served_queries_.erase(iter);
     LOG4CXX_DEBUG(logger, "Removed query, id=" << query_id);
+
     /*
      * We do not remove message handlers here. First of all, SciDb does not
      * have API for that -- handlers remain until termination. Secondly,
@@ -198,6 +217,8 @@ void SearchlightMessenger::deactivate(const boost::shared_ptr<Query> &query) {
 
 SearchlightMessenger::QueryContextPtr SearchlightMessenger::GetQueryContext(
         QueryID query_id) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+
     const auto &iter = served_queries_.find(query_id);
     if (iter == served_queries_.end()) {
         LOG4CXX_ERROR(logger,
@@ -211,17 +232,18 @@ SearchlightMessenger::QueryContextPtr SearchlightMessenger::GetQueryContext(
 
 void SearchlightMessenger::RegisterArray(const boost::shared_ptr<Query> &query,
         const ArrayPtr &array) {
-    std::lock_guard<std::mutex> lock(mtx_);
     QueryContextPtr query_ctx = GetQueryContext(query->getQueryID());
-    query_ctx->reg_arrays_.emplace(array->getName(),
+    const std::string &array_name = array->getName();
+    query_ctx->reg_arrays_.emplace(array_name,
             std::make_shared<QueryContext::ServedArray>(array));
+    LOG4CXX_DEBUG(logger, "Registered array, qid=" << query->getQueryID()
+            << ", array=" << array_name);
 }
 
 SearchlightMessenger::QueryContext::ServedArrayPtr
 SearchlightMessenger::GetRegisteredArray(
-        const boost::shared_ptr<Query> &query, const std::string &name) const {
-    std::lock_guard<std::mutex> lock(mtx_);
-    QueryContextPtr query_ctx = GetQueryContext(query->getQueryID());
+        const SearchlightMessenger::QueryContextPtr &query_ctx,
+        const std::string &name) const {
     const auto &iter = query_ctx->reg_arrays_.find(name);
     if (iter == query_ctx->reg_arrays_.end()) {
         LOG4CXX_ERROR(logger,
@@ -233,9 +255,7 @@ SearchlightMessenger::GetRegisteredArray(
 }
 
 boost::shared_ptr<Query> SearchlightMessenger::GetRegisteredQuery(
-        QueryID query_id) const {
-    std::lock_guard<std::mutex> lock(mtx_);
-    QueryContextPtr query_ctx = GetQueryContext(query_id);
+        const SearchlightMessenger::QueryContextPtr &query_ctx) const {
     return Query::getValidQueryPtr(query_ctx->query_);
 }
 
@@ -276,7 +296,9 @@ bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
         InstanceID inst, const std::string &array_name, const Coordinates &pos,
         AttributeID attr, Chunk *chunk) {
     // check if the array is registered
-    const ArrayPtr array = GetRegisteredArray(query, array_name)->array_;
+    QueryContextPtr query_ctx = GetQueryContext(query->getQueryID());
+    GetRegisteredQuery(query_ctx); // just error checking
+    ArrayPtr array = GetRegisteredArray(query_ctx, array_name)->array_;
 
     // message params
     const bool confirm_only = (chunk == nullptr);
@@ -305,16 +327,34 @@ bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
     }
     record->set_slot(slot_num);
 
+    // log
+    if (logger->isDebugEnabled()) {
+        std::ostringstream os;
+        os <<"Requesting chunk: qid=" << query->getQueryID() << ", name=" <<
+                array_name << ", pos=" << pos << ", data=" <<
+                std::boolalpha << confirm_only;
+        logger->debug(os.str(), LOG4CXX_LOCATION);
+    }
+
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
     network_manager->send(inst, msg);
 
     // now we have to wait
     {
+        const auto wait_start_time = std::chrono::steady_clock::now();
+
         std::unique_lock<std::mutex> slot_lock(msg_slot.mtx_);
+        query_ctx->stats_.msgs_sent_++;
         while (!msg_slot.data_ready_) {
             msg_slot.cond_.wait(slot_lock);
         }
+
+        const auto wait_end_time = std::chrono::steady_clock::now();
+        query_ctx->stats_.total_wait_time_ +=
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                        wait_end_time - wait_start_time);
+
         // safe to unlock since we write only once to the slot
     }
 
@@ -334,8 +374,8 @@ void SearchlightMessenger::HandleSLChunkRequest(
         const boost::shared_ptr<MessageDescription> &msg_desc) {
 
     // some correctness checking
-    const scidb::QueryID query_id = msg_desc->getQueryId();
-    const boost::shared_ptr<Query> query = GetRegisteredQuery(query_id);
+    const QueryContextPtr query_ctx = GetQueryContext(msg_desc->getQueryId());
+    const boost::shared_ptr<Query> query = GetRegisteredQuery(query_ctx);
 
     // get the record
     boost::shared_ptr<FetchChunk> record =
@@ -349,13 +389,22 @@ void SearchlightMessenger::HandleSLChunkRequest(
     // parse the record and fetch
     const std::string &array_name = record->array_name();
     const QueryContext::ServedArrayPtr serv_array =
-            GetRegisteredArray(query, array_name);
+            GetRegisteredArray(query_ctx, array_name);
     const ArrayPtr array = serv_array->array_;
     const AttributeID attr = record->attribute_id();
     const bool confirm_only = record->confirm_only();
     Coordinates pos(record->position_size());
     for (size_t i = 0; i < pos.size(); i++) {
         pos[i] = record->position(i);
+    }
+
+    // log
+    if (logger->isDebugEnabled()) {
+        std::ostringstream os;
+        os <<"Got chunk request: qid=" << query->getQueryID() << ", name=" <<
+                array_name << ", pos=" << pos << ", data=" <<
+                std::boolalpha << confirm_only;
+        logger->debug(os.str(), LOG4CXX_LOCATION);
     }
 
     // get iterator (and cache it)
@@ -367,6 +416,8 @@ void SearchlightMessenger::HandleSLChunkRequest(
             array_iter = array->getConstIterator(attr);
             serv_array->iters_[attr] = array_iter;
         }
+        query_ctx->stats_.msgs_sent_++;
+        query_ctx->stats_.msgs_received_++;
     }
 
     // find the chunk
@@ -405,6 +456,13 @@ void SearchlightMessenger::HandleSLChunkRequest(
         reply->set_compression_method(buffer->getCompressionMethod());
         reply->set_decompressed_size(buffer->getDecompressedSize());
         reply->set_count(chunk.isCountKnown() ? chunk.count() : 0);
+
+        // stats
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            query_ctx->stats_.chunks_sent_++;
+            query_ctx->stats_.chunk_data_sent_ += buffer->getSize();
+        }
     }
 
     // send
@@ -421,8 +479,8 @@ void SearchlightMessenger::HandleSLChunk(
         const boost::shared_ptr<MessageDescription> &msg_desc) {
 
     // some correctness checking
-    const scidb::QueryID query_id = msg_desc->getQueryId();
-    boost::shared_ptr<Query> query = GetRegisteredQuery(query_id);
+    const QueryContextPtr query_ctx = GetQueryContext(msg_desc->getQueryId());
+    const boost::shared_ptr<Query> query = GetRegisteredQuery(query_ctx);
 
     // get the record
     boost::shared_ptr<scidb_msg::Chunk> record =
@@ -440,8 +498,7 @@ void SearchlightMessenger::HandleSLChunk(
     assert(slot.used_);
     ChunkRequestData *chunk_req = static_cast<ChunkRequestData *>(slot.data_);
 
-    // lock and go!
-    std::lock_guard<std::mutex> lock(slot.mtx_);
+    // Retrieve data
     chunk_req->empty_ = record->eof();
 
     // binary data, if any
@@ -449,6 +506,14 @@ void SearchlightMessenger::HandleSLChunk(
             RetrieveCompressedBuffer(msg_desc, record);
 
     if (compressed_buffer && chunk_req->chunk_) {
+        // stats
+        {
+            std::lock_guard<std::mutex> lock(slot.mtx_);
+            query_ctx->stats_.chunks_received_++;
+            query_ctx->stats_.chunk_data_received_ +=
+                    compressed_buffer->getSize();
+        }
+
         Chunk *chunk = chunk_req->chunk_;
 
         chunk->setSparse(record->sparse());
@@ -465,6 +530,17 @@ void SearchlightMessenger::HandleSLChunk(
          */
     }
 
+    // log
+    if (logger->isDebugEnabled()) {
+        std::ostringstream os;
+        os <<"Got chunk: qid=" << query->getQueryID() << ", name=" <<
+                chunk_req->array_->getName() << ", empty=" <<
+                std::boolalpha << chunk_req->empty_;
+        logger->debug(os.str(), LOG4CXX_LOCATION);
+    }
+
+    std::lock_guard<std::mutex> lock(slot.mtx_);
+    query_ctx->stats_.msgs_received_++;
     slot.data_ready_ = true;
     slot.cond_.notify_one();
 }

@@ -88,6 +88,12 @@ public:
      * within the same query -- only the first call counts. The messenger
      * will deactivate itself automatically, when the query is finished.
      *
+     * It is assumed that all arrays are registered before queries begin
+     * flying around. Since requests check if an array is registered,
+     * violating this assumption might cause data races. Moreover, such
+     * behavior might cause unexpected bugs anyway, if no synchronization
+     * between the instances is performed after the registration.
+     *
      * @param query current query
      */
     void RegisterQuery(const boost::shared_ptr<Query> &query);
@@ -183,8 +189,35 @@ private:
         };
         typedef std::shared_ptr<ServedArray> ServedArrayPtr;
 
+        // Statistics about all querie's requests
+        struct Statistics {
+            uint32_t msgs_sent_ = 0;
+            uint32_t msgs_received_ = 0;
+
+            uint32_t chunks_sent_ = 0;
+            uint32_t chunks_received_ = 0;
+
+            uint64_t chunk_data_sent_ = 0;
+            uint64_t chunk_data_received_ = 0;
+
+            std::chrono::microseconds total_wait_time_;
+
+            void print(std::ostream &os) const {
+                os << "\n\tMessages sent=" << msgs_sent_;
+                os << "\n\tMessages received=" << msgs_received_;
+                os << "\n\tChunks sent=" << chunks_sent_;
+                os << "\n\tChunks received=" << chunks_received_;
+                os << "\n\tChunk data sent=" << chunk_data_sent_;
+                os << "\n\tChunk data received=" << chunk_data_received_;
+                os << '\n';
+            }
+        };
+
         // Reference to the query
         const boost::weak_ptr<Query> query_;
+
+        // Statistics for the query
+        Statistics stats_;
 
         // Arrays registered for chunk exchange
         std::unordered_map<std::string, ServedArrayPtr> reg_arrays_;
@@ -222,11 +255,12 @@ private:
 
     // Returns pointer to the registered array with name
     QueryContext::ServedArrayPtr GetRegisteredArray(
-            const boost::shared_ptr<Query> &query,
+            const QueryContextPtr &query_ctx,
             const std::string &name) const;
 
     // Returns valid pointer to the registered query
-    boost::shared_ptr<Query> GetRegisteredQuery(QueryID query_id) const;
+    boost::shared_ptr<Query> GetRegisteredQuery(
+            const QueryContextPtr &query_ctx) const;
 
     // Returns query context for the given id
     QueryContextPtr GetQueryContext(QueryID query_id) const;

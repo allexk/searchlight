@@ -176,7 +176,8 @@ struct AddressHash {
         return h;
     }
 };
-}
+
+} /* namespace searchlight */
 
 #undef BOOST_NO_CXX11_EXPLICIT_CONVERSION_OPERATORS
 #endif /* SEARCHLIGHT_SCIDB_INC_H_ */
