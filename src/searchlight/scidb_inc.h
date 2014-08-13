@@ -159,11 +159,6 @@ typedef std::vector<TypedValue> TypedValueVector;
 typedef boost::shared_ptr<ConstItemIterator> ConstItemIteratorPtr;
 
 /**
- * Array shared pointer.
- */
-typedef boost::shared_ptr<Array> ArrayPtr;
-
-/**
  * Simple hash for scidb::Address to use with unordered containers.
  */
 struct AddressHash {

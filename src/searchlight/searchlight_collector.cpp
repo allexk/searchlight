@@ -54,20 +54,35 @@ bool TaskSolutionCollector::AtSolution() {
     const Assignment::IntContainer &vars = prototype_.get()->IntVarContainer();
 
     // stringify the solution
+    std::vector<int64_t> vals(vars.Size());
+    for (size_t i = 0; i < vars.Size(); i++) {
+        const IntVar *v = vars.Element(i).Var();
+        vals[i] = v->Value();
+    }
+    task_.ReportSolution(vals);
+
+    return true;
+}
+
+std::string TaskSolutionCollector::SolutionToString(
+        const std::vector<int64_t> &vals) const {
+    // we can reuse the same prototype and do not have to store the values
+    const Assignment::IntContainer &vars = prototype_.get()->IntVarContainer();
+
+    // stringify the solution
     std::ostringstream sol_string;
     for (size_t i = 0; i < vars.Size(); i++) {
         const IntVar *v = vars.Element(i).Var();
-        sol_string << v->name() << "=" << v->Value();
+        sol_string << v->name() << "=" << vals[i];
         if (i != vars.Size() - 1) {
             sol_string << ", ";
         }
     }
     const std::string solution = sol_string.str();
-
     LOG4CXX_TRACE(logger, "Collected a new solution: " << solution);
     LOG4CXX_TRACE(result_logger, solution);
 
-    task_.AddSolution(solution);
-    return true;
+    return solution;
 }
+
 }

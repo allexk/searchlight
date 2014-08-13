@@ -29,6 +29,7 @@
  */
 
 #include "searchlight_task.h"
+#include "searchlight_messages.pb.h"
 
 #include <dlfcn.h>
 
@@ -54,9 +55,62 @@ void SearchlightTask::ResolveTask(const std::string &lib_name,
     }
 }
 
+void SearchlightTask::AddRemoteSolution(InstanceID inst,
+        const google::protobuf::Message *msg) {
+
+    const SearchlightSolution *sol_msg =
+            dynamic_cast<const SearchlightSolution *>(msg);
+    if (!sol_msg) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << "Invalid message at the SL Task remote result function!";
+    }
+
+    const bool eor = sol_msg->eor();
+    if (!eor) {
+        // Solution values are always at var_min (they're scalar values)
+        const int sol_size = sol_msg->solution().var_min_size();
+        std::vector<int64_t> vals(sol_size);
+        for (int i = 0; i < sol_size; i++) {
+            vals[i] = sol_msg->solution().var_min(i);
+        }
+        ReportSolution(vals);
+    } else {
+        std::lock_guard<std::mutex> lock(queue_mtx_);
+        active_instance_count_--;
+    }
+}
+
+void SearchlightTask::ReportSolution(const std::vector<int64_t> &values) {
+    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
+        // We are at the coordinator -- add the solution to the queue
+        const std::string sol = collector_.SolutionToString(values);
+        std::lock_guard<std::mutex> lock(queue_mtx_);
+        solutions_queue_.push_back(sol);
+        queue_cond_.notify_one();
+    } else {
+        // We are at a common instance -- send the solution to the coordinator
+        SearchlightMessenger::getInstance()->SendSolution(query, false, values);
+    }
+}
+
+// Signals that the search just finished
+void SearchlightTask::OnFinishSearch() {
+    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
+        // We are at the coordinator -- just some accounting
+        std::lock_guard<std::mutex> lock(queue_mtx_);
+        active_instance_count_--;
+    } else {
+        // We are at a common instance -- send eor to the coordinator
+        SearchlightMessenger::getInstance()->SendSolution(
+                query, true, std::vector<int64_t>());
+    }
+}
+
 std::string SearchlightTask::GetNextSolution() {
-    boost::unique_lock<boost::mutex> lock(queue_mtx_);
-    while (solutions_queue_.empty() && !search_ended_) {
+    std::unique_lock<std::mutex> lock(queue_mtx_);
+    while (solutions_queue_.empty() && ExpectingResults()) {
         queue_cond_.wait(lock);
     }
 
@@ -66,7 +120,7 @@ std::string SearchlightTask::GetNextSolution() {
         sl_error_->raise();
     }
 
-    if (solutions_queue_.empty() && search_ended_) {
+    if (solutions_queue_.empty() && !ExpectingResults()) {
         LOG4CXX_INFO(logger, "SearchlightTask finished");
         return "";
     }
@@ -84,7 +138,20 @@ const ConstChunk *SearchlightResultsArray::nextChunk(AttributeID attId,
     // initialize the search if needed
     if (!sl_thread_) {
         LOG4CXX_INFO(logger, "Starting Searchlight Thread");
-        sl_thread_ = new boost::thread(boost::ref(*sl_task_));
+        sl_thread_ = new std::thread(std::ref(*sl_task_));
+    }
+
+    /*
+     * We wait for results only at the coordinator, since it collects all of
+     * them. Other instances will use SL Messenger to transfer local results,
+     * so they should return EOF for the array immediately.
+     */
+    {
+        boost::shared_ptr<Query> query(Query::getValidQueryPtr(_query));
+        if (query->getCoordinatorID() != scidb::COORDINATOR_INSTANCE) {
+            return NULL;
+            // The searchlight and validator threads will continue working
+        }
     }
 
     // block until next solution

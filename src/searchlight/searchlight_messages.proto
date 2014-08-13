@@ -4,6 +4,16 @@ message FetchChunk {
     required string array_name   = 1;  // array name
     required uint32 attribute_id = 2;  // attribute
     required bool   confirm_only = 3;  // just confirm existence
-    repeated int64  position     = 4;  // chunk coordinates
+    repeated int64  position     = 4 [packed=true];  // chunk coordinates
     required uint32 slot         = 5;  // requester's slot (must be returned in the response)
+}
+
+message VarAssignment {
+    repeated int64  var_min   = 1 [packed=true]; // min value
+    repeated int64  var_max   = 2 [packed=true]; // max value
+}
+
+message SearchlightSolution {
+    required bool eor            = 1; // end-of-result from the instance
+    optional VarAssignment solution = 2; // if not e-o-r, then a solution
 }

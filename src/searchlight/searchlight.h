@@ -43,6 +43,7 @@
 #include <boost/make_shared.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <chrono>
+#include <thread>
 
 namespace searchlight {
 
@@ -66,7 +67,7 @@ class SearchlightCollector;
  * library, you will have trouble with calling the destructor. That is why
  * the handler should be deleted at the very end.
  */
-class DLLHandler {
+class DLLHandler : private boost::noncopyable {
 public:
     /**
      * Constructs a new DLL handler. It assumes the default DLL directory
@@ -170,7 +171,7 @@ private:
     Validator &validator_;
 
     // The vector of vars (managed outside)
-    const IntVarVector &vars_;
+    const IntVarVector vars_;
 
     // Candidates encountered
     int64_t candidates_ = 0;
@@ -192,7 +193,7 @@ typedef IntExpr *(* UDFFunctionCreator)(Solver *, AdapterPtr,
  * API functions via which the user can register search primitives. The rest
  * is handled by the Searchlight itself.
  */
-class Searchlight {
+class Searchlight : private boost::noncopyable {
 public:
     /**
      * Maps UDF names to UDF creators.
@@ -204,13 +205,22 @@ public:
      * corresponds to a single search process.
      *
      * @param name the name of the search
+     * @param instances_count the number of instances for the search
+     * @param instance_id this instance id
+     * @param dll_handler handler for loading/unloading DLLs
      */
-    Searchlight(const std::string &name, DLLHandler &dll_handler) :
+    Searchlight(const std::string &name, unsigned int instance_count,
+            unsigned int instance_id,
+            DLLHandler &dll_handler) :
         solver_(name),
+        db_(nullptr),
         validator_(nullptr),
+        validator_thread_(nullptr),
         array_desc_(nullptr),
         dl_udf_handle_(dll_handler.LoadDLL("searchlight_udfs")),
-        terminate_(false) {}
+        terminate_(false),
+        instance_count_(instance_count),
+        instance_id_(instance_id) {}
 
     /**
      * The destructor.
@@ -265,15 +275,32 @@ public:
     }
 
     /**
-     * The main solve method that starts the search.
+     * The main solve method that starts the search. It is assumed that the
+     * Searchlight was prepared by calling Prepare() function.
+     */
+    void Solve();
+
+    /**
+     * Prepares Searchlight for execution. This method does not start the
+     * search. The search itself is started by the engine (via the operator).
      *
+     * This method takes "primary" and "secondary" decision variables.
+     * "Primary" variables basically define the location of the object of
+     * search (e.g., the left-most corner of a rectangle). "Secondary"
+     * variables convey additional information about the object, like perimeter,
+     * length and so on. Essentially, primary variables are used to determine
+     * search distribution across multiple instances.
+     *
+     * @param primary_vars "primary" decision variables
+     * @param secondary_vars "secondary" decision variables
      * @param db the decision builder (search heuristic)
      * @param vars the decision variables
      * @param monitors monitors, if required (can be empty)
      * @return true, if the search found something; false otherwise
      */
-    bool Solve(DecisionBuilder *db, const IntVarVector &vars,
-            const std::vector<SearchMonitor *> &monitors);
+    void Prepare(const IntVarVector &primary_vars,
+            const IntVarVector &secondary_vars,
+            DecisionBuilder *db, const std::vector<SearchMonitor *> &monitors);
 
     /**
      * Returns the creator for the requested UDF.
@@ -340,7 +367,7 @@ public:
      * @return access adapter
      */
     AdapterPtr CreateAdapter(const std::string &name) const {
-        return boost::make_shared<Adapter>(*array_desc_, name);
+        return std::make_shared<Adapter>(*array_desc_, name);
     }
 
     /**
@@ -400,7 +427,7 @@ public:
      * @return the validator monitor or nullptr, if there is none
      */
     SearchMonitor *GetValidatorMonitor() const {
-        return search_monitors_.validator_;
+        return search_monitors_.validator_monitor_;
     }
 
     /**
@@ -452,13 +479,16 @@ public:
     }
 
 private:
+    // Signals validator to end, waits and then destroys it
+    void EndAndDestroyValidator();
+
     // Monitors participating in the search
     struct SearchMonitors {
         // Solution collector for main (exact) results
         SearchlightCollector *collector_ = nullptr;
 
-        // Validator for the search
-        ValidatorMonitor *validator_ = nullptr;
+        // Validator monitor for the search
+        ValidatorMonitor *validator_monitor_ = nullptr;
 
         // User monitors
         std::vector<SearchMonitor *> user_monitors_;
@@ -466,20 +496,33 @@ private:
         // Auxiliary monitors established by SL
         std::vector<SearchMonitor *> aux_monitors_;
 
-        // Clears the structure of all monitors
-        void Clear() {
-            collector_ = nullptr;
-            validator_ = nullptr;
-            user_monitors_.clear();
-            aux_monitors_.clear();
+        void Disband() {
+            /*
+             * Collector is owned by the Searchlight Task.
+             * aux/user monitors are owned by the Solver
+             */
+            delete validator_monitor_;
         }
-    } search_monitors_;
+    };
 
     // The solver
     Solver solver_;
 
-    // Validator for the search
+    // Search heuristic
+    DecisionBuilder *db_;
+
+    // "Primary" decision variables -- defining the object
+    IntVarVector primary_vars_;
+
+    // "Secondary" decision variables -- conveying additional info
+    IntVarVector secondary_vars_;
+
+    // Monitors defined for the search
+    SearchMonitors search_monitors_;
+
+    // Validator for the search and its thread
     Validator *validator_;
+    std::thread *validator_thread_;
 
     // The array descriptor
     SearchArrayDesc *array_desc_;
@@ -492,6 +535,12 @@ private:
 
     // True if we are required to terminate
     volatile bool terminate_;
+
+    // The number of instances participating in the search
+    unsigned int instance_count_;
+
+    // This instance id
+    unsigned int instance_id_;
 
     // Total time spent on solving
     std::chrono::microseconds total_solve_time_;

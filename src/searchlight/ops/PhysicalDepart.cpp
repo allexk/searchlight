@@ -145,7 +145,6 @@ public:
             return inputArrays[0];
         } else {
             // Init the messenger and sync
-            boost::shared_ptr<Query> query = Query::getValidQueryPtr(_query);
             searchlight::SearchlightMessenger::getInstance()->
                     RegisterQuery(query);
             searchlight::SearchlightMessenger::getInstance()->

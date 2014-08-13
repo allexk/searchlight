@@ -226,6 +226,6 @@ void SemWindowsAvg(Searchlight *sl) {
     }
 
     // solve!
-    sl->Solve(db, all_vars, mons);
+    sl->Prepare(coords, lens, db, mons);
 }
 } /* namespace searchlight */

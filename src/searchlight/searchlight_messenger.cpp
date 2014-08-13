@@ -41,11 +41,21 @@ static log4cxx::LoggerPtr logger(
 
 namespace {
 
-// SL message types
-enum SearchlightMessageType {
-    mtSLChunkRequest = 50, // 50 is a relatively large number to avoid clashes
-    mtSLChunk
-};
+// Creates a record of the approppriate type for the message
+MessagePtr CreateMessageRecord(MessageID id) {
+    switch (id) {
+        case SearchlightMessenger::mtSLChunkRequest:
+            return MessagePtr(new FetchChunk);
+        case SearchlightMessenger::mtSLChunk:
+            return MessagePtr(new scidb_msg::Chunk);
+        case SearchlightMessenger::mtSLSolution:
+            return MessagePtr(new SearchlightSolution);
+        default:
+            LOG4CXX_ERROR(logger, "Unknown type of Searchlight message"
+                    "to create!");
+            return MessagePtr();
+    }
+}
 
 class SearchlightMessageDesc : public scidb::MessageDesc,
     private boost::noncopyable
@@ -65,8 +75,9 @@ class SearchlightMessageDesc : public scidb::MessageDesc,
         }
 
         switch (getMessageType()) {
-            case mtSLChunkRequest:
-            case mtSLChunk:
+            case SearchlightMessenger::mtSLChunkRequest:
+            case SearchlightMessenger::mtSLChunk:
+            case SearchlightMessenger::mtSLSolution:
                 break;
             default:
                 return false;
@@ -83,16 +94,7 @@ class SearchlightMessageDesc : public scidb::MessageDesc,
 protected:
     // Creates an appropriate protobuf record type
     virtual MessagePtr createRecord(MessageID messageType) override {
-        switch (messageType) {
-            case mtSLChunkRequest:
-                return MessagePtr(new FetchChunk);
-            case mtSLChunk:
-                return MessagePtr(new scidb_msg::Chunk);
-            default:
-                LOG4CXX_ERROR(logger, "Unknown type of Searchlight message"
-                        "to create!");
-                return MessagePtr();
-        }
+        return CreateMessageRecord(messageType);
     }
 };
 
@@ -254,6 +256,14 @@ SearchlightMessenger::GetRegisteredArray(
     return iter->second;
 }
 
+void SearchlightMessenger::RegisterUserMessageHandler(
+        const boost::shared_ptr<Query> &query,
+        SearchlightMessageType msg_type,
+        const UserMessageHandler &handler) {
+    QueryContextPtr query_ctx = GetQueryContext(query->getQueryID());
+    query_ctx->message_handlers_.emplace(msg_type, handler);
+}
+
 boost::shared_ptr<Query> SearchlightMessenger::GetRegisteredQuery(
         const SearchlightMessenger::QueryContextPtr &query_ctx) const {
     return Query::getValidQueryPtr(query_ctx->query_);
@@ -282,14 +292,21 @@ void SearchlightMessenger::ReturnMessageSlot(size_t slot) {
 }
 
 void SearchlightMessenger::RegisterHandlers(bool init) {
+    using MessageCreator = scidb::NetworkMessageFactory::MessageCreator;
+
     boost::shared_ptr<scidb::NetworkMessageFactory> factory =
             scidb::getNetworkMessageFactory();
     factory->addMessageType(mtSLChunkRequest,
-            boost::bind(&SearchlightMessenger::CreateSLChunkRequest, this, _1),
+            MessageCreator(&CreateMessageRecord),
             boost::bind(&SearchlightMessenger::HandleSLChunkRequest, this, _1));
     factory->addMessageType(mtSLChunk,
-            boost::bind(&SearchlightMessenger::CreateSLChunk, this, _1),
+            MessageCreator(&CreateMessageRecord),
             boost::bind(&SearchlightMessenger::HandleSLChunk, this, _1));
+
+    // General messages
+    factory->addMessageType(mtSLSolution,
+            MessageCreator(&CreateMessageRecord),
+            boost::bind(&SearchlightMessenger::HandleGeneralMessage, this, _1));
 }
 
 bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
@@ -363,11 +380,6 @@ bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
     ReturnMessageSlot(slot_num);
 
     return !chunk_empty;
-}
-
-MessagePtr SearchlightMessenger::CreateSLChunkRequest(MessageID id) {
-    // cannot use the scidb Fetch message (it doesn't have coordinates field)
-    return MessagePtr(new FetchChunk);
 }
 
 void SearchlightMessenger::HandleSLChunkRequest(
@@ -470,11 +482,6 @@ void SearchlightMessenger::HandleSLChunkRequest(
     network_manager->sendMessage(msg_desc->getSourceInstanceID(), msg);
 }
 
-MessagePtr SearchlightMessenger::CreateSLChunk(MessageID id) {
-    // we will re-use the system chunk message
-    return MessagePtr(new scidb_msg::Chunk);
-}
-
 void SearchlightMessenger::HandleSLChunk(
         const boost::shared_ptr<MessageDescription> &msg_desc) {
 
@@ -543,6 +550,78 @@ void SearchlightMessenger::HandleSLChunk(
     query_ctx->stats_.msgs_received_++;
     slot.data_ready_ = true;
     slot.cond_.notify_one();
+}
+
+void SearchlightMessenger::HandleGeneralMessage(
+        const boost::shared_ptr<MessageDescription> &msg_desc) {
+
+    // get the query
+    const QueryContextPtr query_ctx = GetQueryContext(msg_desc->getQueryId());
+    const boost::shared_ptr<Query> query = GetRegisteredQuery(query_ctx);
+
+    // get the record
+    const MessagePtr record = msg_desc->getRecord();
+    if (!record) {
+        throw SYSTEM_EXCEPTION(scidb::SCIDB_SE_NETWORK,
+                scidb::SCIDB_LE_INVALID_MESSAGE_FORMAT) <<
+                        msg_desc->getMessageType();
+    }
+
+    const MessageID mid = msg_desc->getMessageType();
+    const auto &iter = query_ctx->message_handlers_.find(mid);
+    if (iter != query_ctx->message_handlers_.end()) {
+        LOG4CXX_DEBUG(logger,
+                "Delegating message to the user handler: id=" << mid);
+        const InstanceID from_id = query->mapPhysicalToLogical(
+                msg_desc->getSourceInstanceID());
+
+        iter->second(from_id, record.get());
+    } else {
+        LOG4CXX_ERROR(logger,
+                "Dropping message: cannot find handler: id=" << mid);
+    }
+}
+
+void SearchlightMessenger::SendSolution(const boost::shared_ptr<Query> &query,
+        bool eor,
+        const std::vector<int64_t> &vals) const {
+
+    // determine the coordinator
+    const InstanceID coord_id = query->getCoordinatorID();
+    if (coord_id == scidb::COORDINATOR_INSTANCE) {
+        LOG4CXX_ERROR(logger, "Attempting to send a solution"
+                "from the coordinator");
+        return;
+    }
+
+    // prepare the message
+    boost::shared_ptr<scidb::MessageDesc> msg(new SearchlightMessageDesc);
+    msg->initRecord(mtSLSolution);
+    msg->setQueryID(query->getQueryID());
+    boost::shared_ptr<SearchlightSolution> record =
+            msg->getRecord<SearchlightSolution>();
+
+    // fill the record
+    record->set_eor(eor);
+    if (!eor) {
+        VarAssignment *asgn = record->mutable_solution();
+        for (size_t i = 0; i < vals.size(); i++) {
+            asgn->add_var_min(vals[i]);
+            // We don't need var_max here
+        }
+    }
+
+    // log
+    if (logger->isDebugEnabled()) {
+        std::ostringstream os;
+        os <<"Sending solution to the coordinator: qid=" << query->getQueryID()
+                << ", eor=" << std::boolalpha << eor;
+        logger->debug(os.str(), LOG4CXX_LOCATION);
+    }
+
+    // send
+    NetworkManager *network_manager = NetworkManager::getInstance();
+    network_manager->send(coord_id, msg);
 }
 
 void SearchlightMessenger::Synchronize(const boost::shared_ptr<Query> &query) {

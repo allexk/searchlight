@@ -42,7 +42,7 @@ class SampleAggregate;
 /**
  * A vector of shared pointers to sample aggregates.
  */
-typedef std::vector<boost::shared_ptr<SampleAggregate>> SampleAggregatePtrVector;
+typedef std::vector<std::shared_ptr<SampleAggregate>> SampleAggregatePtrVector;
 
 /**
  * Sample Aggregate Factory.

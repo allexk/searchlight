@@ -202,7 +202,7 @@ private:
 /**
  * Adapter shared pointer.
  */
-typedef boost::shared_ptr<Adapter> AdapterPtr;
+typedef std::shared_ptr<Adapter> AdapterPtr;
 
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_ADAPTER_H_ */

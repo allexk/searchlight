@@ -38,6 +38,11 @@
 #include "scidb_inc.h"
 #include "searchlight.h"
 #include "searchlight_collector.h"
+#include "searchlight_messenger.h"
+
+#include <mutex>
+#include <condition_variable>
+#include <functional>
 
 namespace searchlight {
 
@@ -59,14 +64,27 @@ public:
      * @param config_file_name config file for the task (parsed by searchlight)
      */
     SearchlightTask(const std::string &library_name,
-            const std::string &task_name, const std::string &config_file_name) :
-                searchlight_(task_name, dll_handler_),
+            const std::string &task_name, const std::string &config_file_name,
+            const boost::shared_ptr<Query> &query) :
+                active_instance_count_(query->getInstancesCount()),
+                searchlight_(task_name, active_instance_count_,
+                        query->getInstanceID(), dll_handler_),
                 collector_(*this),
-                search_ended_(false) {
+                query_(query) {
 
         ResolveTask(library_name, task_name);
         searchlight_.RegisterCollector(&collector_);
         searchlight_.ReadConfig(config_file_name);
+
+        using std::placeholders::_1; // we have a clash with Boost
+        using std::placeholders::_2; // we have a clash with Boost
+        SearchlightMessenger::getInstance()->RegisterUserMessageHandler(
+                query,
+                SearchlightMessenger::mtSLSolution,
+                std::bind(&SearchlightTask::AddRemoteSolution, this, _1, _2));
+
+        // Tasks just prepare Searchlight, solver is still idle, no threads
+        task_(&searchlight_);
     }
 
     /**
@@ -75,10 +93,10 @@ public:
      */
     void operator()() {
         try {
-            task_(&searchlight_);
+            searchlight_.Solve();
         } catch (const scidb::Exception &ex) {
             /*
-             *  boost::thread would call std::terminate(), so
+             * std::thread would call std::terminate(), so
              *  we have to take care of proper error reporting
              */
             sl_error_ = ex.copy();
@@ -133,27 +151,28 @@ private:
     // Resolves the task in the DLL
     void ResolveTask(const std::string &lib_name, const std::string &task_name);
 
-    // Adds a new solution to the queue
-    void AddSolution(const std::string &sol) {
-        queue_mtx_.lock();
-        solutions_queue_.push_back(sol);
-        queue_mtx_.unlock();
-        queue_cond_.notify_one();
-    }
+    // Either add solution to the queue or send it out
+    void ReportSolution(const std::vector<int64_t> &values);
 
     // Signals that the search just finished
-    void OnFinishSearch() {
-        queue_mtx_.lock();
-        search_ended_ = true;
-        queue_mtx_.unlock();
-        queue_cond_.notify_one();
+    void OnFinishSearch();
+
+    // Are we expecting more results?
+    bool ExpectingResults() const {
+        return active_instance_count_ != 0;
     }
+
+    void AddRemoteSolution(InstanceID inst,
+            const google::protobuf::Message *msg);
 
     // Type of the task function (called from the library)
     typedef void (*SLTaskFunc)(Searchlight *);
 
     // The main DLL Handler (we need it to be destroyed last!)
     DLLHandler dll_handler_;
+
+    // The number of active instances (makes sense only at the coordinator)
+    int active_instance_count_;
 
     // The main sl instance
     Searchlight searchlight_;
@@ -167,23 +186,23 @@ private:
     // Stringified solutions.
     std::list<std::string> solutions_queue_;
 
-    // Have the search ended?
-    bool search_ended_;
-
     // Mutex to protect the solution queue
-    boost::mutex queue_mtx_;
+    std::mutex queue_mtx_;
 
     // Condition to facilitate waiting for solutions
-    boost::condition_variable queue_cond_;
+    std::condition_variable queue_cond_;
 
     // Error in the searchlight thread, if any
     scidb::Exception::Pointer sl_error_;
+
+    // Current query
+    const boost::weak_ptr<Query> query_;
 };
 
 /**
  *  A shared pointer for the SearclightTask.
  */
-typedef boost::shared_ptr<SearchlightTask> SearchlightTaskPtr;
+typedef std::shared_ptr<SearchlightTask> SearchlightTaskPtr;
 
 /**
  * This class represents an array for returning SL results upstream.
@@ -257,7 +276,7 @@ private:
     uint64_t res_count_;
 
     // The main sl thread
-    boost::thread *sl_thread_;
+    std::thread *sl_thread_;
 };
 
 } /* namespace searchlight */

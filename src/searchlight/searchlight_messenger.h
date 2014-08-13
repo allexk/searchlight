@@ -66,6 +66,34 @@ namespace searchlight {
  */
 class SearchlightMessenger : public scidb::Singleton<SearchlightMessenger> {
 public:
+
+    /**
+     * Searchlight message types.
+     *
+     * We start them with 50 to avoid clashes with SciDb message types,
+     * especially for future versions.
+     */
+    enum SearchlightMessageType {
+        /** Chunk request from another instance */
+        mtSLChunkRequest = 50,
+        /** Chunk arrived from another instance */
+        mtSLChunk,
+        /** A solution arrived from another instance */
+        mtSLSolution
+    };
+
+    /**
+     * Handler for a message. Handlers are called for message types they
+     * are registered for. They make sense only for asynchronous messages,
+     * like SLResult.
+     *
+     * @param first_argument source instance id
+     * @param second_argument pointer to the message record
+     */
+    typedef std::function<
+            void(InstanceID, const google::protobuf::Message *)>
+        UserMessageHandler;
+
     /**
      *  Constructs the messenger. For now it just registers message handlers.
      */
@@ -147,6 +175,31 @@ public:
      */
     static void Synchronize(const boost::shared_ptr<Query> &query);
 
+    /**
+     * Register handler for the specified message type. The handler will be
+     * called when a message of this type arrives at this instance.
+     *
+     * @param query the current query
+     * @param msg_type type of message to register the handler for
+     * @param handler the handler to call on arrival
+     */
+    void RegisterUserMessageHandler(
+            const boost::shared_ptr<Query> &query,
+            SearchlightMessageType msg_type,
+            const UserMessageHandler &handler);
+
+    /**
+     * Sends a Searchlight solution to the coordinator. If eor (end-of-result)
+     * is true, var_mins and var_maxs are ignored. There should be an
+     * appropriate handler registered at the coordinator's Messenger instance.
+     *
+     * @param query current query
+     * @param eor true, if the result has ended; false, otherwise
+     * @param vals solution values
+     */
+    void SendSolution(const boost::shared_ptr<Query> &query, bool eor,
+            const std::vector<int64_t> &vals) const;
+
 private:
 
     struct ChunkRequestData {
@@ -181,7 +234,10 @@ private:
     struct QueryContext {
         // Represents an array with cached iterators
         struct ServedArray {
+            // The array itself
             const ArrayPtr array_;
+
+            // Cached iterators
             std::unordered_map<AttributeID,
                 boost::shared_ptr<ConstArrayIterator>> iters_;
 
@@ -212,15 +268,17 @@ private:
                 os << '\n';
             }
         };
+        Statistics stats_; // Statistics for the query
 
         // Reference to the query
         const boost::weak_ptr<Query> query_;
 
-        // Statistics for the query
-        Statistics stats_;
-
         // Arrays registered for chunk exchange
         std::unordered_map<std::string, ServedArrayPtr> reg_arrays_;
+
+        // user handlers for some messages
+        std::unordered_map<MessageID, UserMessageHandler>
+            message_handlers_;
 
         QueryContext(const boost::shared_ptr<Query> &query) :
             query_(query) {}
@@ -231,14 +289,16 @@ private:
     // To guard the structure
     mutable std::mutex mtx_;
 
-    // Chunk request: record creator and handler
-    MessagePtr CreateSLChunkRequest(MessageID id);
+    // Chunk request handler
     void HandleSLChunkRequest(
             const boost::shared_ptr<MessageDescription> &msg_desc);
 
-    // Chunk response: record creator and handler
-    MessagePtr CreateSLChunk(MessageID id);
+    // Chunk response handler
     void HandleSLChunk(
+            const boost::shared_ptr<MessageDescription> &msg_desc);
+
+    // Handler for a message that should be handled by a user handler
+    void HandleGeneralMessage(
             const boost::shared_ptr<MessageDescription> &msg_desc);
 
     // Deactivates the messenger from the query

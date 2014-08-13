@@ -35,7 +35,8 @@
 #include "scidb_inc.h"
 #include "ortools_inc.h"
 
-#include <boost/thread.hpp>
+#include <condition_variable>
+#include <mutex>
 
 namespace searchlight {
 
@@ -135,7 +136,7 @@ private:
 
     // Check if the searclight is terminating
     bool CheckTerminate() const {
-        boost::unique_lock<boost::mutex> validate_lock(to_validate_mtx_);
+        std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
         return sl_.CheckTerminate();
     }
 
@@ -158,10 +159,10 @@ private:
     SolutionCollector *collector_;
 
     // Condition var to wait for solutions to validate
-    mutable boost::condition_variable validate_cond_;
+    mutable std::condition_variable validate_cond_;
 
     // Mutex to guard the validation array
-    mutable boost::mutex to_validate_mtx_;
+    mutable std::mutex to_validate_mtx_;
 
     // Has the search ended
     bool search_ended_;

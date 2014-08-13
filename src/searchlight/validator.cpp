@@ -346,7 +346,7 @@ void Validator::AddSolution(const Assignment &sol) {
 
     LOG4CXX_TRACE(logger, "New solution to validate: " << sol.DebugString());
 
-    boost::unique_lock<boost::mutex> validate_lock(to_validate_mtx_);
+    std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
     to_validate_.push_back(AssignmentPtr(asgn));
     while (to_validate_.size() > max_pending_validations_) {
         /*
@@ -363,7 +363,7 @@ void Validator::AddSolution(const Assignment &sol) {
 }
 
 void Validator::Synchronize() const {
-    boost::unique_lock<boost::mutex> validate_lock(to_validate_mtx_);
+    std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
     while (!to_validate_.empty()) {
         LOG4CXX_TRACE(logger, "Synchronizing with the validator"
                 ", queue size=" << to_validate_.size());
@@ -423,7 +423,7 @@ AssignmentPtrVector *Validator::GetNextAssignments() {
      * For now, a simple policy: wait until we get an assignment to
      * validate and then check it.
      */
-    boost::unique_lock<boost::mutex> validate_lock(to_validate_mtx_);
+    std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
     while (to_validate_.empty() && !search_ended_) {
         validate_cond_.wait(validate_lock);
     }

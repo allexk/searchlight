@@ -84,6 +84,19 @@ public:
         }
     }
 
+    /**
+     * Converts the specified solution to a string representation.
+     *
+     * This function basically add variable names to the values. The collector
+     * is one of the few high-level classes that can do that, since it has
+     * knowledge about decision variables. We assume the values correspond to
+     * the variables one-to-one.
+     *
+     * @param vals variable values
+     * @return string representation of the solution
+     */
+    std::string SolutionToString(const std::vector<int64_t> &vals) const;
+
 private:
     // The searchlight engine
     SearchlightTask &task_;
@@ -94,6 +107,9 @@ private:
  * initialization possible. Before the collector can be used, the user
  * should call InitCollector() and then register the collector with the
  * solver after retrieving it with GetCollector().
+ *
+ * One use for delayed initialization is to be able to register it at the
+ * validator.
  *
  */
 class SearchlightCollector {
@@ -130,6 +146,16 @@ public:
      */
     SolutionCollector *GetCollector() {
         return collector_;
+    }
+
+    /**
+     * Returns a string representation of a solution
+     * @param vals
+     * @return
+     */
+    std::string SolutionToString(const std::vector<int64_t> &vals) const {
+        assert(collector_);
+        return collector_->SolutionToString(vals);
     }
 
 private:

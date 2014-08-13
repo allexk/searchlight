@@ -54,7 +54,6 @@ namespace searchlight {
 static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.searchlight"));
 
-
 namespace {
 /**
  * This class is a visitor that determines the name of the delegate variable,
@@ -99,18 +98,32 @@ Searchlight::~Searchlight() {
             total_solve_time_).count();
     const auto usecs = std::chrono::duration_cast<std::chrono::milliseconds>(
             total_solve_time_).count();
-    LOG4CXX_INFO(logger, "Searchlight solve time: " << secs << '.' <<
+    LOG4CXX_INFO(logger, "Searchlight total time: " << secs << '.' <<
             usecs << 's');
+
+    search_monitors_.Disband();
+    EndAndDestroyValidator();
 
     delete array_desc_;
 }
 
-bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
-        const std::vector<SearchMonitor *> &monitors) {
+void Searchlight::Prepare(const IntVarVector &primary_vars,
+        const IntVarVector &secondary_vars,
+        DecisionBuilder *db, const std::vector<SearchMonitor *> &monitors) {
+    /*
+     * Perform initialization
+     */
+    primary_vars_ = primary_vars;
+    secondary_vars_ = secondary_vars;
+    db_ = db;
+
     /*
      * First, we need to establish our own validation collector, create
      * a validator and pass it the names of the decision vars
      */
+    IntVarVector vars{primary_vars};
+    vars.insert(vars.end(), secondary_vars.begin(), secondary_vars.end());
+
     StringVector var_names(vars.size());
     int i = 0;
     for (IntVarVector::const_iterator cit = vars.begin(); cit != vars.end();
@@ -133,27 +146,53 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
         var_names[i++] = var_name;
     }
 
+    /*
+     * Determine our partition. First, determine the variable with the largest
+     * domain and the assume equivalent stripes along its domain.
+     */
+    IntVar *split_var = nullptr;
+    uint64_t max_size = 0;
+    for (const auto var: primary_vars) {
+        const uint64_t var_size = var->Size();
+        if (!split_var || var_size > max_size) {
+            split_var = var;
+            max_size = var_size;
+        }
+    }
+    assert(split_var);
+
+    // define partition
+    const int64_t partition_len = max_size / instance_count_;
+    const int64_t partition_start = split_var->Min() +
+            partition_len * instance_id_;
+    const int64_t partition_end = partition_start + partition_len - 1;
+    split_var->SetRange(partition_start, partition_end);
+    LOG4CXX_INFO(logger, "Set partition for var=" << split_var->DebugString());
+
     // establish the validator
     if (!search_monitors_.collector_) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << "No solution collector registered!";
     }
     LOG4CXX_INFO(logger, "Initiating the validator");
-    Validator validator(*this, var_names, *search_monitors_.collector_);
-    validator_ = &validator;
-    boost::thread validator_thread(boost::ref(validator));
+    validator_ = new Validator(*this, var_names, *search_monitors_.collector_);
 
     // Establish monitors: validator (to transfer leaves) and terminator
     search_monitors_.user_monitors_ = monitors;
-
-    ValidatorMonitor val_monitor(validator, vars, &solver_);
-    search_monitors_.validator_ = &val_monitor;
-
+    search_monitors_.validator_monitor_ =
+            new ValidatorMonitor(*validator_, vars, &solver_);
     SearchLimit *terminator = solver_.MakeCustomLimit(
             NewPermanentCallback(this, &Searchlight::CheckTerminate));
     search_monitors_.aux_monitors_.push_back(terminator);
+}
 
-    // starting the timer
+void Searchlight::Solve() {
+    if (!validator_thread_) {
+        LOG4CXX_INFO(logger, "Starting the validator thread");
+        validator_thread_ = new std::thread(std::ref(*validator_));
+    }
+
+    // Starting the timer
     const auto solve_start_time = std::chrono::steady_clock::now();
 
     // start the search
@@ -163,17 +202,8 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
     solve_monitors.insert(solve_monitors.end(),
             search_monitors_.aux_monitors_.begin(),
             search_monitors_.aux_monitors_.end());
-    solve_monitors.push_back(search_monitors_.validator_);
-    solver_.Solve(db, solve_monitors);
-
-    // Terminate validator
-    LOG4CXX_INFO(logger, "Signaling the validator and waiting");
-    validator.SignalEnd();
-    validator_ = nullptr;
-    validator_thread.join();
-
-    // Reset monitors
-    search_monitors_.Clear();
+    solve_monitors.push_back(search_monitors_.validator_monitor_);
+    solver_.Solve(db_, solve_monitors);
 
     // stopping the timer
     const auto solve_end_time = std::chrono::steady_clock::now();
@@ -189,13 +219,22 @@ bool Searchlight::Solve(DecisionBuilder *db, const IntVarVector &vars,
      * the number of true fails.
      */
     int64 total_fails = solver_.failures();
-    int64_t total_candidates = val_monitor.CandidatesNumber();
+    int64_t total_candidates =
+            search_monitors_.validator_monitor_->CandidatesNumber();
     LOG4CXX_INFO(logger, "Main search stats: fails=" << total_fails <<
             ", true fails=" << (total_fails - total_candidates) <<
             ", candidates=" << total_candidates);
 
     LOG4CXX_INFO(logger, "Finished the main search");
-    return validator.GetValidatorSolverResult();
+}
+
+void Searchlight::EndAndDestroyValidator() {
+    LOG4CXX_INFO(logger, "Signaling the validator and waiting");
+    validator_->SignalEnd();
+    validator_thread_->join();
+
+    delete validator_;
+    delete validator_thread_;
 }
 
 bool ValidatorMonitor::AtSolution() {

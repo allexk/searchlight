@@ -98,10 +98,18 @@ public:
         }
         assert(!samples.empty());
 
+        // init messenger
+        searchlight::SearchlightMessenger::getInstance()->
+                RegisterQuery(query);
+
         searchlight::SearchlightTaskPtr sl_task =
-                boost::make_shared<searchlight::SearchlightTask>(str_tokens[0],
-                        str_tokens[1], str_tokens[2]);
+                std::make_shared<searchlight::SearchlightTask>(str_tokens[0],
+                        str_tokens[1], str_tokens[2],query);
         sl_task->GetSearchlight().RegisterArray(inputArrays[0], samples);
+
+        // sync messengers (barrier)
+        searchlight::SearchlightMessenger::getInstance()->Synchronize(query);
+
         return searchlight::ArrayPtr(new searchlight::SearchlightResultsArray(
                 sl_task, _schema, query));
     }
