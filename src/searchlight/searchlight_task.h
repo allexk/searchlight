@@ -62,9 +62,13 @@ public:
      *  (without .so extension)
      * @param task_name the name of the task (basically, the function name)
      * @param config_file_name config file for the task (parsed by searchlight)
+     * @param data data array
+     * @param samples vector of sample arrays
+     * @param query current query
      */
     SearchlightTask(const std::string &library_name,
             const std::string &task_name, const std::string &config_file_name,
+            ArrayPtr &data, const ArrayPtrVector &samples,
             const boost::shared_ptr<Query> &query) :
                 active_instance_count_(query->getInstancesCount()),
                 searchlight_(task_name, active_instance_count_,
@@ -75,6 +79,7 @@ public:
         ResolveTask(library_name, task_name);
         searchlight_.RegisterCollector(&collector_);
         searchlight_.ReadConfig(config_file_name);
+        searchlight_.RegisterArray(data, samples);
 
         using std::placeholders::_1; // we have a clash with Boost
         using std::placeholders::_2; // we have a clash with Boost
@@ -107,15 +112,6 @@ public:
                     SCIDB_LE_ILLEGAL_OPERATION) << e.what()).copy();
             OnFinishSearch();
         }
-    }
-
-    /**
-     * Returns the searchlight engine instance.
-     *
-     * @return the searchlight engine instance
-     */
-    Searchlight &GetSearchlight() {
-        return searchlight_;
     }
 
     /**

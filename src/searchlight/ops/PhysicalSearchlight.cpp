@@ -104,8 +104,8 @@ public:
 
         searchlight::SearchlightTaskPtr sl_task =
                 std::make_shared<searchlight::SearchlightTask>(str_tokens[0],
-                        str_tokens[1], str_tokens[2],query);
-        sl_task->GetSearchlight().RegisterArray(inputArrays[0], samples);
+                        str_tokens[1], str_tokens[2],
+                        inputArrays[0], samples, query);
 
         // sync messengers (barrier)
         searchlight::SearchlightMessenger::getInstance()->Synchronize(query);
