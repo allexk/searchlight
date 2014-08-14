@@ -419,8 +419,9 @@ void SearchlightMessenger::HandleSLChunkRequest(
     if (logger->isDebugEnabled()) {
         std::ostringstream os;
         os <<"Got chunk request: qid=" << query->getQueryID() << ", name=" <<
-                array_name << ", pos=" << pos << ", data=" <<
-                std::boolalpha << confirm_only;
+                array_name << ", pos=" << pos << ", attr=" << attr <<
+                ", data=" <<
+                std::boolalpha << !confirm_only;
         logger->debug(os.str(), LOG4CXX_LOCATION);
     }
 
