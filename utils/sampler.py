@@ -235,7 +235,7 @@ attr=0:%d,%d,0]'\n\n" % (sample_array_name, total_chunks - 1,
         total_chunks, len(attrs) - 1, len(attrs)))
 
 script_file.write('# Converting raw to sample\n')
-script_file.write("iquery -n -a -q 'redimension_store(%s, %s)'\n" % \
-    (raw_sample_array_name, sample_array_name))
+script_file.write("iquery -n -a -q 'store(redimension(%s, %s), %s)'\n" % \
+    (raw_sample_array_name, sample_array_name, sample_array_name))
 
 script_file.close()
