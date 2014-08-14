@@ -322,8 +322,8 @@ private:
     boost::shared_ptr<Query> GetRegisteredQuery(
             const QueryContextPtr &query_ctx) const;
 
-    // Returns query context for the given id
-    QueryContextPtr GetQueryContext(QueryID query_id) const;
+    // Returns query context for the given id; if lock == true, grab the mutex
+    QueryContextPtr GetQueryContext(QueryID query_id, bool lock) const;
 };
 }
 #endif /* SEARCHLIGHT_SEARCHLIGHT_MESSENGER_H_ */

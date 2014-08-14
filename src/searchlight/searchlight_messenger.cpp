@@ -218,8 +218,11 @@ void SearchlightMessenger::deactivate(const boost::shared_ptr<Query> &query) {
 }
 
 SearchlightMessenger::QueryContextPtr SearchlightMessenger::GetQueryContext(
-        QueryID query_id) const {
-    std::lock_guard<std::mutex> lock(mtx_);
+        QueryID query_id, bool lock) const {
+    std::unique_lock<std::mutex> lockg;
+    if (lock) {
+        lockg = std::unique_lock<std::mutex>(mtx_);
+    }
 
     const auto &iter = served_queries_.find(query_id);
     if (iter == served_queries_.end()) {
@@ -234,7 +237,7 @@ SearchlightMessenger::QueryContextPtr SearchlightMessenger::GetQueryContext(
 
 void SearchlightMessenger::RegisterArray(const boost::shared_ptr<Query> &query,
         const ArrayPtr &array) {
-    QueryContextPtr query_ctx = GetQueryContext(query->getQueryID());
+    QueryContextPtr query_ctx = GetQueryContext(query->getQueryID(), true);
     const std::string &array_name = array->getName();
     query_ctx->reg_arrays_.emplace(array_name,
             std::make_shared<QueryContext::ServedArray>(array));
@@ -260,7 +263,7 @@ void SearchlightMessenger::RegisterUserMessageHandler(
         const boost::shared_ptr<Query> &query,
         SearchlightMessageType msg_type,
         const UserMessageHandler &handler) {
-    QueryContextPtr query_ctx = GetQueryContext(query->getQueryID());
+    QueryContextPtr query_ctx = GetQueryContext(query->getQueryID(), true);
     query_ctx->message_handlers_.emplace(msg_type, handler);
 }
 
@@ -313,7 +316,7 @@ bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
         InstanceID inst, const std::string &array_name, const Coordinates &pos,
         AttributeID attr, Chunk *chunk) {
     // check if the array is registered
-    QueryContextPtr query_ctx = GetQueryContext(query->getQueryID());
+    QueryContextPtr query_ctx = GetQueryContext(query->getQueryID(), true);
     GetRegisteredQuery(query_ctx); // just error checking
     ArrayPtr array = GetRegisteredArray(query_ctx, array_name)->array_;
 
@@ -348,8 +351,9 @@ bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
     if (logger->isDebugEnabled()) {
         std::ostringstream os;
         os <<"Requesting chunk: qid=" << query->getQueryID() << ", name=" <<
-                array_name << ", pos=" << pos << ", data=" <<
-                std::boolalpha << confirm_only;
+                array_name << ", pos=" << pos << ", attr=" << attr <<
+                ", data=" <<
+                std::boolalpha << !confirm_only;
         logger->debug(os.str(), LOG4CXX_LOCATION);
     }
 
@@ -386,7 +390,8 @@ void SearchlightMessenger::HandleSLChunkRequest(
         const boost::shared_ptr<MessageDescription> &msg_desc) {
 
     // some correctness checking
-    const QueryContextPtr query_ctx = GetQueryContext(msg_desc->getQueryId());
+    const QueryContextPtr query_ctx =
+            GetQueryContext(msg_desc->getQueryId(), true);
     const boost::shared_ptr<Query> query = GetRegisteredQuery(query_ctx);
 
     // get the record
@@ -486,7 +491,8 @@ void SearchlightMessenger::HandleSLChunk(
         const boost::shared_ptr<MessageDescription> &msg_desc) {
 
     // some correctness checking
-    const QueryContextPtr query_ctx = GetQueryContext(msg_desc->getQueryId());
+    const QueryContextPtr query_ctx =
+            GetQueryContext(msg_desc->getQueryId(), true);
     const boost::shared_ptr<Query> query = GetRegisteredQuery(query_ctx);
 
     // get the record
@@ -556,7 +562,12 @@ void SearchlightMessenger::HandleGeneralMessage(
         const boost::shared_ptr<MessageDescription> &msg_desc) {
 
     // get the query
-    const QueryContextPtr query_ctx = GetQueryContext(msg_desc->getQueryId());
+    QueryContextPtr query_ctx;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        query_ctx = GetQueryContext(msg_desc->getQueryId(), false);
+        query_ctx->stats_.msgs_received_++;
+    }
     const boost::shared_ptr<Query> query = GetRegisteredQuery(query_ctx);
 
     // get the record
@@ -622,11 +633,21 @@ void SearchlightMessenger::SendSolution(const boost::shared_ptr<Query> &query,
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
     network_manager->send(coord_id, msg);
+
+    // stats
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        const QueryContextPtr query_ctx =
+                GetQueryContext(query->getQueryID(), false);
+        query_ctx->stats_.msgs_sent_++;
+    }
 }
 
 void SearchlightMessenger::Synchronize(const boost::shared_ptr<Query> &query) {
+    LOG4CXX_DEBUG(logger, "Requesting SL Messenger synchronization...");
     // The same id should be okay here, even in case of subsequent barriers
     scidb::syncBarrier(0, query);
+    LOG4CXX_DEBUG(logger, "Completed SL Messenger synchronization...");
 }
 
 }
