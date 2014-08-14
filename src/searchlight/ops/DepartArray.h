@@ -66,11 +66,7 @@ public:
         messenger_(SearchlightMessenger::getInstance()),
         cache_(desc, query),
         query_(query),
-        input_distr_(input_distr) {
-
-        // register array at the messenger
-        messenger_->RegisterArray(query, input);
-    }
+        input_distr_(input_distr) {}
 
     /**
      * Creates a new const departitioning array iterator.
