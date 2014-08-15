@@ -198,8 +198,10 @@ public:
     typedef std::map<std::string, const IntVar *> StringVarMap;
 
     /**
-     * Visits all "simple" integer variables. We collect only non-cast
-     * variables that have names.
+     * Visits all "simple" integer variables.
+     *
+     * Even if the variable is a cast one, we collect its name and do not go to
+     * the expression.
      *
      * @param variable the variable visited
      * @param delegate the expression this variable is casted for
@@ -223,12 +225,11 @@ public:
                                       const std::string& operation, int64 value,
                                       IntVar* const delegate) override {
         /*
-         * A trick here: we assume the name stands for the delegate, but
-         * the var is the main var. This is made consistent with the SL's
-         * Solve() method, which finds variable names.
+         * We are not interested in the delegate. We are going to work
+         * with the optimized variable.
          */
-        if (delegate && delegate->HasName()) {
-            var_map_[delegate->name()] = variable;
+        if (variable->HasName()) {
+            var_map_[variable->name()] = variable;
         }
     }
 

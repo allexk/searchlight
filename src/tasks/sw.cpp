@@ -34,6 +34,42 @@
 
 namespace searchlight {
 
+namespace {
+
+/**
+ * Creates an integer variable and assigns it a name.
+ *
+ * The deal here is that the solver may optimize the resulting variable by,
+ * for example, altering its domain. It will still return a "correct" variable,
+ * but the variable might be a cast variable for some internal expression.
+ * Since names are really important in Searchlight for identification, we
+ * enforce the name after the variable is created.
+ *
+ * @param solver solver to create the variable for
+ * @param start left boundary for the domain (inclusive)
+ * @param end right boundary for the domain (inclusive)
+ * @param step step for values in the domain (1 means all values)
+ * @param name the name for the variable
+ * @return integer variable with the specified name
+ */
+IntVar *MakeIntVarWithName(Solver &solver, int32 start, int32 end,
+        int32 step, const std::string &name) {
+    IntVar *var;
+    if (step == 1) {
+        var = solver.MakeIntVar(start, end);
+    } else {
+        std::vector<int64> vals;
+        for (int64 v = start; v <= end; v += step) {
+            vals.push_back(v);
+        }
+        var = solver.MakeIntVar(vals);
+    }
+    var->set_name(name);
+    return var;
+}
+
+}
+
 extern "C"
 void SemWindowsAvg(Searchlight *sl) {
     // get the solver
@@ -72,44 +108,12 @@ void SemWindowsAvg(Searchlight *sl) {
     std::vector<IntVar *> lens(2);
 
     // coords
-    if (step_x == 1) {
-        coords[0] = solver.MakeIntVar(start_x, end_x, "x");
-    } else {
-        std::vector<int64> vals;
-        for (int64 v = start_x; v <= end_x; v += step_x) {
-            vals.push_back(v);
-        }
-        coords[0] = solver.MakeIntVar(vals, "x");
-    }
-    if (step_y == 1) {
-        coords[1] = solver.MakeIntVar(start_y, end_y, "y");
-    } else {
-        std::vector<int64> vals;
-        for (int64 v = start_y; v <= end_y; v += step_y) {
-            vals.push_back(v);
-        }
-        coords[1] = solver.MakeIntVar(vals, "y");
-    }
+    coords[0] = MakeIntVarWithName(solver, start_x, end_x, step_x, "x");
+    coords[1] = MakeIntVarWithName(solver, start_y, end_y, step_y, "y");
 
     // lens
-    if (step_lx == 1) {
-        lens[0] = solver.MakeIntVar(len_lx, len_ux, "lx");
-    } else {
-        std::vector<int64> vals;
-        for (int64 v = len_lx; v <= len_ux; v += step_lx) {
-            vals.push_back(v);
-        }
-        lens[0] = solver.MakeIntVar(vals, "lx");
-    }
-    if (step_ly == 1) {
-        lens[1] = solver.MakeIntVar(len_ly, len_uy, "ly");
-    } else {
-        std::vector<int64> vals;
-        for (int64 v = len_ly; v <= len_uy; v += step_ly) {
-            vals.push_back(v);
-        }
-        lens[1] = solver.MakeIntVar(vals, "ly");
-    }
+    lens[0] = MakeIntVarWithName(solver, len_lx, len_ux, step_lx, "lx");
+    lens[1] = MakeIntVarWithName(solver, len_ly, len_uy, step_ly, "ly");
 
     // convenience -- all vars in a single vector
     std::vector<IntVar *> all_vars(coords);
