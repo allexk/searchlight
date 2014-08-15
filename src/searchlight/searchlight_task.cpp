@@ -101,6 +101,7 @@ void SearchlightTask::OnFinishSearch() {
         // We are at the coordinator -- just some accounting
         std::lock_guard<std::mutex> lock(queue_mtx_);
         active_instance_count_--;
+        queue_cond_.notify_one();
     } else {
         // We are at a common instance -- send eor to the coordinator
         SearchlightMessenger::getInstance()->SendSolution(
