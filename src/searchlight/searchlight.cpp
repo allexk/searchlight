@@ -186,12 +186,16 @@ void Searchlight::Solve() {
 }
 
 void Searchlight::EndAndDestroyValidator() {
-    LOG4CXX_INFO(logger, "Signaling the validator and waiting");
-    //validator_->SignalEnd();
-    validator_thread_->join();
+    if (validator_) {
+        if (validator_thread_) {
+            LOG4CXX_INFO(logger, "Signaling the validator and waiting");
+            validator_->SignalEnd();
+            validator_thread_->join();
+            delete validator_thread_;
+        }
 
-    delete validator_;
-    delete validator_thread_;
+        delete validator_;
+    }
 }
 
 bool ValidatorMonitor::AtSolution() {
