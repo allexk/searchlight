@@ -181,11 +181,13 @@ void Searchlight::Solve() {
             ", candidates=" << total_candidates);
 
     LOG4CXX_INFO(logger, "Finished the main search");
+    // TODO: temporary; need a better solution when balancing comes into play
+    validator_->SignalEnd();
 }
 
 void Searchlight::EndAndDestroyValidator() {
     LOG4CXX_INFO(logger, "Signaling the validator and waiting");
-    validator_->SignalEnd();
+    //validator_->SignalEnd();
     validator_thread_->join();
 
     delete validator_;
