@@ -229,7 +229,7 @@ public:
         sl_task_(sl_task),
         desc_(desc),
         res_count_(0),
-        sl_thread_(NULL) {
+        sl_thread_(std::ref(*sl_task_)) {
 
         // we need the context to create the array
         assert(query);
@@ -240,11 +240,8 @@ public:
      * Destructor.
      */
     virtual ~SearchlightResultsArray() {
-        if (sl_thread_) {
-            sl_task_->Terminate();
-            sl_thread_->join();
-            delete sl_thread_;
-        }
+        sl_task_->Terminate();
+        sl_thread_.join();
     }
 
     /**
@@ -272,7 +269,7 @@ private:
     uint64_t res_count_;
 
     // The main sl thread
-    std::thread *sl_thread_;
+    std::thread sl_thread_;
 };
 
 } /* namespace searchlight */

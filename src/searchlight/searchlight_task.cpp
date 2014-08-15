@@ -135,12 +135,6 @@ std::string SearchlightTask::GetNextSolution() {
 
 const ConstChunk *SearchlightResultsArray::nextChunk(AttributeID attId,
         MemChunk& chunk) {
-    // initialize the search if needed
-    if (!sl_thread_) {
-        LOG4CXX_INFO(logger, "Starting Searchlight Thread");
-        sl_thread_ = new std::thread(std::ref(*sl_task_));
-    }
-
     /*
      * We wait for results only at the coordinator, since it collects all of
      * them. Other instances will use SL Messenger to transfer local results,
