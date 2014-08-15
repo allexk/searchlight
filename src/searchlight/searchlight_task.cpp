@@ -77,6 +77,7 @@ void SearchlightTask::AddRemoteSolution(InstanceID inst,
     } else {
         std::lock_guard<std::mutex> lock(queue_mtx_);
         active_instance_count_--;
+        queue_cond_.notify_one();
     }
 }
 
