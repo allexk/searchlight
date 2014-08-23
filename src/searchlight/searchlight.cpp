@@ -108,7 +108,7 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
     IntVar *split_var = nullptr;
     uint64_t max_size = 0;
     for (const auto var: primary_vars) {
-        const uint64_t var_size = var->Size();
+        const uint64_t var_size = var->Max() - var->Min() + 1;
         if (!split_var || var_size > max_size) {
             split_var = var;
             max_size = var_size;
