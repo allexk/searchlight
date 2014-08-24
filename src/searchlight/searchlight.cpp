@@ -59,7 +59,7 @@ Searchlight::~Searchlight() {
             total_solve_time_).count();
     const auto usecs = std::chrono::duration_cast<std::chrono::milliseconds>(
             total_solve_time_).count();
-    LOG4CXX_INFO(logger, "Searchlight total time: " << secs << '.' <<
+    LOG4CXX_INFO(logger, "Solver total time: " << secs << '.' <<
             usecs << 's');
 
     search_monitors_.Disband();
