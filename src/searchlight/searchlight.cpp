@@ -124,6 +124,16 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
     split_var->SetRange(partition_start, partition_end);
     LOG4CXX_INFO(logger, "Set partition for var=" << split_var->DebugString());
 
+    // logging
+    if (logger->isDebugEnabled()) {
+        /*
+         *  Unfortunately, it will dump it into std::cerr, which is
+         *  redirected by SciDb to a file.
+         */
+        ModelVisitor *pmv = solver_.MakePrintModelVisitor();
+        solver_.Accept(pmv);
+    }
+
     // establish the validator
     if (!search_monitors_.collector_) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
