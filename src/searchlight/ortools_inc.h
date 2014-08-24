@@ -35,34 +35,31 @@
 #include <constraint_solver/constraint_solver.h>
 #include <constraint_solver/constraint_solveri.h>
 
-// Hackish header; see the comment in the header itself.
-#include "ortools_loader.h"
-
 namespace searchlight {
 
 using operations_research::Solver;
+
 using operations_research::DecisionBuilder;
 using operations_research::Decision;
-using operations_research::IntVar;
-using operations_research::IntVarIterator;
-using operations_research::IntVarElement;
-using operations_research::IntExpr;
-using operations_research::BaseIntExpr;
-using operations_research::SearchMonitor;
-using operations_research::SolutionCollector;
 using operations_research::Assignment;
 using operations_research::ModelVisitor;
 using operations_research::Demon;
-
-using operations_research::CPModelProto;
-using operations_research::CPIntegerExpressionProto;
-
-using operations_research::StringPrintf;
-
+using operations_research::SearchMonitor;
+using operations_research::SolutionCollector;
 using operations_research::SearchLimit;
 
-using operations_research::CPModelLoader;
+using operations_research::IntVar;
+using operations_research::IntVarIterator;
+using operations_research::IntVarElement;
+using operations_research::IntervalVar;
+using operations_research::SequenceVar;
 
+using operations_research::BaseIntExpr;
+using operations_research::IntExpr;
+
+using operations_research::Constraint;
+
+using operations_research::StringPrintf;
 using operations_research::ACMRandom;
 
 /**

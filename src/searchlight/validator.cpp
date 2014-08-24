@@ -30,10 +30,9 @@
 
 #include "searchlight.h"
 #include "validator.h"
-#include "base/callback.h"
 #include "searchlight_collector.h"
 
-#include <constraint_solver/model.pb.h>
+#include "ortools_model.h"
 
 namespace searchlight {
 
@@ -266,19 +265,9 @@ Validator::Validator(const Searchlight &sl, const StringVector &var_names,
         search_vars_prototype_(&solver_),
         search_ended_(false),
         solver_status_(false) {
-    /*
-     * There might be a better way to do this, but... Since the solver does
-     * not have a copying constructor, we first export the model into a
-     * Protobuf buffer and then load it again via the loader, thus
-     * duplicating the original solver.
-     *
-     * Note, no original monitors or decision builders are copied since
-     * the search has not started yet.
-     */
-    CPModelProto model;
-    sl_.GetSolver().ExportModel(&model);
-    RegisterUDFBuilder();
-    if (!solver_.LoadModel(model)) {
+
+    // First, clone the solver
+    if (!CloneModel(sl_, sl_.GetSolver(), solver_, adapter_)) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << "Cannot create the validator solver!";
     }
@@ -377,45 +366,6 @@ void Validator::operator()() {
             solver_.RevAlloc(new RestoreAssignmentBuilder(*this, &solver_,
                     restart_period_));
     solver_status_ = solver_.Solve(db, collector_);
-}
-
-IntExpr* Validator::UDFBuilder(std::string name, CPModelLoader* const builder,
-        const CPIntegerExpressionProto& proto) {
-
-    // should have IntVar parameters protobuffed
-    std::vector<IntVar*> vars;
-    if (!builder->ScanArguments(ModelVisitor::kVarsArgument, proto, &vars)) {
-        return NULL;
-    }
-
-    // should have integer parameters protobuffed
-    std::vector<int64> params;
-    if (!builder->ScanArguments(ModelVisitor::kValuesArgument, proto,
-            &params)) {
-        return NULL;
-    }
-
-    UDFFunctionCreator udf_creator = sl_.GetRegisteredUDF(name);
-    if (!udf_creator) {
-        return NULL;
-    }
-
-    return builder->solver()->RevAlloc(
-            udf_creator(&solver_, adapter_, vars, params));
-}
-
-void Validator::RegisterUDFBuilder() {
-    StringSet udfs = sl_.GetAllUsedUDFs();
-    for (StringSet::const_iterator cit = udfs.begin(); cit != udfs.end();
-            cit++) {
-        solver_.RegisterBuilder(*cit, NewPermanentCallback(this,
-                &Validator::UDFBuilder, std::string(*cit)));
-        /*
-         * std::string() is used to avoid references inside the callback.
-         * Maybe we do not need it, but my knowledge of templates is vague
-         * to decide for sure.
-         */
-    }
 }
 
 AssignmentPtrVector *Validator::GetNextAssignments() {

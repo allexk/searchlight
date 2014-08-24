@@ -121,16 +121,6 @@ private:
      */
     friend class RestoreAssignmentBuilder;
 
-    /*
-     * This is a builder for UDF functions (needed to restore the model from
-     * a protobuf buffer)
-     */
-    IntExpr* UDFBuilder(std::string name, CPModelLoader* const builder,
-                          const CPIntegerExpressionProto& proto);
-
-    // Registers builder for UDFs to restrore them from the protobuf model
-    void RegisterUDFBuilder();
-
     // Returns the next portion of Assignments to validate
     AssignmentPtrVector *GetNextAssignments();
 
