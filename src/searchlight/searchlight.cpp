@@ -172,7 +172,7 @@ void Searchlight::Solve() {
 
     // stopping the timer
     const auto solve_end_time = std::chrono::steady_clock::now();
-    total_solve_time_ =
+    total_solve_time_ +=
             std::chrono::duration_cast<decltype(total_solve_time_)>(
             solve_end_time - solve_start_time);
 
