@@ -153,9 +153,9 @@ public:
         }
 
         // check for searchlight termination
-        if (validator_.CheckTerminate()) {
+        if (validator_.sl_.CheckTerminate()) {
             // this will stop the search by failing the right branch
-            LOG4CXX_INFO(logger, "Terminating the validator");
+            LOG4CXX_INFO(logger, "Terminating the validator by force");
             solver->Fail();
         }
 
@@ -257,13 +257,12 @@ public:
     AuxRestoreMonitor aux_monitor_;
 };
 
-Validator::Validator(const Searchlight &sl, const StringVector &var_names,
+Validator::Validator(Searchlight &sl, const StringVector &var_names,
         SearchlightCollector &sl_collector) :
         sl_(sl),
         solver_("validator solver"),
         adapter_(sl.CreateAdapter("validator")), // INTERVAL mode by default!
         search_vars_prototype_(&solver_),
-        search_ended_(false),
         solver_status_(false) {
 
     // First, clone the solver
@@ -374,20 +373,43 @@ AssignmentPtrVector *Validator::GetNextAssignments() {
      * validate and then check it.
      */
     std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
-    while (to_validate_.empty() && !search_ended_) {
+    while (true) {
+        // Check interesting statuses first
+        const Searchlight::Status sl_status = sl_.GetStatus();
+        if (sl_status == Searchlight::Status::TERMINATED) {
+            LOG4CXX_INFO(logger, "Terminating validator by force");
+            // Notify the main solver about catching up, if needed
+            to_validate_.clear();
+            validate_cond_.notify_one();
+            return nullptr;
+        } else if (sl_status == Searchlight::Status::COMMITTED) {
+            assert(FinishedLocally());
+            LOG4CXX_INFO(logger, "Committing validator");
+            return nullptr;
+        } else if (sl_status == Searchlight::Status::FIN_SEARCH) {
+            if (FinishedLocally()) {
+                LOG4CXX_INFO(logger, "Validator finished locally");
+                sl_.ReportFinValidator();
+                // Still cannot exit: might have forwards coming up
+            }
+        }
+
+        // Then check if we have any candidates or forwards
+        if (!to_validate_.empty()) {
+            break;
+        }
+
+        // Nothing new to do -- wait
         validate_cond_.wait(validate_lock);
     }
 
-    if (to_validate_.empty() && search_ended_) {
-        return NULL;
-    }
-
+    // We should be here only if we have some candidates to check
     AssignmentPtrVector *res = new AssignmentPtrVector;
     res->reserve(to_validate_.size());
     res->insert(res->end(), to_validate_.begin(), to_validate_.end());
     to_validate_.clear();
 
-    // Notify the main solver about catching up
+    // Flow control: notify the main solver about catching up
     validate_cond_.notify_one();
 
     return res;

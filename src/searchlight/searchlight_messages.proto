@@ -14,6 +14,18 @@ message VarAssignment {
 }
 
 message SearchlightSolution {
-    required bool eor            = 1; // end-of-result from the instance
-    optional VarAssignment solution = 2; // if not e-o-r, then a solution
+    required VarAssignment solution = 1; // Solution as an assignment
+}
+
+message SearchlightControl {
+    // Type for info messages between nodes and the coordinator
+    enum Type {
+        SEARCH_IDLE = 0;         // Main solver has finished and is idle
+        VALIDATOR_LOCAL_FIN = 1; // Validator finished its local work
+        END_SEARCH = 2;          // Search ended on all nodes
+        COMMIT = 3;              // Full stop; validators will cease working
+    }
+
+    required Type type = 1; // Control message type
+    optional int32 instance = 2; // Instance related to the message
 }

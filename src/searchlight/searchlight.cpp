@@ -32,6 +32,7 @@
 #include "validator.h"
 #include "searchlight_collector.h"
 #include "default_search.h"
+#include "searchlight_task.h"
 
 /*
  * FIXME:
@@ -61,6 +62,10 @@ Searchlight::~Searchlight() {
             total_solve_time_).count();
     LOG4CXX_INFO(logger, "Solver total time: " << secs << '.' <<
             usecs << 's');
+
+    if (status_ == Status::TERMINATED) {
+        LOG4CXX_INFO(logger, "Solver was terminated by force!");
+    }
 
     search_monitors_.Disband();
     EndAndDestroyValidator();
@@ -117,9 +122,9 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
     assert(split_var);
 
     // define partition
-    const int64_t partition_len = max_size / instance_count_;
+    const int64_t partition_len = max_size / sl_task_.GetQueryInstanceCount();
     const int64_t partition_start = split_var->Min() +
-            partition_len * instance_id_;
+            partition_len * sl_task_.GetInstanceID();
     const int64_t partition_end = partition_start + partition_len - 1;
     split_var->SetRange(partition_start, partition_end);
     LOG4CXX_INFO(logger, "Set partition for var=" << split_var->DebugString());
@@ -149,9 +154,13 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
     SearchLimit *terminator = solver_.MakeCustomLimit(
             NewPermanentCallback(this, &Searchlight::CheckTerminate));
     search_monitors_.aux_monitors_.push_back(terminator);
+
+    status_ = Status::PREPARED;
 }
 
 void Searchlight::Solve() {
+    status_ = Status::SEARCHING;
+
     if (!validator_thread_) {
         LOG4CXX_INFO(logger, "Starting the validator thread");
         validator_thread_ = new std::thread(std::ref(*validator_));
@@ -191,15 +200,19 @@ void Searchlight::Solve() {
             ", candidates=" << total_candidates);
 
     LOG4CXX_INFO(logger, "Finished the main search");
-    // TODO: temporary; need a better solution when balancing comes into play
-    validator_->SignalEnd();
+    if (status_ != Status::TERMINATED) {
+        status_ = Status::VOID;
+    }
 }
 
 void Searchlight::EndAndDestroyValidator() {
     if (validator_) {
         if (validator_thread_) {
-            LOG4CXX_INFO(logger, "Signaling the validator and waiting");
-            validator_->SignalEnd();
+            if (status_ != Status::COMMITTED) {
+                status_ = Status::TERMINATED;
+            }
+            LOG4CXX_INFO(logger, "Waiting for the validator");
+            validator_->WakeupIfIdle();
             validator_thread_->join();
             delete validator_thread_;
         }
@@ -233,6 +246,23 @@ bool ValidatorMonitor::AtSolution() {
     }
 
     return true;
+}
+
+void Searchlight::ReportFinValidator() {
+    sl_task_.ReportFinValidator();
+    status_ = Status::FIN_VALID;
+}
+
+void Searchlight::HandleEndOfSearch() {
+    status_ = Status::FIN_SEARCH;
+    assert(validator_);
+    validator_->WakeupIfIdle();
+}
+
+void Searchlight::HandleCommit() {
+    status_ = Status::COMMITTED;
+    assert(validator_);
+    validator_->WakeupIfIdle();
 }
 
 DecisionBuilder *Searchlight::CreateDefaultHeuristic(

@@ -50,6 +50,8 @@ MessagePtr CreateMessageRecord(MessageID id) {
             return MessagePtr(new scidb_msg::Chunk);
         case SearchlightMessenger::mtSLSolution:
             return MessagePtr(new SearchlightSolution);
+        case SearchlightMessenger::mtSLControl:
+            return MessagePtr(new SearchlightControl);
         default:
             LOG4CXX_ERROR(logger, "Unknown type of Searchlight message"
                     "to create!");
@@ -78,6 +80,7 @@ class SearchlightMessageDesc : public scidb::MessageDesc,
             case SearchlightMessenger::mtSLChunkRequest:
             case SearchlightMessenger::mtSLChunk:
             case SearchlightMessenger::mtSLSolution:
+            case SearchlightMessenger::mtSLControl:
                 break;
             default:
                 return false;
@@ -310,6 +313,9 @@ void SearchlightMessenger::RegisterHandlers(bool init) {
     factory->addMessageType(mtSLSolution,
             MessageCreator(&CreateMessageRecord),
             boost::bind(&SearchlightMessenger::HandleGeneralMessage, this, _1));
+    factory->addMessageType(mtSLControl,
+            MessageCreator(&CreateMessageRecord),
+            boost::bind(&SearchlightMessenger::HandleGeneralMessage, this, _1));
 }
 
 bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
@@ -360,13 +366,13 @@ bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
     network_manager->send(inst, msg);
+    query_ctx->stats_.msgs_sent_++;
 
     // now we have to wait
     {
         const auto wait_start_time = std::chrono::steady_clock::now();
 
         std::unique_lock<std::mutex> slot_lock(msg_slot.mtx_);
-        query_ctx->stats_.msgs_sent_++;
         while (!msg_slot.data_ready_) {
             msg_slot.cond_.wait(slot_lock);
         }
@@ -393,6 +399,7 @@ void SearchlightMessenger::HandleSLChunkRequest(
     const QueryContextPtr query_ctx =
             GetQueryContext(msg_desc->getQueryId(), true);
     const boost::shared_ptr<Query> query = GetRegisteredQuery(query_ctx);
+    query_ctx->stats_.msgs_received_++;
 
     // get the record
     boost::shared_ptr<FetchChunk> record =
@@ -434,8 +441,6 @@ void SearchlightMessenger::HandleSLChunkRequest(
             array_iter = array->getConstIterator(attr);
             serv_array->iters_[attr] = array_iter;
         }
-        query_ctx->stats_.msgs_sent_++;
-        query_ctx->stats_.msgs_received_++;
     }
 
     // find the chunk
@@ -476,16 +481,14 @@ void SearchlightMessenger::HandleSLChunkRequest(
         reply->set_count(chunk.isCountKnown() ? chunk.count() : 0);
 
         // stats
-        {
-            std::lock_guard<std::mutex> lock(mtx_);
-            query_ctx->stats_.chunks_sent_++;
-            query_ctx->stats_.chunk_data_sent_ += buffer->getSize();
-        }
+        query_ctx->stats_.chunks_sent_++;
+        query_ctx->stats_.chunk_data_sent_ += buffer->getSize();
     }
 
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
     network_manager->sendMessage(msg_desc->getSourceInstanceID(), msg);
+    query_ctx->stats_.msgs_sent_++;
 }
 
 void SearchlightMessenger::HandleSLChunk(
@@ -495,6 +498,7 @@ void SearchlightMessenger::HandleSLChunk(
     const QueryContextPtr query_ctx =
             GetQueryContext(msg_desc->getQueryId(), true);
     const boost::shared_ptr<Query> query = GetRegisteredQuery(query_ctx);
+    query_ctx->stats_.msgs_received_++;
 
     // get the record
     boost::shared_ptr<scidb_msg::Chunk> record =
@@ -521,12 +525,9 @@ void SearchlightMessenger::HandleSLChunk(
 
     if (compressed_buffer && chunk_req->chunk_) {
         // stats
-        {
-            std::lock_guard<std::mutex> lock(slot.mtx_);
-            query_ctx->stats_.chunks_received_++;
-            query_ctx->stats_.chunk_data_received_ +=
-                    compressed_buffer->getSize();
-        }
+        query_ctx->stats_.chunks_received_++;
+        query_ctx->stats_.chunk_data_received_ +=
+                compressed_buffer->getSize();
 
         Chunk *chunk = chunk_req->chunk_;
 
@@ -554,7 +555,6 @@ void SearchlightMessenger::HandleSLChunk(
     }
 
     std::lock_guard<std::mutex> lock(slot.mtx_);
-    query_ctx->stats_.msgs_received_++;
     slot.data_ready_ = true;
     slot.cond_.notify_one();
 }
@@ -563,13 +563,10 @@ void SearchlightMessenger::HandleGeneralMessage(
         const boost::shared_ptr<MessageDescription> &msg_desc) {
 
     // get the query
-    QueryContextPtr query_ctx;
-    {
-        std::lock_guard<std::mutex> lock(mtx_);
-        query_ctx = GetQueryContext(msg_desc->getQueryId(), false);
-        query_ctx->stats_.msgs_received_++;
-    }
+    const QueryContextPtr query_ctx =
+            GetQueryContext(msg_desc->getQueryId(), true);
     const boost::shared_ptr<Query> query = GetRegisteredQuery(query_ctx);
+    query_ctx->stats_.msgs_received_++;
 
     // get the record
     const MessagePtr record = msg_desc->getRecord();
@@ -595,7 +592,6 @@ void SearchlightMessenger::HandleGeneralMessage(
 }
 
 void SearchlightMessenger::SendSolution(const boost::shared_ptr<Query> &query,
-        bool eor,
         const std::vector<int64_t> &vals) const {
 
     // determine the coordinator
@@ -614,34 +610,142 @@ void SearchlightMessenger::SendSolution(const boost::shared_ptr<Query> &query,
             msg->getRecord<SearchlightSolution>();
 
     // fill the record
-    record->set_eor(eor);
-    if (!eor) {
-        VarAssignment *asgn = record->mutable_solution();
-        for (size_t i = 0; i < vals.size(); i++) {
-            asgn->add_var_min(vals[i]);
-            // We don't need var_max here
-        }
+    VarAssignment *asgn = record->mutable_solution();
+    for (size_t i = 0; i < vals.size(); i++) {
+        asgn->add_var_min(vals[i]);
+        // We don't need var_max here
     }
 
     // log
-    if (logger->isDebugEnabled()) {
-        std::ostringstream os;
-        os <<"Sending solution to the coordinator: qid=" << query->getQueryID()
-                << ", eor=" << std::boolalpha << eor;
-        logger->debug(os.str(), LOG4CXX_LOCATION);
-    }
+    LOG4CXX_DEBUG(logger, "Sending solution to the coordinator: qid=" <<
+            query->getQueryID());
 
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
     network_manager->send(coord_id, msg);
 
     // stats
-    {
-        std::lock_guard<std::mutex> lock(mtx_);
-        const QueryContextPtr query_ctx =
-                GetQueryContext(query->getQueryID(), false);
-        query_ctx->stats_.msgs_sent_++;
+    const QueryContextPtr query_ctx =
+            GetQueryContext(query->getQueryID(), true);
+    query_ctx->stats_.msgs_sent_++;
+}
+
+void SearchlightMessenger::ReportIdleSolver(
+        const boost::shared_ptr<Query> &query) const {
+    // determine the coordinator
+    const InstanceID coord_id = query->getCoordinatorID();
+    if (coord_id == scidb::COORDINATOR_INSTANCE) {
+        LOG4CXX_ERROR(logger, "Attempting to report idle coordinator");
+        return;
     }
+
+    // prepare the message
+    boost::shared_ptr<scidb::MessageDesc> msg(new SearchlightMessageDesc);
+    msg->initRecord(mtSLControl);
+    msg->setQueryID(query->getQueryID());
+    boost::shared_ptr<SearchlightControl> record =
+            msg->getRecord<SearchlightControl>();
+
+    // fill the record
+    record->set_type(SearchlightControl::SEARCH_IDLE);
+
+    // log
+    LOG4CXX_DEBUG(logger, "Reporting idle search: qid=" << query->getQueryID());
+
+    // send
+    NetworkManager *network_manager = NetworkManager::getInstance();
+    network_manager->send(coord_id, msg);
+
+    // stats
+    const QueryContextPtr query_ctx =
+            GetQueryContext(query->getQueryID(), true);
+    query_ctx->stats_.msgs_sent_++;
+}
+
+void SearchlightMessenger::ReportFinValidator(
+        const boost::shared_ptr<Query> &query) const {
+    // determine the coordinator
+    const InstanceID coord_id = query->getCoordinatorID();
+    if (coord_id == scidb::COORDINATOR_INSTANCE) {
+        LOG4CXX_ERROR(logger, "Attempting to report idle validator at "
+                "the coordinator");
+        return;
+    }
+
+    // prepare the message
+    boost::shared_ptr<scidb::MessageDesc> msg(new SearchlightMessageDesc);
+    msg->initRecord(mtSLControl);
+    msg->setQueryID(query->getQueryID());
+    boost::shared_ptr<SearchlightControl> record =
+            msg->getRecord<SearchlightControl>();
+
+    // fill the record
+    record->set_type(SearchlightControl::VALIDATOR_LOCAL_FIN);
+
+    // log
+    LOG4CXX_DEBUG(logger, "Reporting locally finished validator: qid=" <<
+            query->getQueryID());
+
+    // send
+    NetworkManager *network_manager = NetworkManager::getInstance();
+    network_manager->send(coord_id, msg);
+
+    // stats
+    const QueryContextPtr query_ctx =
+            GetQueryContext(query->getQueryID(), true);
+    query_ctx->stats_.msgs_sent_++;
+}
+
+void SearchlightMessenger::BroadcastFinishSearch(
+        const boost::shared_ptr<Query> &query) const {
+    // prepare the message
+    boost::shared_ptr<scidb::MessageDesc> msg(new SearchlightMessageDesc);
+    msg->initRecord(mtSLControl);
+    msg->setQueryID(query->getQueryID());
+    boost::shared_ptr<SearchlightControl> record =
+            msg->getRecord<SearchlightControl>();
+
+    // fill the record
+    record->set_type(SearchlightControl::END_SEARCH);
+
+    // log
+    LOG4CXX_DEBUG(logger, "Broadcasting end-of-search: qid=" <<
+            query->getQueryID());
+
+    // send
+    NetworkManager *network_manager = NetworkManager::getInstance();
+    network_manager->broadcast(msg);
+
+    // stats
+    const QueryContextPtr query_ctx =
+            GetQueryContext(query->getQueryID(), true);
+    query_ctx->stats_.msgs_sent_++;
+}
+
+void SearchlightMessenger::BroadcastCommit(
+        const boost::shared_ptr<Query> &query) const {
+    // prepare the message
+    boost::shared_ptr<scidb::MessageDesc> msg(new SearchlightMessageDesc);
+    msg->initRecord(mtSLControl);
+    msg->setQueryID(query->getQueryID());
+    boost::shared_ptr<SearchlightControl> record =
+            msg->getRecord<SearchlightControl>();
+
+    // fill the record
+    record->set_type(SearchlightControl::COMMIT);
+
+    // log
+    LOG4CXX_DEBUG(logger, "Broadcasting search commit: qid=" <<
+            query->getQueryID());
+
+    // send
+    NetworkManager *network_manager = NetworkManager::getInstance();
+    network_manager->broadcast(msg);
+
+    // stats
+    const QueryContextPtr query_ctx =
+            GetQueryContext(query->getQueryID(), true);
+    query_ctx->stats_.msgs_sent_++;
 }
 
 void SearchlightMessenger::Synchronize(const boost::shared_ptr<Query> &query) {

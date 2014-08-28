@@ -60,7 +60,7 @@ public:
      * @param var_names the names of the variables
      * @param collector the searchlight collector to grab validated solutions
      */
-    Validator(const Searchlight &sl, const StringVector &var_names,
+    Validator(Searchlight &sl, const StringVector &var_names,
             SearchlightCollector &sl_collector);
 
     /**
@@ -83,21 +83,6 @@ public:
     void Synchronize() const;
 
     /**
-     * Signal to the validator that the search ended.
-     *
-     * The validator is not necessarily terminated
-     * upon the exit from this function. It is assumed that this function
-     * is called from another thread. In this case, the validator thread
-     * should be joined to ensure proper termination.
-     */
-    void SignalEnd() {
-        to_validate_mtx_.lock();
-        search_ended_ = true;
-        to_validate_mtx_.unlock();
-        validate_cond_.notify_one();
-    }
-
-    /**
      * This operator calls the validator by initiating its loop. The validator
      * terminates only after somebody calls Terminate() function.
      */
@@ -115,6 +100,16 @@ public:
         return solver_status_;
     }
 
+    /**
+     * Wake-ups validator if it's idle.
+     *
+     * Waking up validator will ensure that it can re-check the SL status and
+     * terminate properly.
+     */
+    void WakeupIfIdle() const {
+        validate_cond_.notify_one();
+    }
+
 private:
     /*
      * We define the DB as a friend to grab the next portion of assignments
@@ -126,12 +121,20 @@ private:
 
     // Check if the searclight is terminating
     bool CheckTerminate() const {
-        std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
         return sl_.CheckTerminate();
     }
 
+    /*
+     *  Returns true if this validator finished locally:
+     *    1) No local candidate solutions
+     *    2) TODO: No outstanding forwards
+     */
+    bool FinishedLocally() const {
+        return to_validate_.empty();
+    }
+
     // Searchlight instance
-    const Searchlight &sl_;
+    Searchlight &sl_;
 
     // Pending validations
     AssignmentPtrVector to_validate_;
@@ -153,9 +156,6 @@ private:
 
     // Mutex to guard the validation array
     mutable std::mutex to_validate_mtx_;
-
-    // Has the search ended
-    bool search_ended_;
 
     // The resulting status of the validator solver
     bool solver_status_;

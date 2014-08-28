@@ -43,6 +43,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <functional>
+#include <unordered_set>
 
 namespace searchlight {
 
@@ -70,11 +71,21 @@ public:
             const std::string &task_name, const std::string &config_file_name,
             ArrayPtr &data, const ArrayPtrVector &samples,
             const boost::shared_ptr<Query> &query) :
-                active_instance_count_(query->getInstancesCount()),
-                searchlight_(task_name, active_instance_count_,
-                        query->getInstanceID(), dll_handler_),
+                query_instance_count_(query->getInstancesCount()),
+                my_instance_id_(query->getInstanceID()),
+                searchlight_(*this, task_name, dll_handler_),
                 collector_(*this),
                 query_(query) {
+
+        // Fill in distributed search info
+        if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
+            distr_search_info_.reset(new DistributedSearchInfo);
+            for (int i = 0; i < query_instance_count_; i++) {
+                distr_search_info_->help_queue_.push(i);
+                distr_search_info_->busy_solvers_.insert(i);
+            }
+            distr_search_info_->busy_validators_count_ = query_instance_count_;
+        }
 
         ResolveTask(library_name, task_name);
         searchlight_.RegisterCollector(&collector_);
@@ -84,9 +95,13 @@ public:
         using std::placeholders::_1; // we have a clash with Boost
         using std::placeholders::_2; // we have a clash with Boost
         SearchlightMessenger::getInstance()->RegisterUserMessageHandler(
+             query,
+             SearchlightMessenger::mtSLSolution,
+             std::bind(&SearchlightTask::HandleRemoteSolution, this, _1, _2));
+        SearchlightMessenger::getInstance()->RegisterUserMessageHandler(
                 query,
-                SearchlightMessenger::mtSLSolution,
-                std::bind(&SearchlightTask::AddRemoteSolution, this, _1, _2));
+                SearchlightMessenger::mtSLControl,
+                std::bind(&SearchlightTask::HandleControlMessage, this, _1, _2));
 
         // Tasks just prepare Searchlight, solver is still idle, no threads
         task_(&searchlight_);
@@ -96,23 +111,7 @@ public:
      * Operator for running the task. Basically, just calls the function from
      * the DLL.
      */
-    void operator()() {
-        try {
-            searchlight_.Solve();
-        } catch (const scidb::Exception &ex) {
-            /*
-             * std::thread would call std::terminate(), so
-             *  we have to take care of proper error reporting
-             */
-            sl_error_ = ex.copy();
-            OnFinishSearch();
-        } catch (const std::exception &e) {
-            // Catch other C++ and library exceptions and translate them
-            sl_error_ = (SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
-                    SCIDB_LE_ILLEGAL_OPERATION) << e.what()).copy();
-            OnFinishSearch();
-        }
-    }
+    void operator()();
 
     /**
      * Returns the next solution if any. Note, it might block for a
@@ -123,13 +122,17 @@ public:
     std::string GetNextSolution();
 
     /**
-     * Terminate the current task. It passes along the requirement to the
-     * SL search, which will terminate in a (short) period of time. Then, the
-     * thread can be joined, unless something is holding it in the DLL's
-     * task function, in which case there is no way to deal with that.
+     * Terminate the current task. In a common (successful) case the solver
+     * and validator will already be committed, so no action would be
+     * required. In a bad case (i.e., an error or cancelled query) we might
+     * need to stop both the solver and validator. In this case we just set
+     * the status, and they will pick it up from there.
      */
     void Terminate() {
-        searchlight_.Terminate();
+        if (searchlight_.GetStatus() != Searchlight::Status::COMMITTED) {
+            searchlight_.Terminate();
+            sl_cond_.notify_one();
+        }
     }
 
     /**
@@ -140,9 +143,61 @@ public:
         return sl_error_;
     }
 
+    /**
+     * Returns this task's instance id.
+     *
+     * @return this task's instance id
+     */
+    InstanceID GetInstanceID() const {
+        return my_instance_id_;
+    }
+
+    /**
+     * Returns the total number of instances participating in the query.
+     *
+     * @return total number of query instances
+     */
+    int GetQueryInstanceCount() const {
+        return query_instance_count_;
+    }
+
+    /**
+     * Reports an idle solver to the coordinator.
+     *
+     * If the solver is local to the coordinator, the coordinator will
+     * handle it locally, no messages involved.
+     */
+    void ReportIdleSolver();
+
+    /**
+     * Reports locally finished validator.
+     *
+     * Validator is finished locally if it does not have any local requests
+     * coming and no outstanding forwards waiting on.
+     */
+    void ReportFinValidator();
+
 private:
     // Make it a friend to modify the queue
     friend class TaskSolutionCollector;
+
+    // Contains information about the state of distributed search.
+    struct DistributedSearchInfo {
+        // Currently busy solvers
+        std::unordered_set<InstanceID> busy_solvers_;
+
+        // Solvers that have rejected help
+        std::unordered_set<InstanceID> nonhelp_solvers_;
+
+        // Queue of solvers looking for help (lazily updated)
+        std::queue<InstanceID> help_queue_;
+
+        // Number of validators still busy with the job
+        int busy_validators_count_;
+    };
+
+    // Info about distributed search (non-NULL only at the coordinator)
+    std::unique_ptr<DistributedSearchInfo> distr_search_info_;
 
     // Resolves the task in the DLL
     void ResolveTask(const std::string &lib_name, const std::string &task_name);
@@ -150,16 +205,37 @@ private:
     // Either add solution to the queue or send it out
     void ReportSolution(const std::vector<int64_t> &values);
 
-    // Signals that the search just finished
-    void OnFinishSearch();
+    // Handles an idle solver and possible dispatches it to another solver
+    void HandleIdleSolver(InstanceID id);
+
+    // Handles a locally finished validator
+    void HandleFinValidator(InstanceID id);
+
+    // Handles the end-of-search messsage
+    void HandleEndOfSearch();
+
+    // Handles the commit message
+    void HandleCommit();
 
     // Are we expecting more results?
     bool ExpectingResults() const {
-        return active_instance_count_ != 0;
+        assert(distr_search_info_);
+        return distr_search_info_->busy_validators_count_ > 0;
     }
 
-    void AddRemoteSolution(InstanceID inst,
+    // Adds solution from a remote instance into the queue
+    void HandleRemoteSolution(InstanceID inst,
             const google::protobuf::Message *msg);
+
+    // Handles control messages
+    void HandleControlMessage(InstanceID inst,
+            const google::protobuf::Message *msg);
+
+    // Broadcasts control message to finish the main search
+    void BroadcastFinishSearch();
+
+    // Broadcasts control message to commit Searchlight
+    void BroadcastCommit();
 
     // Type of the task function (called from the library)
     typedef void (*SLTaskFunc)(Searchlight *);
@@ -167,8 +243,11 @@ private:
     // The main DLL Handler (we need it to be destroyed last!)
     DLLHandler dll_handler_;
 
-    // The number of active instances (makes sense only at the coordinator)
-    int active_instance_count_;
+    // Number of instances participating in the query
+    int query_instance_count_;
+
+    // Our instance id
+    InstanceID my_instance_id_;
 
     // The main sl instance
     Searchlight searchlight_;
@@ -182,11 +261,14 @@ private:
     // Stringified solutions.
     std::list<std::string> solutions_queue_;
 
-    // Mutex to protect the solution queue
-    std::mutex queue_mtx_;
+    // Mutex to protect shared task structures
+    std::mutex mtx_;
 
     // Condition to facilitate waiting for solutions
     std::condition_variable queue_cond_;
+
+    // Condition to for the solver to wait for work
+    std::condition_variable sl_cond_;
 
     // Error in the searchlight thread, if any
     scidb::Exception::Pointer sl_error_;

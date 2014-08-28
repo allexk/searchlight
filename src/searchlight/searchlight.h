@@ -54,6 +54,7 @@ using SearchlightConfig = boost::property_tree::ptree;
 
 class Validator;
 class SearchlightCollector;
+class SearchlightTask;
 
 /**
  * This class manages supplementary DLL resources required by Searchlight.
@@ -196,6 +197,19 @@ typedef IntExpr *(* UDFFunctionCreator)(Solver *, AdapterPtr,
 class Searchlight : private boost::noncopyable {
 public:
     /**
+     * Status of Searchlight
+     */
+    enum class Status {
+        VOID,      //!< VOID Non-initialized state
+        PREPARED,  //!< PREPARED Main solver prepared
+        SEARCHING, //!< SEARCHING Main solver is searching (suring Solve())
+        FIN_SEARCH,//!< FIN_SEARCH Main solver finished completely
+        FIN_VALID, //!< FIN_VALID Validator finished local work
+        COMMITTED, //!< COMMITTED SL completed successfully
+        TERMINATED //!< TERMINATED Abnormal termination on error
+    };
+
+    /**
      * Maps UDF names to UDF creators.
      */
     typedef std::map<std::string, UDFFunctionCreator> UDFMapper;
@@ -204,13 +218,12 @@ public:
      * Creates the main searchlight class. An instance of this class
      * corresponds to a single search process.
      *
+     * @param task Searchlight task performing the query
      * @param name the name of the search
-     * @param instances_count the number of instances for the search
-     * @param instance_id this instance id
      * @param dll_handler handler for loading/unloading DLLs
      */
-    Searchlight(const std::string &name, unsigned int instance_count,
-            unsigned int instance_id,
+    Searchlight(SearchlightTask &task,
+            const std::string &name,
             DLLHandler &dll_handler) :
         solver_(name),
         db_(nullptr),
@@ -218,9 +231,8 @@ public:
         validator_thread_(nullptr),
         array_desc_(nullptr),
         dl_udf_handle_(dll_handler.LoadDLL("searchlight_udfs")),
-        terminate_(false),
-        instance_count_(instance_count),
-        instance_id_(instance_id) {}
+        sl_task_(task),
+        status_(Status::VOID) {}
 
     /**
      * The destructor.
@@ -435,7 +447,7 @@ public:
      * immediately, but within a reasonable amount of time.
      */
     void Terminate() {
-        terminate_ = true;
+        status_ = Status::TERMINATED;
     }
 
     /**
@@ -444,13 +456,7 @@ public:
      * @return true, if we are terminating; false otherwise
      */
     bool CheckTerminate() const {
-        /*
-         * This code is obviously not thread-safe (see Terminate() as well),
-         * but for our purposes it is fine. One thread will set it to true and
-         * the other will read it. Delays in propagating the value are not that
-         * important here, and it is changed only once.
-         */
-        return terminate_;
+        return status_ == Status::TERMINATED;
     }
 
     /**
@@ -477,6 +483,38 @@ public:
     const Validator *GetValidator() const {
         return validator_;
     }
+
+    /**
+     * Returns current Searchlight status.
+     *
+     * @return current Searchlight status
+     */
+    Status GetStatus() const {
+        return status_;
+    }
+
+    /**
+     * Reports locally finished validator.
+     */
+    void ReportFinValidator();
+
+    /**
+     * Handles the end-of-search request from the coordinator.
+     *
+     * This request basically means that all sorver processes finished. So,
+     * we just change status and wake up validator if needed.
+     */
+    void HandleEndOfSearch();
+
+    /**
+     * Handles the commit request from the coordinator.
+     *
+     * This request basically means that everything is finished. We have to
+     * change the status. Strictly speaking, we don't need to wake up the
+     * validator -- it will be done at dtor. But we do it to reclaim
+     * resources early.
+     */
+    void HandleCommit();
 
 private:
     // Signals validator to end, waits and then destroys it
@@ -533,20 +571,17 @@ private:
     // Maps requested UDF names to corresponding creators
     UDFMapper udf_map_;
 
-    // True if we are required to terminate
-    volatile bool terminate_;
-
-    // The number of instances participating in the search
-    unsigned int instance_count_;
-
-    // This instance id
-    unsigned int instance_id_;
-
     // Total time spent on solving
     std::chrono::microseconds total_solve_time_;
 
+    // Searchlight task
+    SearchlightTask &sl_task_;
+
     // Contains various configuration options
     SearchlightConfig config_;
+
+    // Searchlight status
+    std::atomic<Status> status_;
 };
 
 /**

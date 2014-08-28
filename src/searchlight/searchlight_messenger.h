@@ -79,7 +79,9 @@ public:
         /** Chunk arrived from another instance */
         mtSLChunk,
         /** A solution arrived from another instance */
-        mtSLSolution
+        mtSLSolution,
+        /** Control message between instances and coordinator */
+        mtSLControl
     };
 
     /**
@@ -157,6 +159,22 @@ public:
             InstanceID inst, const std::string &array_name,
             const Coordinates &pos, AttributeID attr, Chunk *chunk);
 
+    /**
+     * Reports the main solver (search process) as idle.
+     *
+     * Idle means the solver finished its portion of the search space and can
+     * accept additional load.
+     *
+     * @param query the current query
+     */
+    void ReportIdleSolver(const boost::shared_ptr<Query> &query) const;
+
+    /**
+     * Reports the local validator that already finished its local job.
+     *
+     * @param query the current query
+     */
+    void ReportFinValidator(const boost::shared_ptr<Query> &query) const;
 
     /**
      * Synchronizes all Searchlight Messenger instances. This means it
@@ -189,6 +207,20 @@ public:
             const UserMessageHandler &handler);
 
     /**
+     * Sends end-of-search control message to all instances.
+     *
+     * @param query the current query
+     */
+    void BroadcastFinishSearch(const boost::shared_ptr<Query> &query) const;
+
+    /**
+     * Sends search commit control message to all instances.
+     *
+     * @param query the current query
+     */
+    void BroadcastCommit(const boost::shared_ptr<Query> &query) const;
+
+    /**
      * Sends a Searchlight solution to the coordinator. If eor (end-of-result)
      * is true, var_mins and var_maxs are ignored. There should be an
      * appropriate handler registered at the coordinator's Messenger instance.
@@ -197,7 +229,7 @@ public:
      * @param eor true, if the result has ended; false, otherwise
      * @param vals solution values
      */
-    void SendSolution(const boost::shared_ptr<Query> &query, bool eor,
+    void SendSolution(const boost::shared_ptr<Query> &query,
             const std::vector<int64_t> &vals) const;
 
 private:
@@ -247,14 +279,14 @@ private:
 
         // Statistics about all querie's requests
         struct Statistics {
-            uint32_t msgs_sent_ = 0;
-            uint32_t msgs_received_ = 0;
+            std::atomic<uint32_t> msgs_sent_{0};
+            std::atomic<uint32_t> msgs_received_{0};
 
-            uint32_t chunks_sent_ = 0;
-            uint32_t chunks_received_ = 0;
+            std::atomic<uint32_t> chunks_sent_{0};
+            std::atomic<uint32_t> chunks_received_{0};
 
-            uint64_t chunk_data_sent_ = 0;
-            uint64_t chunk_data_received_ = 0;
+            std::atomic<uint64_t> chunk_data_sent_{0};
+            std::atomic<uint64_t> chunk_data_received_{0};
 
             std::chrono::microseconds total_wait_time_;
 

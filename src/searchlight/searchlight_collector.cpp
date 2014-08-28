@@ -45,10 +45,6 @@ TaskSolutionCollector::TaskSolutionCollector(SearchlightTask &task, Solver *s) :
     SolutionCollector(s),
     task_(task) {}
 
-void TaskSolutionCollector::ExitSearch() {
-    task_.OnFinishSearch();
-}
-
 bool TaskSolutionCollector::AtSolution() {
     // we can reuse the same prototype and do not have to store the values
     const Assignment::IntContainer &vars = prototype_.get()->IntVarContainer();

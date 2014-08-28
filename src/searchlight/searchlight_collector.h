@@ -67,11 +67,6 @@ public:
     virtual bool AtSolution();
 
     /**
-     * A callback that is called when the search is finished.
-     */
-    virtual void ExitSearch();
-
-    /**
      * Returns a string representation for debugging.
      *
      * @return a string representation

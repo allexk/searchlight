@@ -39,6 +39,151 @@ namespace searchlight {
 static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.task"));
 
+void SearchlightTask::operator()() {
+    try {
+        bool work_expected = true;
+        while (work_expected) {
+            // Wait until something interesting happens
+            Searchlight::Status sl_status;
+            {
+                std::unique_lock<std::mutex> lock(mtx_);
+                sl_status = searchlight_.GetStatus();
+                while (sl_status == Searchlight::Status::VOID) {
+                    sl_cond_.wait(lock);
+                    sl_status = searchlight_.GetStatus();
+                }
+            }
+
+            // Either solve or exit
+            switch (sl_status) {
+                case Searchlight::Status::PREPARED:
+                    searchlight_.Solve();
+                    sl_status = searchlight_.GetStatus();
+                    if (sl_status == Searchlight::Status::TERMINATED) {
+                        LOG4CXX_INFO(logger, "Solver was terminated!");
+                        work_expected = false;
+                    } else {
+                        assert(sl_status == Searchlight::Status::VOID);
+                        LOG4CXX_INFO(logger, "Solver finished a job");
+                        ReportIdleSolver();
+                    }
+                    break;
+                case Searchlight::Status::FIN_SEARCH:
+                case Searchlight::Status::TERMINATED:
+                    work_expected = false;
+                    break;
+                default:
+                    assert(false);
+                    throw SYSTEM_EXCEPTION(
+                            SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                            << "Unexpected status in the SL loop!";
+                    break;
+            }
+        }
+    } catch (const scidb::Exception &ex) {
+        /*
+         * std::thread would call std::terminate(), so
+         *  we have to take care of proper error reporting
+         */
+        sl_error_ = ex.copy();
+        searchlight_.Terminate();
+        queue_cond_.notify_one();
+    } catch (const std::exception &e) {
+        // Catch other C++ and library exceptions and translate them
+        sl_error_ = (SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                SCIDB_LE_ILLEGAL_OPERATION) << e.what()).copy();
+        searchlight_.Terminate();
+        queue_cond_.notify_one();
+    } catch (...) {
+        sl_error_ = (SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                SCIDB_LE_ILLEGAL_OPERATION) <<
+                "Unknown exception in SL!").copy();
+        searchlight_.Terminate();
+        queue_cond_.notify_one();
+    }
+}
+
+void SearchlightTask::ReportIdleSolver() {
+    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
+        // We are at the coordinator -- handle the solver
+        HandleIdleSolver(my_instance_id_);
+    } else {
+        // We are at a common instance -- send the message to the coordinator
+        SearchlightMessenger::getInstance()->ReportIdleSolver(query);
+    }
+}
+
+void SearchlightTask::ReportFinValidator() {
+    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
+        // We are at the coordinator -- handle the solver
+        HandleFinValidator(my_instance_id_);
+    } else {
+        // We are at a common instance -- send the message to the coordinator
+        SearchlightMessenger::getInstance()->ReportFinValidator(query);
+    }
+}
+
+void SearchlightTask::HandleIdleSolver(InstanceID id) {
+    // TODO: no balancing right now; add that later.
+    std::unique_lock<std::mutex> lock(mtx_);
+    assert(distr_search_info_->busy_solvers_.count(id));
+
+    // The solver is not busy
+    distr_search_info_->busy_solvers_.erase(id);
+
+    // Check if the search is completely finished (not validation, though)
+    if (distr_search_info_->busy_solvers_.empty()) {
+        lock.unlock();
+        BroadcastFinishSearch();
+    } else {
+        // FIXME: Choose a helpee and give it this solver; later.
+        // This solver might have rejected help, this might change later.
+        distr_search_info_->nonhelp_solvers_.erase(id);
+    }
+}
+
+void SearchlightTask::HandleEndOfSearch() {
+    searchlight_.HandleEndOfSearch();
+    sl_cond_.notify_one();
+}
+
+void SearchlightTask::HandleCommit() {
+    searchlight_.HandleCommit();
+    queue_cond_.notify_one();
+}
+
+void SearchlightTask::HandleFinValidator(InstanceID id) {
+    std::unique_lock<std::mutex> lock(mtx_);
+    assert(distr_search_info_->busy_solvers_.empty());
+    assert(distr_search_info_->busy_validators_count_ > 0);
+
+    // count the validator out
+    distr_search_info_->busy_validators_count_--;
+
+    if (distr_search_info_->busy_validators_count_ == 0) {
+        lock.unlock();
+        BroadcastCommit();
+    }
+}
+
+void SearchlightTask::BroadcastFinishSearch() {
+    // Local solver
+    HandleEndOfSearch();
+    // Remote solvers
+    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+    SearchlightMessenger::getInstance()->BroadcastFinishSearch(query);
+}
+
+void SearchlightTask::BroadcastCommit() {
+    // Local SL
+    HandleCommit();
+    // Remote SLs
+    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+    SearchlightMessenger::getInstance()->BroadcastCommit(query);
+}
+
 void SearchlightTask::ResolveTask(const std::string &lib_name,
         const std::string &task_name) {
     // loading the task library
@@ -55,7 +200,7 @@ void SearchlightTask::ResolveTask(const std::string &lib_name,
     }
 }
 
-void SearchlightTask::AddRemoteSolution(InstanceID inst,
+void SearchlightTask::HandleRemoteSolution(InstanceID inst,
         const google::protobuf::Message *msg) {
 
     const SearchlightSolution *sol_msg =
@@ -65,19 +210,39 @@ void SearchlightTask::AddRemoteSolution(InstanceID inst,
                 << "Invalid message at the SL Task remote result function!";
     }
 
-    const bool eor = sol_msg->eor();
-    if (!eor) {
-        // Solution values are always at var_min (they're scalar values)
-        const int sol_size = sol_msg->solution().var_min_size();
-        std::vector<int64_t> vals(sol_size);
-        for (int i = 0; i < sol_size; i++) {
-            vals[i] = sol_msg->solution().var_min(i);
-        }
-        ReportSolution(vals);
-    } else {
-        std::lock_guard<std::mutex> lock(queue_mtx_);
-        active_instance_count_--;
-        queue_cond_.notify_one();
+    // Solution values are always at var_min (they're scalar values)
+    const int sol_size = sol_msg->solution().var_min_size();
+    std::vector<int64_t> vals(sol_size);
+    for (int i = 0; i < sol_size; i++) {
+        vals[i] = sol_msg->solution().var_min(i);
+    }
+    ReportSolution(vals);
+}
+
+// Handles control messages
+void SearchlightTask::HandleControlMessage(InstanceID inst,
+        const google::protobuf::Message *msg) {
+    // Get the message
+    const SearchlightControl *control_msg =
+            dynamic_cast<const SearchlightControl *>(msg);
+    if (!control_msg) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << "Invalid message at the SL Task control handler function!";
+    }
+
+    switch (control_msg->type()) {
+        case SearchlightControl::SEARCH_IDLE:
+            HandleIdleSolver(inst);
+            break;
+        case SearchlightControl::VALIDATOR_LOCAL_FIN:
+            HandleFinValidator(inst);
+            break;
+        case SearchlightControl::END_SEARCH:
+            HandleEndOfSearch();
+            break;
+        case SearchlightControl::COMMIT:
+            HandleCommit();
+            break;
     }
 }
 
@@ -86,33 +251,18 @@ void SearchlightTask::ReportSolution(const std::vector<int64_t> &values) {
     if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
         // We are at the coordinator -- add the solution to the queue
         const std::string sol = collector_.SolutionToString(values);
-        std::lock_guard<std::mutex> lock(queue_mtx_);
+        std::lock_guard<std::mutex> lock(mtx_);
         solutions_queue_.push_back(sol);
         queue_cond_.notify_one();
     } else {
         // We are at a common instance -- send the solution to the coordinator
-        SearchlightMessenger::getInstance()->SendSolution(query, false, values);
-    }
-}
-
-// Signals that the search just finished
-void SearchlightTask::OnFinishSearch() {
-    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
-    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
-        // We are at the coordinator -- just some accounting
-        std::lock_guard<std::mutex> lock(queue_mtx_);
-        active_instance_count_--;
-        queue_cond_.notify_one();
-    } else {
-        // We are at a common instance -- send eor to the coordinator
-        SearchlightMessenger::getInstance()->SendSolution(
-                query, true, std::vector<int64_t>());
+        SearchlightMessenger::getInstance()->SendSolution(query, values);
     }
 }
 
 std::string SearchlightTask::GetNextSolution() {
-    std::unique_lock<std::mutex> lock(queue_mtx_);
-    while (solutions_queue_.empty() && ExpectingResults()) {
+    std::unique_lock<std::mutex> lock(mtx_);
+    while (solutions_queue_.empty() && ExpectingResults() && !sl_error_) {
         queue_cond_.wait(lock);
     }
 
@@ -122,7 +272,8 @@ std::string SearchlightTask::GetNextSolution() {
         sl_error_->raise();
     }
 
-    if (solutions_queue_.empty() && !ExpectingResults()) {
+    if (solutions_queue_.empty()) {
+        assert(!ExpectingResults());
         LOG4CXX_INFO(logger, "SearchlightTask finished");
         return "";
     }
