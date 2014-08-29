@@ -69,7 +69,9 @@ void SearchlightTask::operator()() {
                     }
                     break;
                 case Searchlight::Status::FIN_SEARCH:
+                case Searchlight::Status::FIN_VALID:
                 case Searchlight::Status::TERMINATED:
+                case Searchlight::Status::COMMITTED:
                     work_expected = false;
                     break;
                 default:
@@ -135,7 +137,6 @@ void SearchlightTask::HandleIdleSolver(InstanceID id) {
 
     // Check if the search is completely finished (not validation, though)
     if (distr_search_info_->busy_solvers_.empty()) {
-        lock.unlock();
         BroadcastFinishSearch();
     } else {
         // FIXME: Choose a helpee and give it this solver; later.
