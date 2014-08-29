@@ -254,6 +254,7 @@ public:
 
         // Nested search
         if (luby_scale_ != 0) {
+            LOG4CXX_TRACE(logger, "Setting Luby restarts for impact estimator");
             monitors_.push_back(s->MakeLubyRestart(luby_scale_));
         }
         s->Solve(random_db, monitors_);
@@ -329,7 +330,7 @@ public:
             const double ratio = double(leaves_) / fails_;
             if (ratio <= finish_threshold_) {
                 FinishCurrentSearch();
-                LOG4CXX_DEBUG(logger, "Finishing the search because "
+                LOG4CXX_TRACE(logger, "Finishing the search because "
                         "of a large fail ratio: " << ratio);
             }
 
@@ -379,7 +380,7 @@ Decision* SLSearch::Next(Solver* const s) {
         const int64_t init_seconds =
                 std::chrono::duration_cast<std::chrono::seconds>
                 (init_end_time - init_start_time).count();
-        LOG4CXX_DEBUG(logger, "The init went for " << init_seconds << "s.");
+        LOG4CXX_INFO(logger, "The init went for " << init_seconds << "s.");
     }
 
     // Here, we have all impacts computed
@@ -486,7 +487,7 @@ Decision* SLSearch::Next(Solver* const s) {
 }
 
 void SLSearch::InitIntervals(Solver * const s, const int steps_limit) {
-    LOG4CXX_DEBUG(logger, "Exploring interval impacts");
+    LOG4CXX_INFO(logger, "Exploring interval impacts");
     std::vector<SearchMonitor *> nested_monitors(sl_.GetAuxMonitors());
     if (search_config_.submit_probes_) {
         nested_monitors.push_back(sl_.GetValidatorMonitor());
@@ -521,7 +522,7 @@ void SLSearch::InitIntervals(Solver * const s, const int steps_limit) {
             }
         }
     }
-    LOG4CXX_DEBUG(logger, "Finished exploring interval impacts");
+    LOG4CXX_INFO(logger, "Finished exploring interval impacts");
     if (logger->isDebugEnabled()) {
         std::ostringstream deb;
         deb << "SLSearch impacts for primary variables follow:\n";

@@ -354,13 +354,13 @@ bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
     record->set_slot(slot_num);
 
     // log
-    if (logger->isDebugEnabled()) {
+    if (logger->isTraceEnabled()) {
         std::ostringstream os;
         os <<"Requesting chunk: qid=" << query->getQueryID() << ", name=" <<
                 array_name << ", pos=" << pos << ", attr=" << attr <<
                 ", data=" <<
                 std::boolalpha << !confirm_only;
-        logger->debug(os.str(), LOG4CXX_LOCATION);
+        logger->trace(os.str(), LOG4CXX_LOCATION);
     }
 
     // send
@@ -423,13 +423,13 @@ void SearchlightMessenger::HandleSLChunkRequest(
     }
 
     // log
-    if (logger->isDebugEnabled()) {
+    if (logger->isTraceEnabled()) {
         std::ostringstream os;
         os <<"Got chunk request: qid=" << query->getQueryID() << ", name=" <<
                 array_name << ", pos=" << pos << ", attr=" << attr <<
                 ", data=" <<
                 std::boolalpha << !confirm_only;
-        logger->debug(os.str(), LOG4CXX_LOCATION);
+        logger->trace(os.str(), LOG4CXX_LOCATION);
     }
 
     // get iterator (and cache it)
@@ -546,12 +546,12 @@ void SearchlightMessenger::HandleSLChunk(
     }
 
     // log
-    if (logger->isDebugEnabled()) {
+    if (logger->isTraceEnabled()) {
         std::ostringstream os;
         os <<"Got chunk: qid=" << query->getQueryID() << ", name=" <<
                 chunk_req->array_->getName() << ", empty=" <<
                 std::boolalpha << chunk_req->empty_;
-        logger->debug(os.str(), LOG4CXX_LOCATION);
+        logger->trace(os.str(), LOG4CXX_LOCATION);
     }
 
     std::lock_guard<std::mutex> lock(slot.mtx_);
@@ -579,7 +579,7 @@ void SearchlightMessenger::HandleGeneralMessage(
     const MessageID mid = msg_desc->getMessageType();
     const auto &iter = query_ctx->message_handlers_.find(mid);
     if (iter != query_ctx->message_handlers_.end()) {
-        LOG4CXX_DEBUG(logger,
+        LOG4CXX_TRACE(logger,
                 "Delegating message to the user handler: id=" << mid);
         const InstanceID from_id = query->mapPhysicalToLogical(
                 msg_desc->getSourceInstanceID());
@@ -617,7 +617,7 @@ void SearchlightMessenger::SendSolution(const boost::shared_ptr<Query> &query,
     }
 
     // log
-    LOG4CXX_DEBUG(logger, "Sending solution to the coordinator: qid=" <<
+    LOG4CXX_TRACE(logger, "Sending solution to the coordinator: qid=" <<
             query->getQueryID());
 
     // send

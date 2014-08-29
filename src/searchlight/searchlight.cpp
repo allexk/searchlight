@@ -62,8 +62,8 @@ Searchlight::~Searchlight() {
     LOG4CXX_INFO(logger, "Solver total time: " << secs << '.' <<
             usecs << 's');
 
-    if (status_ == Status::TERMINATED) {
-        LOG4CXX_INFO(logger, "Solver was terminated by force!");
+    if (status_ != Status::COMMITTED) {
+        LOG4CXX_INFO(logger, "Solver was terminated unexpectedly!");
     }
 
     // First destroy validator (SL still has all its structures intact)

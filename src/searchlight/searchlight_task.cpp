@@ -60,11 +60,11 @@ void SearchlightTask::operator()() {
                     searchlight_.Solve();
                     sl_status = searchlight_.GetStatus();
                     if (sl_status == Searchlight::Status::TERMINATED) {
-                        LOG4CXX_INFO(logger, "Solver was terminated!");
+                        LOG4CXX_DEBUG(logger, "Solver was terminated!");
                         work_expected = false;
                     } else {
                         assert(sl_status == Searchlight::Status::VOID);
-                        LOG4CXX_INFO(logger, "Solver finished a job");
+                        LOG4CXX_DEBUG(logger, "Solver finished a job");
                         ReportIdleSolver();
                     }
                     break;
@@ -169,6 +169,7 @@ void SearchlightTask::HandleFinValidator(InstanceID id) {
 }
 
 void SearchlightTask::BroadcastFinishSearch() {
+    LOG4CXX_INFO(logger, "Broadcasting end-of-search...");
     // Local solver
     HandleEndOfSearch();
     // Remote solvers
@@ -177,6 +178,7 @@ void SearchlightTask::BroadcastFinishSearch() {
 }
 
 void SearchlightTask::BroadcastCommit() {
+    LOG4CXX_INFO(logger, "Broadcasting commit...");
     // Local SL
     HandleCommit();
     // Remote SLs
@@ -232,19 +234,19 @@ void SearchlightTask::HandleControlMessage(InstanceID inst,
 
     switch (control_msg->type()) {
         case SearchlightControl::SEARCH_IDLE:
-            LOG4CXX_INFO(logger, "Search is idle: id=" << inst);
+            LOG4CXX_DEBUG(logger, "Search is idle: id=" << inst);
             HandleIdleSolver(inst);
             break;
         case SearchlightControl::VALIDATOR_LOCAL_FIN:
-            LOG4CXX_INFO(logger, "validator finished: id=" << inst);
+            LOG4CXX_DEBUG(logger, "Validator finished: id=" << inst);
             HandleFinValidator(inst);
             break;
         case SearchlightControl::END_SEARCH:
-            LOG4CXX_INFO(logger, "End-of-search request");
+            LOG4CXX_DEBUG(logger, "End-of-search request");
             HandleEndOfSearch();
             break;
         case SearchlightControl::COMMIT:
-            LOG4CXX_INFO(logger, "Commit request");
+            LOG4CXX_DEBUG(logger, "Commit request");
             HandleCommit();
             break;
     }

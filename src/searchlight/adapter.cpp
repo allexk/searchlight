@@ -63,7 +63,7 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
                 std::ostream_iterator<std::string>(deb_str, ", "));
         deb_str << " Mode: " << mode_;
 
-        logger->debug(deb_str.str(), LOG4CXX_LOCATION);
+        logger->trace(deb_str.str(), LOG4CXX_LOCATION);
     }
 
     // The original attribute
@@ -148,7 +148,7 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
         deb_str << "Computed aggregates: ";
         std::copy(res.begin(), res.end(),
                 std::ostream_iterator<IntervalValue>(deb_str, ", "));
-        logger->debug(deb_str.str(), LOG4CXX_LOCATION);
+        logger->trace(deb_str.str(), LOG4CXX_LOCATION);
     }
 
     return res;
@@ -165,7 +165,7 @@ IntervalValue Adapter::GetElement(const Coordinates &point,
         deb_str << " Attr: " << attr;
         deb_str << " Mode: " << mode_;
 
-        logger->debug(deb_str.str(), LOG4CXX_LOCATION);
+        logger->trace(deb_str.str(), LOG4CXX_LOCATION);
     }
 
     // starting the timer

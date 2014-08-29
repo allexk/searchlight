@@ -77,7 +77,7 @@ std::string SearchlightSolutionCollector::SolutionToString(
     }
     const std::string solution = sol_string.str();
     LOG4CXX_TRACE(logger, "Collected a new solution: " << solution);
-    LOG4CXX_TRACE(result_logger, solution);
+    LOG4CXX_INFO(result_logger, solution);
 
     return solution;
 }

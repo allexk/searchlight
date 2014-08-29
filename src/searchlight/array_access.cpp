@@ -46,7 +46,7 @@ ArrayAccess::~ArrayAccess() {
             total_agg_time_).count();
     const auto usecs = std::chrono::duration_cast<std::chrono::milliseconds>(
             total_agg_time_).count();
-    LOG4CXX_INFO(logger, "Array Access, total aggregates time: " <<
+    LOG4CXX_INFO(logger, "Total aggregates CPU time: " <<
             secs << '.' << usecs << 's');
 }
 
