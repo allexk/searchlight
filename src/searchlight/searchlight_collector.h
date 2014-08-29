@@ -44,7 +44,7 @@ class SearchlightTask;
  * This class collects tracks exacts solutions, stringifies them and them
  * to the searchlight task. It also signals to the task when the search ends.
  */
-class TaskSolutionCollector : public SolutionCollector {
+class SearchlightSolutionCollector : public SolutionCollector {
 public:
     /**
      * Creates a new task collector.
@@ -52,12 +52,7 @@ public:
      * @param task the task to collect for
      * @param s the solver from searchlight
      */
-    TaskSolutionCollector(SearchlightTask &task, Solver *s);
-
-    /**
-     * Destructor.
-     */
-    virtual ~TaskSolutionCollector() {}
+    SearchlightSolutionCollector(SearchlightTask &task, Solver *s);
 
     /**
      * A callback called at a solution.
@@ -94,70 +89,6 @@ public:
 
 private:
     // The searchlight engine
-    SearchlightTask &task_;
-};
-
-/**
- * This is a simple wrap around the TaskSolutionCollector to make delayed
- * initialization possible. Before the collector can be used, the user
- * should call InitCollector() and then register the collector with the
- * solver after retrieving it with GetCollector().
- *
- * One use for delayed initialization is to be able to register it at the
- * validator.
- *
- */
-class SearchlightCollector {
-public:
-    /**
-     * Creates a new searchlight collector.
-     *
-     * @param task the main SearchlightTask
-     */
-    SearchlightCollector(SearchlightTask &task) :
-        collector_(nullptr),
-        task_(task) {}
-
-    /**
-     * Destructor.
-     */
-    ~SearchlightCollector() {
-        delete collector_;
-    }
-
-    /**
-     * Initializes this collector for the given solver.
-     *
-     * @param s the solver to create the collector for
-     */
-    void InitCollector(Solver *s) {
-        collector_ = new TaskSolutionCollector(task_, s);
-    }
-
-    /**
-     * Returns the collector to use with a solver.
-     *
-     * @return the collector to use with a solver
-     */
-    SolutionCollector *GetCollector() {
-        return collector_;
-    }
-
-    /**
-     * Returns a string representation of a solution
-     * @param vals
-     * @return
-     */
-    std::string SolutionToString(const std::vector<int64_t> &vals) const {
-        assert(collector_);
-        return collector_->SolutionToString(vals);
-    }
-
-private:
-    // Solution collector, which will be used with the solver
-    TaskSolutionCollector *collector_;
-
-    // The main task to give the results to
     SearchlightTask &task_;
 };
 }

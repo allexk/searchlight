@@ -30,7 +30,6 @@
 
 #include "searchlight.h"
 #include "validator.h"
-#include "searchlight_collector.h"
 #include "default_search.h"
 #include "searchlight_task.h"
 
@@ -67,9 +66,11 @@ Searchlight::~Searchlight() {
         LOG4CXX_INFO(logger, "Solver was terminated by force!");
     }
 
-    search_monitors_.Disband();
+    // First destroy validator (SL still has all its structures intact)
     EndAndDestroyValidator();
 
+    // Destroy the rest; the collector will be destroyed AFTER the validator.
+    search_monitors_.Disband();
     delete array_desc_;
 }
 
@@ -139,13 +140,9 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
         solver_.Accept(pmv);
     }
 
-    // establish the validator
-    if (!search_monitors_.collector_) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "No solution collector registered!";
-    }
+    // establish collector and validator
     LOG4CXX_INFO(logger, "Initiating the validator");
-    validator_ = new Validator(*this, var_names, *search_monitors_.collector_);
+    validator_ = new Validator(*this, sl_task_, var_names);
 
     // Establish monitors: validator (to transfer leaves) and terminator
     search_monitors_.user_monitors_ = monitors;
@@ -249,8 +246,8 @@ bool ValidatorMonitor::AtSolution() {
 }
 
 void Searchlight::ReportFinValidator() {
-    sl_task_.ReportFinValidator();
     status_ = Status::FIN_VALID;
+    sl_task_.ReportFinValidator();
 }
 
 void Searchlight::HandleEndOfSearch() {
@@ -263,6 +260,12 @@ void Searchlight::HandleCommit() {
     status_ = Status::COMMITTED;
     assert(validator_);
     validator_->WakeupIfIdle();
+}
+
+std::string Searchlight::SolutionToString(
+        const std::vector<int64_t> &vals) const {
+    assert(validator_);
+    return validator_->GetSolutionCollector().SolutionToString(vals);
 }
 
 DecisionBuilder *Searchlight::CreateDefaultHeuristic(

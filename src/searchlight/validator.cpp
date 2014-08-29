@@ -153,7 +153,7 @@ public:
         }
 
         // check for searchlight termination
-        if (validator_.sl_.CheckTerminate()) {
+        if (validator_.CheckTerminate()) {
             // this will stop the search by failing the right branch
             LOG4CXX_INFO(logger, "Terminating the validator by force");
             solver->Fail();
@@ -257,8 +257,8 @@ public:
     AuxRestoreMonitor aux_monitor_;
 };
 
-Validator::Validator(Searchlight &sl, const StringVector &var_names,
-        SearchlightCollector &sl_collector) :
+Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
+        const StringVector &var_names) :
         sl_(sl),
         solver_("validator solver"),
         adapter_(sl.CreateAdapter("validator")), // INTERVAL mode by default!
@@ -282,8 +282,8 @@ Validator::Validator(Searchlight &sl, const StringVector &var_names,
     }
 
     // Create collector
-    sl_collector.InitCollector(&solver_);
-    collector_ = sl_collector.GetCollector();
+    collector_ = solver_.RevAlloc(
+            new SearchlightSolutionCollector(sl_task, &solver_));
 
     /*
      * Now, we want to find all decision variables. We do this via a

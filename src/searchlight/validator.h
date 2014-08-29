@@ -34,6 +34,7 @@
 
 #include "scidb_inc.h"
 #include "ortools_inc.h"
+#include "searchlight_collector.h"
 
 #include <condition_variable>
 #include <mutex>
@@ -57,16 +58,11 @@ public:
      * set the vars to the validated values.
      *
      * @param solver the main search solver
+     * @param sl_task current searchlight task
      * @param var_names the names of the variables
-     * @param collector the searchlight collector to grab validated solutions
      */
-    Validator(Searchlight &sl, const StringVector &var_names,
-            SearchlightCollector &sl_collector);
-
-    /**
-     * Destructor.
-     */
-    ~Validator() {}
+    Validator(Searchlight &sl, SearchlightTask &sl_task,
+            const StringVector &var_names);
 
     /**
      * Adds a solution (assignment) to validate later.
@@ -110,6 +106,15 @@ public:
         validate_cond_.notify_one();
     }
 
+    /**
+     * Returns solution collector for reporting validating results to the task.
+     *
+     * @return validated solutions collectors
+     */
+    SearchlightSolutionCollector &GetSolutionCollector() const {
+        return *collector_;
+    }
+
 private:
     /*
      * We define the DB as a friend to grab the next portion of assignments
@@ -148,8 +153,8 @@ private:
     // The prototype assignment for search variables
     Assignment search_vars_prototype_;
 
-    // User's solution collector (don't need to delete)
-    SolutionCollector *collector_;
+    // Valid solutions collector
+    SearchlightSolutionCollector *collector_;
 
     // Condition var to wait for solutions to validate
     mutable std::condition_variable validate_cond_;

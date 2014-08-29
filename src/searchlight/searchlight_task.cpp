@@ -163,7 +163,6 @@ void SearchlightTask::HandleFinValidator(InstanceID id) {
     distr_search_info_->busy_validators_count_--;
 
     if (distr_search_info_->busy_validators_count_ == 0) {
-        lock.unlock();
         BroadcastCommit();
     }
 }
@@ -250,7 +249,7 @@ void SearchlightTask::ReportSolution(const std::vector<int64_t> &values) {
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
         // We are at the coordinator -- add the solution to the queue
-        const std::string sol = collector_.SolutionToString(values);
+        const std::string sol = searchlight_.SolutionToString(values);
         std::lock_guard<std::mutex> lock(mtx_);
         solutions_queue_.push_back(sol);
         queue_cond_.notify_one();

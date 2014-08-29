@@ -37,7 +37,6 @@
 #include "ortools_inc.h"
 #include "scidb_inc.h"
 #include "searchlight.h"
-#include "searchlight_collector.h"
 #include "searchlight_messenger.h"
 
 #include <mutex>
@@ -74,7 +73,6 @@ public:
                 query_instance_count_(query->getInstancesCount()),
                 my_instance_id_(query->getInstanceID()),
                 searchlight_(*this, task_name, dll_handler_),
-                collector_(*this),
                 query_(query) {
 
         // Fill in distributed search info
@@ -88,7 +86,6 @@ public:
         }
 
         ResolveTask(library_name, task_name);
-        searchlight_.RegisterCollector(&collector_);
         searchlight_.ReadConfig(config_file_name);
         searchlight_.RegisterArray(data, samples);
 
@@ -179,7 +176,7 @@ public:
 
 private:
     // Make it a friend to modify the queue
-    friend class TaskSolutionCollector;
+    friend class SearchlightSolutionCollector;
 
     // Contains information about the state of distributed search.
     struct DistributedSearchInfo {
@@ -251,9 +248,6 @@ private:
 
     // The main sl instance
     Searchlight searchlight_;
-
-    // The solution collector for exact results
-    SearchlightCollector collector_;
 
     // The task function
     SLTaskFunc task_;

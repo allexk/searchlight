@@ -41,11 +41,12 @@ static log4cxx::LoggerPtr logger(
 static log4cxx::LoggerPtr result_logger(
         log4cxx::Logger::getLogger("searchlight.result"));
 
-TaskSolutionCollector::TaskSolutionCollector(SearchlightTask &task, Solver *s) :
+SearchlightSolutionCollector::SearchlightSolutionCollector(
+        SearchlightTask &task, Solver *s) :
     SolutionCollector(s),
     task_(task) {}
 
-bool TaskSolutionCollector::AtSolution() {
+bool SearchlightSolutionCollector::AtSolution() {
     // we can reuse the same prototype and do not have to store the values
     const Assignment::IntContainer &vars = prototype_.get()->IntVarContainer();
 
@@ -60,7 +61,7 @@ bool TaskSolutionCollector::AtSolution() {
     return true;
 }
 
-std::string TaskSolutionCollector::SolutionToString(
+std::string SearchlightSolutionCollector::SolutionToString(
         const std::vector<int64_t> &vals) const {
     // we can reuse the same prototype and do not have to store the values
     const Assignment::IntContainer &vars = prototype_.get()->IntVarContainer();

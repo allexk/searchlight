@@ -396,16 +396,6 @@ public:
             const IntVarVector &secondary_vars, size_t splits);
 
     /**
-     * Registers a solution collector for handling the exact results. SL is
-     * not responsible for deleting it.
-     *
-     * @param collector collector for exact results
-     */
-    void RegisterCollector(SearchlightCollector *collector) {
-        search_monitors_.collector_ = collector;
-    }
-
-    /**
      * Returns user monitors attached to the main solver during the search.
      * Since this function returns a reference to the internal list, it is safe
      * to call before the Solve(). The list will be populated there. This also
@@ -516,15 +506,20 @@ public:
      */
     void HandleCommit();
 
+    /**
+     * Converts the specified solution to a string representation.
+     *
+     * @param vals variable values
+     * @return string representation of the solution
+     */
+    std::string SolutionToString(const std::vector<int64_t> &vals) const;
+
 private:
     // Signals validator to end, waits and then destroys it
     void EndAndDestroyValidator();
 
     // Monitors participating in the search
     struct SearchMonitors {
-        // Solution collector for main (exact) results
-        SearchlightCollector *collector_ = nullptr;
-
         // Validator monitor for the search
         ValidatorMonitor *validator_monitor_ = nullptr;
 
@@ -535,10 +530,6 @@ private:
         std::vector<SearchMonitor *> aux_monitors_;
 
         void Disband() {
-            /*
-             * Collector is owned by the Searchlight Task.
-             * aux/user monitors are owned by the Solver
-             */
             delete validator_monitor_;
         }
     };
