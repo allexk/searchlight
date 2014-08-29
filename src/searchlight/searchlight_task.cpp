@@ -231,15 +231,19 @@ void SearchlightTask::HandleControlMessage(InstanceID inst,
 
     switch (control_msg->type()) {
         case SearchlightControl::SEARCH_IDLE:
+            LOG4CXX_INFO(logger, "Search is idle: id=" << inst);
             HandleIdleSolver(inst);
             break;
         case SearchlightControl::VALIDATOR_LOCAL_FIN:
+            LOG4CXX_INFO(logger, "validator finished: id=" << inst);
             HandleFinValidator(inst);
             break;
         case SearchlightControl::END_SEARCH:
+            LOG4CXX_INFO(logger, "End-of-search request");
             HandleEndOfSearch();
             break;
         case SearchlightControl::COMMIT:
+            LOG4CXX_INFO(logger, "Commit request");
             HandleCommit();
             break;
     }
