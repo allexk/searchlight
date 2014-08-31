@@ -270,8 +270,8 @@ std::string Searchlight::SolutionToString(
 
 DecisionBuilder *Searchlight::CreateDefaultHeuristic(
         const IntVarVector &primary_vars,
-        const IntVarVector &secondary_vars, size_t splits) {
-    return new SLSearch(*this, solver_, primary_vars, secondary_vars, splits);
+        const IntVarVector &secondary_vars) {
+    return new SLSearch(*this, solver_, primary_vars, secondary_vars);
 }
 
 void Searchlight::ReadConfig(const std::string &file_name) {

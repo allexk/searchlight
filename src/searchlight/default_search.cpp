@@ -374,8 +374,8 @@ Decision* SLSearch::Next(Solver* const s) {
         }
 
         const auto init_start_time = std::chrono::steady_clock::now();
-        InitIntervals(s, search_config_.intervals_to_probe_);
-        intervals_explored_ = true; // no rev on backtracking -- compute once
+        InitIntervals(s);
+        s->SaveAndSetValue(&intervals_explored_, true);
         const auto init_end_time = std::chrono::steady_clock::now();
         const int64_t init_seconds =
                 std::chrono::duration_cast<std::chrono::seconds>
@@ -486,8 +486,30 @@ Decision* SLSearch::Next(Solver* const s) {
     return s->MakeFailDecision();
 }
 
-void SLSearch::InitIntervals(Solver * const s, const int steps_limit) {
+void SLSearch::InitIntervals(Solver * const s) {
     LOG4CXX_INFO(logger, "Exploring interval impacts");
+
+    // First, fill in the structure
+    var_impacts_.clear();  // from possible previous search
+    var_to_index_.clear(); // from possible previous search
+    uint64_t search_space_size = 1;
+    for (auto int_var: primary_vars_) {
+        if (!int_var->Bound()) {
+            const int var_ind = var_to_index_.size();
+            var_to_index_[int_var] = var_ind;
+
+            const int64 var_min = int_var->Min();
+            const int64 var_max = int_var->Max();
+            const int64 var_len = var_max - var_min + 1;
+            const size_t interval_len = var_len <= search_config_.splits_ ?
+                    1 : var_len / search_config_.splits_;
+            var_impacts_.push_back(IntervalVarImpacts(var_min, var_max,
+                    interval_len, int_var));
+            search_space_size *= var_len;
+        }
+    }
+
+    // Explore each interval
     std::vector<SearchMonitor *> nested_monitors(sl_.GetAuxMonitors());
     if (search_config_.submit_probes_) {
         nested_monitors.push_back(sl_.GetValidatorMonitor());
@@ -498,9 +520,26 @@ void SLSearch::InitIntervals(Solver * const s, const int steps_limit) {
                 const int64 min = interval_impact.first;
                 const int64 max = min + var_impact.interval_length_ - 1;
 
+                /*
+                 *  Determine number of probes.
+                 *
+                 *  Default: percentage of the size of the corresponding
+                 *  hyper-rectangle with fixed interval for this variable.
+                 *
+                 *  Next: we limit it by the maximum number (from config).
+                 */
+                const int64 var_len = var_impact.var_->Max() -
+                        var_impact.var_->Min() + 1;
+                int steps_limit = search_space_size / var_len *
+                        var_impact.interval_length_ *
+                        search_config_.probes_percentage_;
+                steps_limit = std::min(steps_limit,
+                        search_config_.max_probes_number_);
+
                 LOG4CXX_TRACE(logger, "Exploring interval [" <<
                         min << ", " << max << "] for " <<
-                        var_impact.var_->DebugString());
+                        var_impact.var_->DebugString() << " with " <<
+                        steps_limit << " probes");
 
                 IntervalImpactMonitor explorer_monitor{s, steps_limit};
                 nested_monitors.push_back(&explorer_monitor);
@@ -629,7 +668,9 @@ std::ostream &SLSearch::OutputConfig(std::ostream &os) const {
             break;
     }
 
-    os << "\nIntervals to probe: " << search_config_.intervals_to_probe_;
+    os << "\nMaximum number of probes: " << search_config_.max_probes_number_;
+    os << "\nProbes percentage: " << search_config_.probes_percentage_;
+    os << "\nSplits: " << search_config_.splits_;
     os << "\nPenalty coefficient: " << search_config_.interval_penalty_;
     os << "\nLuby restarts scale: " << search_config_.luby_scale_;
     os << "\nRestart-on-fails probes: " << search_config_.fails_restart_probes_;

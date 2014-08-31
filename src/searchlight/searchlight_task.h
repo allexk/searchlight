@@ -196,6 +196,9 @@ private:
     // Info about distributed search (non-NULL only at the coordinator)
     std::unique_ptr<DistributedSearchInfo> distr_search_info_;
 
+    // Returns the next instance that requires help
+    InstanceID GetHelpee();
+
     // Resolves the task in the DLL
     void ResolveTask(const std::string &lib_name, const std::string &task_name);
 

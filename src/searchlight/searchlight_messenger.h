@@ -232,6 +232,9 @@ public:
     void SendSolution(const boost::shared_ptr<Query> &query,
             const std::vector<int64_t> &vals) const;
 
+    void DispatchHelper(const boost::shared_ptr<Query> &query,
+            InstanceID helper) const;
+
 private:
 
     struct ChunkRequestData {

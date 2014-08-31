@@ -127,6 +127,25 @@ void SearchlightTask::ReportFinValidator() {
     }
 }
 
+InstanceID SearchlightTask::GetHelpee() {
+    InstanceID res = scidb::INVALID_INSTANCE;
+    std::queue<InstanceID> &help_queue = distr_search_info_->help_queue_;
+    while (!help_queue.empty()) {
+        const InstanceID inst = help_queue.front();
+        help_queue.pop();
+
+        // We maintain the queue lazily -- check if the instance needs help
+        if (distr_search_info_->busy_solvers_.count(inst) &&
+                !distr_search_info_->nonhelp_solvers_.count(inst)) {
+            // The instance is busy and haven't rejected help
+            help_queue.push(inst);
+            res = inst;
+            break;
+        }
+    }
+    return res;
+}
+
 void SearchlightTask::HandleIdleSolver(InstanceID id) {
     // TODO: no balancing right now; add that later.
     std::unique_lock<std::mutex> lock(mtx_);
@@ -139,9 +158,14 @@ void SearchlightTask::HandleIdleSolver(InstanceID id) {
     if (distr_search_info_->busy_solvers_.empty()) {
         BroadcastFinishSearch();
     } else {
-        // FIXME: Choose a helpee and give it this solver; later.
         // This solver might have rejected help, this might change later.
         distr_search_info_->nonhelp_solvers_.erase(id);
+
+        const InstanceID helpee = GetHelpee();
+        if (helpee != scidb::INVALID_INSTANCE) {
+            LOG4CXX_DEBUG(logger, "Found a helpee, inst=" << helpee);
+
+        }
     }
 }
 

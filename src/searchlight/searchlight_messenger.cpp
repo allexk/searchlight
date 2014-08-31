@@ -696,6 +696,12 @@ void SearchlightMessenger::ReportFinValidator(
     query_ctx->stats_.msgs_sent_++;
 }
 
+void SearchlightMessenger::DispatchHelper(const boost::shared_ptr<Query> &query,
+        InstanceID helper) const {
+
+}
+
+
 void SearchlightMessenger::BroadcastFinishSearch(
         const boost::shared_ptr<Query> &query) const {
     // prepare the message

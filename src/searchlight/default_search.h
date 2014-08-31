@@ -54,35 +54,19 @@ public:
      * @param solver the main solver
      * @param primary_vars primary decision variables used for intervals
      * @param secondary_vars secondary decision variables used in the search
-     * @param splits the maximum number of intervals for a variable
      * @param search_time_limit time limit in seconds; negative -- no limit
      */
     SLSearch(const Searchlight &sl,
             Solver &solver,
             const IntVarVector &primary_vars,
-            const IntVarVector &secondary_vars, size_t splits) :
+            const IntVarVector &secondary_vars) :
+        primary_vars_(primary_vars),
         secondary_vars_(secondary_vars),
         intervals_explored_(false),
         sl_(sl),
         solver_(solver),
         dummy_monitor_(&solver),
         search_config_(sl.GetConfig()) {
-
-        for (auto int_var: primary_vars) {
-            if (!int_var->Bound()) {
-                // TODO: Do we really need this map?
-                const int var_ind = var_to_index_.size();
-                var_to_index_[int_var] = var_ind;
-
-                const int64 var_min = int_var->Min();
-                const int64 var_max = int_var->Max();
-                const int64 var_len = var_max - var_min + 1;
-                const size_t interval_len = var_len <= splits ?
-                        1 : var_len / splits;
-                var_impacts_.push_back(IntervalVarImpacts(var_min, var_max,
-                        interval_len, int_var));
-            }
-        }
 
         all_vars_.reserve(primary_vars.size() + secondary_vars.size());
         all_vars_.insert(all_vars_.end(), primary_vars.begin(),
@@ -160,8 +144,14 @@ private:
         // The length of the time interval (or down coeff. for EXP)
         int64_t time_interval_;
 
-        // Number of intervals to probe during init
-        int intervals_to_probe_;
+        // Maximum number of probes
+        int max_probes_number_;
+
+        // Percentage of probes for an interval
+        double probes_percentage_;
+
+        // Number of splits for each primarty vartiable's domain
+        int splits_;
 
         // Penalty for the interval after it is chosen again
         double interval_penalty_;
@@ -205,8 +195,12 @@ private:
 
             time_interval_ = sl_config.get("searchlight.sl.time_interval",
                     def_time_interval);
-            intervals_to_probe_ =
-                    sl_config.get("searchlight.sl.probe_intervals", 1000);
+            max_probes_number_ =
+                    sl_config.get("searchlight.sl.max_probes", 1000);
+            probes_percentage_ =
+                    sl_config.get("searchlight.sl.probes_percentage", 0.01);
+            splits_ =
+                    sl_config.get("searchlight.sl.splits", 100);
             interval_penalty_ =
                     sl_config.get("searchlight.sl.interval_penalty", 0.5);
 
@@ -288,14 +282,13 @@ private:
                 impacts_.push_back(std::make_pair(i, Impact()));
             }
         }
-
     };
 
     /*
      * Explores all intervals. It will try steps_limit steps. A "step"
      * basically runs until a fail (leaf one or in-tree).
      */
-    void InitIntervals(Solver *s, int steps_limit);
+    void InitIntervals(Solver *s);
 
     /*
      * Finds the best variable from the ones that are still interval unbound.
@@ -314,6 +307,9 @@ private:
 
     // Impacts for the primary vars (indexes are in the map above)
     std::vector<IntervalVarImpacts> var_impacts_;
+
+    // primary decision variables for impacts estimation
+    const IntVarVector primary_vars_;
 
     // Decision variables not participating in discovering the intervals
     const IntVarVector secondary_vars_;

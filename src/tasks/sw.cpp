@@ -101,7 +101,6 @@ void SemWindowsAvg(Searchlight *sl) {
 
     const int32 time_limit = config.get("sw.time_limit", 3600);
     const int luby_scale = config.get("searchlight.sl.luby_scale", 1);
-    const int splits = config.get("sw.splits", 100);
 
     // problem params
     std::vector<IntVar *> coords(2);
@@ -223,7 +222,7 @@ void SemWindowsAvg(Searchlight *sl) {
             mons.push_back(MakeCumulativeTimeLimit(solver, time_limit * 1000));
         }
         db = solver.RevAlloc(
-                sl->CreateDefaultHeuristic(coords, lens, splits));
+                sl->CreateDefaultHeuristic(coords, lens));
     } else {
         db = solver.MakePhase(all_vars, Solver::CHOOSE_FIRST_UNBOUND,
             Solver::ASSIGN_MIN_VALUE);

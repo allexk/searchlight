@@ -388,12 +388,11 @@ public:
      *
      * @param primary_vars primary decision variables
      * @param secondary_vars secondary variables
-     * @param splits number of interval splits for primary variables
      *
      * @return SL search heuristic
      */
     DecisionBuilder *CreateDefaultHeuristic(const IntVarVector &primary_vars,
-            const IntVarVector &secondary_vars, size_t splits);
+            const IntVarVector &secondary_vars);
 
     /**
      * Returns user monitors attached to the main solver during the search.

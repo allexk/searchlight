@@ -20,12 +20,24 @@ message SearchlightSolution {
 message SearchlightControl {
     // Type for info messages between nodes and the coordinator
     enum Type {
-        SEARCH_IDLE = 0;         // Main solver has finished and is idle
+        SEARCH_IDLE         = 0; // Main solver has finished and is idle
         VALIDATOR_LOCAL_FIN = 1; // Validator finished its local work
-        END_SEARCH = 2;          // Search ended on all nodes
-        COMMIT = 3;              // Full stop; validators will cease working
+        END_SEARCH          = 2; // Search ended on all nodes
+        COMMIT              = 3; // Full stop; validators will cease working
     }
 
-    required Type type = 1; // Control message type
+    required Type type      = 1; // Control message type
     optional int32 instance = 2; // Instance related to the message
+}
+
+message SearchlightBalance {
+    // Type for info messages between nodes
+    enum Type {
+        HELPER_DISPATCH = 1; // Giving a helper instance
+        REJECT_HELPER   = 2; // Rejecting help just given
+        HELP_LOAD       = 3; // Message contains load for the helper
+    }
+
+    optional VarAssignment load = 1; // Load for the helper
+    optional int32 instance     = 2; // helper instance id
 }
