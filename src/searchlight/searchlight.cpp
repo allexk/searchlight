@@ -85,8 +85,7 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
     db_ = db;
 
     /*
-     * First, we need to establish our own validation collector, create
-     * a validator and pass it the names of the decision vars
+     * First, we need to create the validator.
      */
     IntVarVector vars{primary_vars};
     vars.insert(vars.end(), secondary_vars.begin(), secondary_vars.end());
@@ -106,6 +105,10 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
         }
         var_names[i++] = var_name;
     }
+
+    // establish collector and validator
+    LOG4CXX_INFO(logger, "Initiating the validator");
+    validator_ = new Validator(*this, sl_task_, var_names);
 
     /*
      * Determine our partition. First, determine the variable with the largest
@@ -139,10 +142,6 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
         ModelVisitor *pmv = solver_.MakePrintModelVisitor();
         solver_.Accept(pmv);
     }
-
-    // establish collector and validator
-    LOG4CXX_INFO(logger, "Initiating the validator");
-    validator_ = new Validator(*this, sl_task_, var_names);
 
     // Establish monitors: validator (to transfer leaves) and terminator
     search_monitors_.user_monitors_ = monitors;

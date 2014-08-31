@@ -265,6 +265,9 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
         search_vars_prototype_(&solver_),
         solver_status_(false) {
 
+    // Start adapter in the dumb mode, since we don't need estimations
+    adapter_->SetAdapterMode(Adapter::DUMB);
+
     // First, clone the solver
     if (!CloneModel(sl_, sl_.GetSolver(), solver_, adapter_)) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
@@ -365,6 +368,7 @@ void Validator::operator()() {
             solver_.RevAlloc(new RestoreAssignmentBuilder(*this, &solver_,
                     restart_period_));
     solver_status_ = solver_.Solve(db, collector_);
+    LOG4CXX_INFO(logger, "Validator exited solve()");
 }
 
 AssignmentPtrVector *Validator::GetNextAssignments() {
