@@ -52,7 +52,6 @@
         },
 
         "db": "sl",
-        "time_limit": 3600,
-        "splits": 100
+        "time_limit": 3600
     }
 }

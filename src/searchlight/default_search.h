@@ -59,21 +59,7 @@ public:
     SLSearch(const Searchlight &sl,
             Solver &solver,
             const IntVarVector &primary_vars,
-            const IntVarVector &secondary_vars) :
-        primary_vars_(primary_vars),
-        secondary_vars_(secondary_vars),
-        intervals_explored_(false),
-        sl_(sl),
-        solver_(solver),
-        dummy_monitor_(&solver),
-        search_config_(sl.GetConfig()) {
-
-        all_vars_.reserve(primary_vars.size() + secondary_vars.size());
-        all_vars_.insert(all_vars_.end(), primary_vars.begin(),
-                primary_vars.end());
-        all_vars_.insert(all_vars_.end(), secondary_vars.begin(),
-                secondary_vars.end());
-    }
+            const IntVarVector &secondary_vars);
 
     /**
      * Produces the next decision.
@@ -93,6 +79,27 @@ public:
     }
 
     /**
+     * Outputs variable impacts to a stream.
+     *
+     * @param os stream for output
+     * @return the same stream
+     */
+    std::ostream &OutputImpacts(std::ostream &os) const;
+
+    /**
+     * Outputs the search configuration.
+     *
+     * @param os stream to output to
+     * @return the same stream
+     */
+    std::ostream &OutputConfig(std::ostream &os) const;
+
+private:
+    // Internal monitors and builders
+    class IntervalImpactBuilder;
+    class SetIntervalDecision;
+
+    /*
      * Removes a variable's interval from the search process. After this it
      * will not be participating in the interval choosing process. The variable
      * must be registered at this decision builder.
@@ -114,23 +121,6 @@ public:
         }
     }
 
-    /**
-     * Outputs variable impacts to a stream.
-     *
-     * @param os stream for output
-     * @return the same stream
-     */
-    std::ostream &OutputImpacts(std::ostream &os) const;
-
-    /**
-     * Outputs the search configuration.
-     *
-     * @param os stream to output to
-     * @return the same stream
-     */
-    std::ostream &OutputConfig(std::ostream &os) const;
-
-private:
     // This is struct containing config params
     struct SLConfig {
         // How to spread time between intervals

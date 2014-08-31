@@ -56,10 +56,161 @@ std::ostream &operator<<(std::ostream &s, const SLSearch::Impact &impact) {
 }
 
 namespace {
+
+/**
+ * This monitor tracks the progress of the interval explorer and collects
+ * relevant statistics.
+ *
+ * This monitor also serves as a limiter that finishes the exploring search
+ * after the specified number of fails.
+ */
+class IntervalImpactMonitor : public SearchMonitor {
+public:
+    /**
+     * Creates a new explorer monitor.
+     *
+     * @param s the solver for the search
+     */
+    IntervalImpactMonitor(Solver * const s) :
+        SearchMonitor(s),
+        fails_(0),
+        leaves_(0),
+        fails_limit_(0) {}
+
+    /**
+     * Set the limit of fails after which the monitor will fail the search.
+     *
+     * @param limit fails limit
+     */
+    void SetFailsLimit(int limit) {
+        fails_limit_ = limit;
+    }
+
+    /**
+     * Returns the number of true fails. A true fail is any fail except
+     * a backtracking from a leaf.
+     *
+     * @return the number of true fails
+     */
+    int GetTrueFails() const {
+        assert(fails_ >= leaves_);
+        return fails_ - leaves_;
+    }
+
+    /**
+     * Returns the total number of fails.
+     *
+     * @return the total number of fails
+     */
+    int GetTotalFails() const {
+        return fails_;
+    }
+
+    /**
+     * Returns the number of leaves (solutions) reached.
+     *
+     * @return the number of leaves reached
+     */
+    int GetLeavesReached() const {
+        return leaves_;
+    }
+
+    /**
+     * Callback called when a fail begins, before the jump.
+     */
+    virtual void BeginFail() override {
+        fails_++;
+        if (fails_ >= fails_limit_) {
+            FinishCurrentSearch();
+            // Not calling Fail() since we're failing anyway
+        }
+    }
+
+    /**
+     * Callback called when a leaf is reached.
+     *
+     * @return true, if we want to backtrack and continue; false, otherwise
+     */
+    virtual bool AtSolution() override {
+        leaves_++;
+        return true;
+    }
+
+private:
+    // Total fails
+    int fails_;
+
+    // Leaves reached
+    int leaves_;
+
+    // The maximum number of fails
+    int fails_limit_;
+};
+
+/**
+ * This monitors checks the number of fails and leaves reached periodically,
+ * and finishes the search if the ratio is below the threshold.
+ */
+class FinishOnFailsMonitor : public SearchMonitor {
+public:
+    /**
+     * Creates a new check-fail-and-finish monitor.
+     *
+     * @param s the solver
+     * @param period the length of checking period in fails
+     * @param threshold the threshold of finish
+     */
+    FinishOnFailsMonitor(Solver *s, int64_t period, double threshold) :
+        SearchMonitor(s),
+        fails_period_(period), finish_threshold_(threshold) {}
+
+    /**
+     * Called when the solver begins the fail.
+     */
+    virtual void BeginFail() override {
+        fails_++;
+        if (fails_ == fails_period_) {
+            const double ratio = double(leaves_) / fails_;
+            if (ratio <= finish_threshold_) {
+                FinishCurrentSearch();
+                LOG4CXX_TRACE(logger, "Finishing the search because "
+                        "of a large fail ratio: " << ratio);
+            }
+
+            fails_ = leaves_ = 0;
+        }
+    }
+
+    /**
+     * Called at a leaf.
+     *
+     * @return true, since we want to continue
+     */
+    virtual bool AtSolution() override {
+        leaves_++;
+        return true;
+    }
+
+private:
+    // The length of checking period in fails
+    const int64_t fails_period_;
+
+    // Fails since the last check
+    int64_t fails_ = 0;
+
+    // The number of leaves since the last check
+    int64_t leaves_ = 0;
+
+    // Threshold of leaves/fails at which the search will be finished
+    const double finish_threshold_;
+};
+
+}
+
 /**
  * This class represents a decision to set an interval for a variable.
  */
-class SetIntervalDecision : public Decision {
+class SLSearch::SetIntervalDecision : public Decision {
 public:
     /**
      * Creates a new decision that sets the interval.
@@ -126,112 +277,31 @@ private:
 };
 
 /**
- * This monitor tracks the progress of the interval explorer and collects
- * relevant statistics.
- *
- * This monitor also serves as a limiter that finishes the exploring search
- * after the specified number of fails.
- */
-class IntervalImpactMonitor : public SearchMonitor {
-public:
-    /**
-     * Creates a new explorer monitor.
-     *
-     * @param s the solver for the search
-     * @param fails_limit the maximum number of fails before the search ends
-     */
-    IntervalImpactMonitor(Solver * const s, const int fails_limit) :
-        SearchMonitor(s),
-        fails_(0),
-        leaves_(0),
-        fails_limit_(fails_limit) {}
-
-    /**
-     * Returns the number of true fails. A true fail is any fail except
-     * a backtracking from a leaf.
-     *
-     * @return the number of true fails
-     */
-    int GetTrueFails() const {
-        assert(fails_ >= leaves_);
-        return fails_ - leaves_;
-    }
-
-    /**
-     * Returns the total number of fails.
-     *
-     * @return the total number of fails
-     */
-    int GetTotalFails() const {
-        return fails_;
-    }
-
-    /**
-     * Returns the number of leaves (solutions) reached.
-     *
-     * @return the number of leaves reached
-     */
-    int GetLeavesReached() const {
-        return leaves_;
-    }
-
-    /**
-     * Callback called when a fail begins, before the jump.
-     */
-    virtual void BeginFail() override {
-        fails_++;
-        if (fails_ >= fails_limit_) {
-            FinishCurrentSearch();
-            // Not calling Fail() since we're failing anyway
-        }
-    }
-
-    /**
-     * Callback called when a leaf is reached.
-     *
-     * @return true, if we want to backtrack and continue; false, otherwise
-     */
-    virtual bool AtSolution() override {
-        leaves_++;
-        return true;
-    }
-
-private:
-    // Total fails
-    int fails_;
-
-    // Leaves reached
-    int leaves_;
-
-    // The maximum number of fails
-    const int fails_limit_;
-};
-
-/**
  * Search heuristic to randomly sample the specified interval for the
  * specified number of tries (fails).
  */
-class IntervalImpactBuilder : public DecisionBuilder {
+class SLSearch::IntervalImpactBuilder : public DecisionBuilder {
 public:
     /**
      * Creates a new interval sample heuristic.
      *
-     * @param search_vars decision variables
+     * @param sl_search top-level SL search
+     * @param impact_monitor impact monitor that tracks fails
      * @param var the var to bind to an interval
      * @param min the left interval bound
      * @param max the right interval bound
      * @param monitors monitors to establish, vector will be modified inside,
      *     but left unchanged at exit
      */
-    IntervalImpactBuilder(IntVarVector &search_vars, IntVar * const var,
+    IntervalImpactBuilder(const SLSearch &sl_search,
+            IntervalImpactMonitor &impact_monitor,
+            IntVar * const var,
             const int64_t min, const int64_t max,
-            std::vector<SearchMonitor *> &monitors,
-            int luby_scale) :
-
-            search_vars_(search_vars),
+            std::vector<SearchMonitor *> &monitors) :
+            sl_search_(sl_search),
+            impact_monitor_(impact_monitor),
             var_(var), min_(min), max_(max),
             monitors_(monitors),
-            luby_scale_(luby_scale),
             problem_infeasible_(true) {}
 
     /**
@@ -248,17 +318,36 @@ public:
         var_->SetRange(min_, max_);
         problem_infeasible_ = false;
 
+        /*
+         *  Determine number of probes.
+         *
+         *  Default: percentage of the size of the corresponding
+         *  hyper-rectangle with fixed interval for this variable.
+         *
+         *  Next: we limit it by the maximum number (from config).
+         */
+        uint64_t ss_size = 1;
+        for (const IntVar *var: sl_search_.all_vars_) {
+            ss_size *= var->Size();
+        }
+        int probes_limit = ss_size *
+                sl_search_.search_config_.probes_percentage_;
+        probes_limit = std::min(probes_limit,
+                sl_search_.search_config_.max_probes_number_);
+        impact_monitor_.SetFailsLimit(probes_limit);
+
         // We are going to conduct a random search...
-        DecisionBuilder * const random_db = s->MakePhase(search_vars_,
+        DecisionBuilder * const random_db = s->MakePhase(sl_search_.all_vars_,
                 Solver::CHOOSE_RANDOM, Solver::ASSIGN_RANDOM_VALUE);
 
         // Nested search
-        if (luby_scale_ != 0) {
+        int luby_scale = sl_search_.search_config_.luby_scale_;
+        if (luby_scale != 0) {
             LOG4CXX_TRACE(logger, "Setting Luby restarts for impact estimator");
-            monitors_.push_back(s->MakeLubyRestart(luby_scale_));
+            monitors_.push_back(s->MakeLubyRestart(luby_scale));
         }
         s->Solve(random_db, monitors_);
-        if (luby_scale_ != 0) {
+        if (luby_scale != 0) {
             monitors_.pop_back();
         }
 
@@ -285,8 +374,11 @@ public:
     }
 
 private:
-    // All decision variables
-    IntVarVector &search_vars_;
+    // Top-level SL search
+    const SLSearch &sl_search_;
+
+    // Impact monitor that tracks fails
+    IntervalImpactMonitor &impact_monitor_;
 
     // The variable to set
     IntVar * const var_;
@@ -297,71 +389,43 @@ private:
     // Monitors to establish for the explorer search
     std::vector<SearchMonitor *> &monitors_;
 
-    // Scale factor for Luby restarts
-    int luby_scale_;
-
     // True, if the problem was infeasible (i.e., the interval is infeasible)
     bool problem_infeasible_;
 };
 
-/**
- * This monitors checks the number of fails and leaves reached periodically,
- * and finishes the search if the ratio is below the threshold.
- */
-class FinishOnFailsMonitor : public SearchMonitor {
-public:
-    /**
-     * Creates a new check-fail-and-finish monitor.
-     *
-     * @param s the solver
-     * @param period the length of checking period in fails
-     * @param threshold the threshold of finish
-     */
-    FinishOnFailsMonitor(Solver *s, int64_t period, double threshold) :
-        SearchMonitor(s),
-        fails_period_(period), finish_threshold_(threshold) {}
+SLSearch::SLSearch(const Searchlight &sl,
+        Solver &solver,
+        const IntVarVector &primary_vars,
+        const IntVarVector &secondary_vars) :
+    primary_vars_(primary_vars),
+    secondary_vars_(secondary_vars),
+    intervals_explored_(false),
+    sl_(sl),
+    solver_(solver),
+    dummy_monitor_(&solver),
+    search_config_(sl.GetConfig()) {
 
-    /**
-     * Called when the solver begins the fail.
-     */
-    virtual void BeginFail() override {
-        fails_++;
-        if (fails_ == fails_period_) {
-            const double ratio = double(leaves_) / fails_;
-            if (ratio <= finish_threshold_) {
-                FinishCurrentSearch();
-                LOG4CXX_TRACE(logger, "Finishing the search because "
-                        "of a large fail ratio: " << ratio);
-            }
+    // Init impacts
+    for (auto int_var: primary_vars_) {
+        if (!int_var->Bound()) {
+            const int var_ind = var_to_index_.size();
+            var_to_index_[int_var] = var_ind;
 
-            fails_ = leaves_ = 0;
+            const int64 var_min = int_var->Min();
+            const int64 var_max = int_var->Max();
+            const int64 var_len = var_max - var_min + 1;
+            const size_t interval_len = var_len <= search_config_.splits_ ?
+                    1 : var_len / search_config_.splits_;
+            var_impacts_.push_back(IntervalVarImpacts(var_min, var_max,
+                    interval_len, int_var));
         }
     }
 
-    /**
-     * Called at a leaf.
-     *
-     * @return true, since we want to continue
-     */
-    virtual bool AtSolution() override {
-        leaves_++;
-        return true;
-    }
-
-private:
-    // The length of checking period in fails
-    const int64_t fails_period_;
-
-    // Fails since the last check
-    int64_t fails_ = 0;
-
-    // The number of leaves since the last check
-    int64_t leaves_ = 0;
-
-    // Threshold of leaves/fails at which the search will be finished
-    const double finish_threshold_;
-};
-
+    all_vars_.reserve(primary_vars.size() + secondary_vars.size());
+    all_vars_.insert(all_vars_.end(), primary_vars.begin(),
+            primary_vars.end());
+    all_vars_.insert(all_vars_.end(), secondary_vars.begin(),
+            secondary_vars.end());
 }
 
 Decision* SLSearch::Next(Solver* const s) {
@@ -375,7 +439,8 @@ Decision* SLSearch::Next(Solver* const s) {
 
         const auto init_start_time = std::chrono::steady_clock::now();
         InitIntervals(s);
-        s->SaveAndSetValue(&intervals_explored_, true);
+        //s->SaveAndSetValue(&intervals_explored_, true);
+        intervals_explored_ = true;
         const auto init_end_time = std::chrono::steady_clock::now();
         const int64_t init_seconds =
                 std::chrono::duration_cast<std::chrono::seconds>
@@ -488,73 +553,44 @@ Decision* SLSearch::Next(Solver* const s) {
 
 void SLSearch::InitIntervals(Solver * const s) {
     LOG4CXX_INFO(logger, "Exploring interval impacts");
-
-    // First, fill in the structure
-    var_impacts_.clear();  // from possible previous search
-    var_to_index_.clear(); // from possible previous search
-    uint64_t search_space_size = 1;
-    for (auto int_var: primary_vars_) {
-        if (!int_var->Bound()) {
-            const int var_ind = var_to_index_.size();
-            var_to_index_[int_var] = var_ind;
-
-            const int64 var_min = int_var->Min();
-            const int64 var_max = int_var->Max();
-            const int64 var_len = var_max - var_min + 1;
-            const size_t interval_len = var_len <= search_config_.splits_ ?
-                    1 : var_len / search_config_.splits_;
-            var_impacts_.push_back(IntervalVarImpacts(var_min, var_max,
-                    interval_len, int_var));
-            search_space_size *= var_len;
-        }
-    }
-
-    // Explore each interval
     std::vector<SearchMonitor *> nested_monitors(sl_.GetAuxMonitors());
     if (search_config_.submit_probes_) {
         nested_monitors.push_back(sl_.GetValidatorMonitor());
     }
+
     for (auto &var_impact: var_impacts_) {
         if (var_impact.impacts_.size() > 1) { // multiple intervals
             for (auto &interval_impact: var_impact.impacts_) {
+                Impact &imp = interval_impact.second;
                 const int64 min = interval_impact.first;
                 const int64 max = min + var_impact.interval_length_ - 1;
 
-                /*
-                 *  Determine number of probes.
-                 *
-                 *  Default: percentage of the size of the corresponding
-                 *  hyper-rectangle with fixed interval for this variable.
-                 *
-                 *  Next: we limit it by the maximum number (from config).
-                 */
-                const int64 var_len = var_impact.var_->Max() -
-                        var_impact.var_->Min() + 1;
-                int steps_limit = search_space_size / var_len *
-                        var_impact.interval_length_ *
-                        search_config_.probes_percentage_;
-                steps_limit = std::min(steps_limit,
-                        search_config_.max_probes_number_);
+                // Does the interval belong to the domain?
+                const int64 var_min = var_impact.var_->Min();
+                const int64 var_max = var_impact.var_->Max();
+                if (var_min > max || var_max < min) {
+                    LOG4CXX_TRACE(logger, "The interval is outside of domain");
+                    s->SaveAndSetValue(&imp.active, false);
+                    continue;
+                }
 
                 LOG4CXX_TRACE(logger, "Exploring interval [" <<
                         min << ", " << max << "] for " <<
-                        var_impact.var_->DebugString() << " with " <<
-                        steps_limit << " probes");
+                        var_impact.var_->DebugString());
 
-                IntervalImpactMonitor explorer_monitor{s, steps_limit};
+                IntervalImpactMonitor explorer_monitor{s};
                 nested_monitors.push_back(&explorer_monitor);
-                IntervalImpactBuilder explorer{all_vars_, var_impact.var_,
-                        min, max, nested_monitors, search_config_.luby_scale_};
+                IntervalImpactBuilder explorer{*this, explorer_monitor,
+                    var_impact.var_, min, max, nested_monitors};
                 s->Solve(&explorer);
                 nested_monitors.pop_back();
 
-                Impact &imp = interval_impact.second;
                 imp.tried_assigns_ = explorer_monitor.GetTotalFails();
                 imp.succ_assigns_ = explorer_monitor.GetLeavesReached();
                 if (explorer.ProblemInfeasible()) {
                     // We should deactivate the interval
                     LOG4CXX_TRACE(logger, "The interval is infeasible");
-                    imp.active = false;
+                    s->SaveAndSetValue(&imp.active, false);
                 }
                 LOG4CXX_TRACE(logger, "Determined impact for " <<
                         "[" << min << ", " << max << "]: " << imp);
