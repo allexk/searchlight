@@ -52,6 +52,7 @@
         },
 
         "db": "sl",
-        "time_limit": 3600
+        "time_limit": 3600,
+        "solver_balance": 1
     }
 }

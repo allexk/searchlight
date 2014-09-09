@@ -35,8 +35,8 @@
 #ifndef SEARCHLIGHT_DEPART_ARRAY_H_
 #define SEARCHLIGHT_DEPART_ARRAY_H_
 
-#include "../scidb_inc.h"
 #include "../searchlight_messenger.h"
+#include "../scidb_inc.h"
 
 #include <unordered_set>
 

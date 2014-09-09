@@ -62,10 +62,6 @@ void SearchlightTask::operator()() {
                     if (sl_status == Searchlight::Status::TERMINATED) {
                         LOG4CXX_DEBUG(logger, "Solver was terminated!");
                         work_expected = false;
-                    } else {
-                        assert(sl_status == Searchlight::Status::VOID);
-                        LOG4CXX_DEBUG(logger, "Solver finished a job");
-                        ReportIdleSolver();
                     }
                     break;
                 case Searchlight::Status::FIN_SEARCH:
@@ -130,15 +126,24 @@ void SearchlightTask::ReportFinValidator() {
 InstanceID SearchlightTask::GetHelpee() {
     InstanceID res = scidb::INVALID_INSTANCE;
     std::queue<InstanceID> &help_queue = distr_search_info_->help_queue_;
-    while (!help_queue.empty()) {
+    /*
+     * The main idea here is that some of the solvers might be ineligible for
+     * help: currently idle solvers (might happen due to asynchronous messages)
+     * or hard rejecters. We don't want to remove those and possibly insert
+     * them later, since the maintenance would be hard. We rather just try to
+     * see all of them and check if anyone qualifies. This might impose
+     * additional cost, but balancing should not be performed every
+     * millisecond anyway.
+     */
+    for (int i = 0; i < query_instance_count_; ++i) {
+        // We take instance and move it to the tail
         const InstanceID inst = help_queue.front();
         help_queue.pop();
+        help_queue.push(inst);
 
-        // We maintain the queue lazily -- check if the instance needs help
         if (distr_search_info_->busy_solvers_.count(inst) &&
                 !distr_search_info_->nonhelp_solvers_.count(inst)) {
             // The instance is busy and haven't rejected help
-            help_queue.push(inst);
             res = inst;
             break;
         }
@@ -163,9 +168,17 @@ void SearchlightTask::HandleIdleSolver(InstanceID id) {
 
         const InstanceID helpee = GetHelpee();
         if (helpee != scidb::INVALID_INSTANCE) {
-            LOG4CXX_DEBUG(logger, "Found a helpee, inst=" << helpee);
-
+            LOG4CXX_DEBUG(logger, "Dispatching help, dest=" << helpee
+                    << ", helper=" << id);
+            distr_search_info_->busy_solvers_.insert(id);
+            SearchlightMessenger::getInstance()->DispatchHelper(
+                    Query::getValidQueryPtr(query_), id, helpee);
         }
+        /*
+         * If we couldn't find a helper, that means all busy solvers have
+         * disabled balancing. In this case we just wait when they finish,
+         * no balancing will be needed anymore.
+         */
     }
 }
 
@@ -236,12 +249,8 @@ void SearchlightTask::HandleRemoteSolution(InstanceID inst,
                 << "Invalid message at the SL Task remote result function!";
     }
 
-    // Solution values are always at var_min (they're scalar values)
-    const int sol_size = sol_msg->solution().var_min_size();
-    std::vector<int64_t> vals(sol_size);
-    for (int i = 0; i < sol_size; i++) {
-        vals[i] = sol_msg->solution().var_min(i);
-    }
+    std::vector<int64_t> vals;
+    SearchlightMessenger::UnpackAssignment(sol_msg->solution(), vals, nullptr);
     ReportSolution(vals);
 }
 
@@ -273,6 +282,82 @@ void SearchlightTask::HandleControlMessage(InstanceID inst,
             LOG4CXX_DEBUG(logger, "Commit request");
             HandleCommit();
             break;
+    }
+}
+
+// Handles balancing messages
+void SearchlightTask::HandleBalanceMessage(InstanceID inst,
+        const google::protobuf::Message *msg) {
+    // Get the message
+    const SearchlightBalance *balance_msg =
+            dynamic_cast<const SearchlightBalance *>(msg);
+    if (!balance_msg) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << "Invalid message at the SL Task balance handler function!";
+    }
+
+    switch (balance_msg->type()) {
+        case SearchlightBalance::HELP_LOAD:
+            LOG4CXX_DEBUG(logger, "Got a remote load for the solver...");
+            HandleRemoteLoad(*balance_msg);
+            break;
+        case SearchlightBalance::REJECT_HELPER_HARD:
+        case SearchlightBalance::REJECT_HELPER_SOFT:
+        {
+            const int inst_count = balance_msg->instance_size();
+            assert(inst_count);
+            std::vector<InstanceID> instances(inst_count);
+            for (int i = 0; i < inst_count; i++) {
+                instances[i] = balance_msg->instance(i);
+            }
+            HandleRejectHelp(inst, instances,
+                 balance_msg->type() == SearchlightBalance::REJECT_HELPER_HARD);
+            break;
+        }
+        case SearchlightBalance::HELPER_DISPATCH:
+            assert(balance_msg->instance_size());
+            for (int i = 0; i < balance_msg->instance_size(); i++) {
+                searchlight_.HandleHelper(balance_msg->instance(i));
+            }
+            break;
+    }
+}
+
+void SearchlightTask::HandleRemoteLoad(const SearchlightBalance &msg) {
+    // Prepare the load
+    LiteAssignmentVector load(msg.load_size());
+    for (int i = 0; i < msg.load_size(); i++) {
+        SearchlightMessenger::UnpackAssignment(msg.load(i), load[i]);
+    }
+
+    // Put the load into the solver
+    std::lock_guard<std::mutex> lock(mtx_);
+    searchlight_.PrepareHelper(load);
+    sl_cond_.notify_one();
+}
+
+void SearchlightTask::HandleRejectHelp(InstanceID src,
+        const std::vector<InstanceID> &helpers, bool hard) {
+    // If it's a hard reject we need to disable help for src solver
+    if (hard) {
+        std::unique_lock<std::mutex> lock(mtx_);
+        distr_search_info_->nonhelp_solvers_.insert(src);
+    }
+
+    // Handle a rejected helper as idle -- there is no difference
+    for (auto id: helpers) {
+        HandleIdleSolver(id);
+    }
+}
+
+void SearchlightTask::RejectHelp(const std::vector<InstanceID> &helpers,
+        bool hard) {
+    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
+        HandleRejectHelp(my_instance_id_, helpers, hard);
+    } else {
+        // We are at a common instance -- send helpers back to the coordinator
+        SearchlightMessenger::getInstance()->RejectHelp(query, helpers, hard);
     }
 }
 
@@ -314,6 +399,13 @@ std::string SearchlightTask::GetNextSolution() {
     LOG4CXX_TRACE(logger, "A solution is found: " << res);
 
     return res;
+}
+
+void SearchlightTask::DispatchWork(const LiteAssignmentVector &work,
+        InstanceID solver) const {
+    // For now a helper is always a remote instance.
+    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+    SearchlightMessenger::getInstance()->DispatchWork(query, work, solver);
 }
 
 const ConstChunk *SearchlightResultsArray::nextChunk(AttributeID attId,

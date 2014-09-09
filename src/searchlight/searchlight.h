@@ -44,6 +44,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <chrono>
 #include <thread>
+#include <mutex>
 
 namespace searchlight {
 
@@ -227,12 +228,14 @@ public:
             DLLHandler &dll_handler) :
         solver_(name),
         db_(nullptr),
+        initial_var_values_(&solver_),
         validator_(nullptr),
         validator_thread_(nullptr),
         array_desc_(nullptr),
         dl_udf_handle_(dll_handler.LoadDLL("searchlight_udfs")),
         sl_task_(task),
-        status_(Status::VOID) {}
+        status_(Status::VOID),
+        solver_balancing_enabled_(true) {}
 
     /**
      * The destructor.
@@ -513,9 +516,65 @@ public:
      */
     std::string SolutionToString(const std::vector<int64_t> &vals) const;
 
+    /**
+     * Checks if any instances are available for help.
+     *
+     * @return true, if help available; false, otherwise
+     */
+    bool HelpAvailable() const {
+        return !helpers_.empty();
+    }
+
+    /**
+     * Handles a new helper for this solver.
+     *
+     * This handler also might reject help is the balancing is disabled (hard)
+     * or if the solver is not prepared or searching (soft). The latter might
+     * happen because of asynchronous messages, even when the solver has
+     * already became idle.
+     *
+     * @param id helper instance id
+     */
+    void HandleHelper(InstanceID id);
+
+    /**
+     * Dispatches work to an available helper.
+     *
+     * It is assumed that a helper is available, which can be checked by
+     * the HelpAvailable() function.
+     *
+     * @param work assignments to off-load
+     */
+    void DispatchWork(const LiteAssignmentVector &work);
+
+    /**
+     * Prepares this solver as a helper.
+     *
+     * This function loads remote assignments into the solver.
+     *
+     * @param load remote load
+     */
+    void PrepareHelper(LiteAssignmentVector &load);
+
+    /**
+     * Return primary variables for the search.
+     *
+     * Primary variables are the variables that are used to divide the
+     * search between instances, perform load balancing and make decisions
+     * during the search.
+     *
+     * @return primary variables
+     */
+    const IntVarVector &GetPrimaryVars() const {
+        return primary_vars_;
+    }
+
 private:
     // Signals validator to end, waits and then destroys it
     void EndAndDestroyValidator();
+
+    // Reject/release helpers
+    void RejectHelpers(bool hard);
 
     // Monitors participating in the search
     struct SearchMonitors {
@@ -545,6 +604,9 @@ private:
     // "Secondary" decision variables -- conveying additional info
     IntVarVector secondary_vars_;
 
+    // Contains initial var values to reset search before a new job
+    Assignment initial_var_values_;
+
     // Monitors defined for the search
     SearchMonitors search_monitors_;
 
@@ -572,6 +634,18 @@ private:
 
     // Searchlight status
     std::atomic<Status> status_;
+
+    // Helpers currently dispatched for this solver
+    std::list<InstanceID> helpers_;
+
+    // Work given to us by another instance
+    LiteAssignmentVector helper_load_;
+
+    // Do we accept help?
+    bool solver_balancing_enabled_;
+
+    // For concurrency control
+    std::mutex mtx_;
 };
 
 /**

@@ -55,12 +55,29 @@ static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.searchlight"));
 
 Searchlight::~Searchlight() {
+    // Time stats
     const auto secs = std::chrono::duration_cast<std::chrono::seconds>(
             total_solve_time_).count();
     const auto usecs = std::chrono::duration_cast<std::chrono::milliseconds>(
             total_solve_time_).count();
     LOG4CXX_INFO(logger, "Solver total time: " << secs << '.' <<
             usecs << 's');
+
+    /*
+     * Search stats.
+     *
+     * Note that the solver's fail counter contains
+     * not only true fails (due to violations), but also in-solution fails,
+     * when we it just backtracks to find the next one. In our case, we always
+     * continue after another candidate is found, so fails-sols should give
+     * the number of true fails.
+     */
+    const int64 total_fails = solver_.failures();
+    const int64_t total_candidates =
+            search_monitors_.validator_monitor_->CandidatesNumber();
+    LOG4CXX_INFO(logger, "Main search stats: fails=" << total_fails <<
+            ", true fails=" << (total_fails - total_candidates) <<
+            ", candidates=" << total_candidates);
 
     if (status_ != Status::COMMITTED) {
         LOG4CXX_INFO(logger, "Solver was terminated unexpectedly!");
@@ -83,6 +100,11 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
     primary_vars_ = primary_vars;
     secondary_vars_ = secondary_vars;
     db_ = db;
+
+    // Store initial values to be able to reset everything
+    initial_var_values_.Add(primary_vars_);
+    initial_var_values_.Add(secondary_vars_);
+    initial_var_values_.Store();
 
     /*
      * First, we need to create the validator.
@@ -151,10 +173,25 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
             NewPermanentCallback(this, &Searchlight::CheckTerminate));
     search_monitors_.aux_monitors_.push_back(terminator);
 
+    // Decide if the balancing is enabled
+    solver_balancing_enabled_ = config_.get("solver_balance", 1);
+    status_ = Status::PREPARED;
+}
+
+void Searchlight::PrepareHelper(LiteAssignmentVector &load) {
+    assert(status_ == Status::VOID);
+    assert(helper_load_.empty());
+
+    LOG4CXX_INFO(logger, "Preparing solver for remote work...");
+    helper_load_.swap(load);
+
+    // Decide if the balancing is enabled
+    solver_balancing_enabled_ = config_.get("solver_balance", 1);
     status_ = Status::PREPARED;
 }
 
 void Searchlight::Solve() {
+    // Enter the search
     status_ = Status::SEARCHING;
 
     if (!validator_thread_) {
@@ -162,43 +199,70 @@ void Searchlight::Solve() {
         validator_thread_ = new std::thread(std::ref(*validator_));
     }
 
-    // Starting the timer
-    const auto solve_start_time = std::chrono::steady_clock::now();
+    // Initially we always have work: local or remote
+    bool solver_has_work = true;
+    while (solver_has_work) {
+        // Remote load?
+        if (!helper_load_.empty()) {
+            // Get a remote assignment from the remote load
+            AssignmentPtr asgn{new Assignment{&initial_var_values_}};
+            LiteToFullAssignment(*asgn, helper_load_.back());
+            helper_load_.pop_back();
 
-    // start the search
-    LOG4CXX_INFO(logger, "Starting the main search");
-    std::vector<SearchMonitor *> solve_monitors(
-            search_monitors_.user_monitors_);
-    solve_monitors.insert(solve_monitors.end(),
-            search_monitors_.aux_monitors_.begin(),
-            search_monitors_.aux_monitors_.end());
-    solve_monitors.push_back(search_monitors_.validator_monitor_);
-    solver_.Solve(db_, solve_monitors);
+            LOG4CXX_DEBUG(logger, "Restoring a remote assignment: "
+                    << asgn->DebugString());
+            /*
+             * We should restore initial values here. Otherwise, we might
+             * get an infeasible problem, especially since different solvers
+             * work with disjoint sub-trees.
+             *
+             * We're freezing the queue for both assignments to make a single
+             * constraint propagation, instead of two (for each assignment).
+             */
+            initial_var_values_.FreezeQueue();
+            initial_var_values_.Restore();
+            asgn->Restore();
+            initial_var_values_.UnfreezeQueue();
+        }
 
-    // stopping the timer
-    const auto solve_end_time = std::chrono::steady_clock::now();
-    total_solve_time_ +=
-            std::chrono::duration_cast<decltype(total_solve_time_)>(
-            solve_end_time - solve_start_time);
+        // Starting the timer
+        const auto solve_start_time = std::chrono::steady_clock::now();
 
-    /*
-     * Output some stats. Note that the solver's fail counter contains
-     * not only true fails (due to violations), but also in-solution fails,
-     * when we it just backtracks to find the next one. In our case, we always
-     * continue after another candidate is found, so fails-sols should give
-     * the number of true fails.
-     */
-    int64 total_fails = solver_.failures();
-    int64_t total_candidates =
-            search_monitors_.validator_monitor_->CandidatesNumber();
-    LOG4CXX_INFO(logger, "Main search stats: fails=" << total_fails <<
-            ", true fails=" << (total_fails - total_candidates) <<
-            ", candidates=" << total_candidates);
+        // start the search
+        LOG4CXX_INFO(logger, "Starting the main search");
+        std::vector<SearchMonitor *> solve_monitors(
+                search_monitors_.user_monitors_);
+        solve_monitors.insert(solve_monitors.end(),
+                search_monitors_.aux_monitors_.begin(),
+                search_monitors_.aux_monitors_.end());
+        solve_monitors.push_back(search_monitors_.validator_monitor_);
+        solver_.Solve(db_, solve_monitors);
 
-    LOG4CXX_INFO(logger, "Finished the main search");
+        // stopping the timer
+        const auto solve_end_time = std::chrono::steady_clock::now();
+        total_solve_time_ +=
+                std::chrono::duration_cast<decltype(total_solve_time_)>(
+                solve_end_time - solve_start_time);
+
+        // Continue only if we have another remote assignment
+        solver_has_work = !helper_load_.empty();
+    }
+
+    LOG4CXX_INFO(logger, "Finished solver's workload...");
     if (status_ != Status::TERMINATED) {
         status_ = Status::VOID;
+
+        // Report idleness
+        sl_task_.ReportIdleSolver();
+
+        // Then get rid of remaining helpers
+        RejectHelpers(false);
     }
+
+    /*
+     *  If we're terminated, we don't have to clean up:
+     *  the system will go down anyway without blocking.
+     */
 }
 
 void Searchlight::EndAndDestroyValidator() {
@@ -259,6 +323,42 @@ void Searchlight::HandleCommit() {
     status_ = Status::COMMITTED;
     assert(validator_);
     validator_->WakeupIfIdle();
+}
+
+void Searchlight::HandleHelper(InstanceID id) {
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        helpers_.push_back(id);
+    }
+
+    // Check for reject
+    if (status_ != Status::SEARCHING && status_ != Status::PREPARED) {
+        RejectHelpers(false);
+    } else if (!solver_balancing_enabled_) {
+        RejectHelpers(true);
+    }
+}
+
+void Searchlight::RejectHelpers(bool hard) {
+    std::unique_lock<std::mutex> lock(mtx_);
+    std::vector<InstanceID> inst(helpers_.begin(), helpers_.end());
+    helpers_.clear();
+    lock.unlock();
+
+    if (!inst.empty()) {
+        sl_task_.RejectHelp(inst, hard);
+    }
+}
+
+void Searchlight::DispatchWork(const LiteAssignmentVector &work) {
+    assert(HelpAvailable());
+    InstanceID helper;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        helper = helpers_.front();
+        helpers_.pop_front();
+    }
+    sl_task_.DispatchWork(work, helper);
 }
 
 std::string Searchlight::SolutionToString(

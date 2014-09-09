@@ -52,6 +52,8 @@ MessagePtr CreateMessageRecord(MessageID id) {
             return MessagePtr(new SearchlightSolution);
         case SearchlightMessenger::mtSLControl:
             return MessagePtr(new SearchlightControl);
+        case SearchlightMessenger::mtSLBalance:
+            return MessagePtr(new SearchlightBalance);
         default:
             LOG4CXX_ERROR(logger, "Unknown type of Searchlight message"
                     "to create!");
@@ -81,6 +83,7 @@ class SearchlightMessageDesc : public scidb::MessageDesc,
             case SearchlightMessenger::mtSLChunk:
             case SearchlightMessenger::mtSLSolution:
             case SearchlightMessenger::mtSLControl:
+            case SearchlightMessenger::mtSLBalance:
                 break;
             default:
                 return false;
@@ -609,12 +612,8 @@ void SearchlightMessenger::SendSolution(const boost::shared_ptr<Query> &query,
     boost::shared_ptr<SearchlightSolution> record =
             msg->getRecord<SearchlightSolution>();
 
-    // fill the record
-    VarAssignment *asgn = record->mutable_solution();
-    for (size_t i = 0; i < vals.size(); i++) {
-        asgn->add_var_min(vals[i]);
-        // We don't need var_max here
-    }
+    // fill the record (only mins, since these are points)
+    PackAssignment(vals, nullptr, *record->mutable_solution());
 
     // log
     LOG4CXX_TRACE(logger, "Sending solution to the coordinator: qid=" <<
@@ -697,10 +696,83 @@ void SearchlightMessenger::ReportFinValidator(
 }
 
 void SearchlightMessenger::DispatchHelper(const boost::shared_ptr<Query> &query,
-        InstanceID helper) const {
+        InstanceID helper, InstanceID dest) const {
+    // prepare the message
+    boost::shared_ptr<scidb::MessageDesc> msg =
+            PrepareMessage(query->getQueryID(), mtSLBalance);
+    boost::shared_ptr<SearchlightBalance> record =
+            msg->getRecord<SearchlightBalance>();
 
+    // fill the record
+    record->set_type(SearchlightBalance::HELPER_DISPATCH);
+    record->add_instance(helper);
+
+    // log
+    LOG4CXX_DEBUG(logger, "Sending a helper: id=" <<
+            helper << ", dest=" << dest);
+
+    // send
+    NetworkManager *network_manager = NetworkManager::getInstance();
+    network_manager->send(dest, msg);
 }
 
+void SearchlightMessenger::RejectHelp(const boost::shared_ptr<Query> &query,
+        const std::vector<InstanceID> &ids, bool hard) const {
+    // determine the coordinator
+    const InstanceID coord_id = query->getCoordinatorID();
+    if (coord_id == scidb::COORDINATOR_INSTANCE) {
+        LOG4CXX_ERROR(logger, "Attempting to reject help at the coordinator");
+        return;
+    }
+
+    // prepare the message
+    boost::shared_ptr<scidb::MessageDesc> msg =
+            PrepareMessage(query->getQueryID(), mtSLBalance);
+    boost::shared_ptr<SearchlightBalance> record =
+            msg->getRecord<SearchlightBalance>();
+
+    // Fill the record
+    record->set_type(hard ? SearchlightBalance::REJECT_HELPER_HARD :
+            SearchlightBalance::REJECT_HELPER_SOFT);
+    for (auto id: ids) {
+        record->add_instance(id);
+    }
+
+    // Log
+    LOG4CXX_DEBUG(logger, "Rejecting help: hard=" << (hard ? "true" : "false"));
+
+    // Send
+    NetworkManager *network_manager = NetworkManager::getInstance();
+    network_manager->send(coord_id, msg);
+}
+
+void SearchlightMessenger::DispatchWork(const boost::shared_ptr<Query> &query,
+        const LiteAssignmentVector &work,
+        InstanceID solver) const {
+    // prepare the message
+    boost::shared_ptr<scidb::MessageDesc> msg(new SearchlightMessageDesc);
+    msg->initRecord(mtSLBalance);
+    msg->setQueryID(query->getQueryID());
+    boost::shared_ptr<SearchlightBalance> record =
+            msg->getRecord<SearchlightBalance>();
+
+    // fill the record
+    record->set_type(SearchlightBalance::HELP_LOAD);
+    FillBalanceMessage(*record, work);
+
+    // log
+    LOG4CXX_DEBUG(logger, "Sending additional load to helper: qid=" <<
+            query->getQueryID() << ", helper=" << solver);
+
+    // send
+    NetworkManager *network_manager = NetworkManager::getInstance();
+    network_manager->send(solver, msg);
+
+    // stats
+    const QueryContextPtr query_ctx =
+            GetQueryContext(query->getQueryID(), true);
+    query_ctx->stats_.msgs_sent_++;
+}
 
 void SearchlightMessenger::BroadcastFinishSearch(
         const boost::shared_ptr<Query> &query) const {
@@ -761,4 +833,81 @@ void SearchlightMessenger::Synchronize(const boost::shared_ptr<Query> &query) {
     LOG4CXX_DEBUG(logger, "Completed SL Messenger synchronization...");
 }
 
+void SearchlightMessenger::PackAssignment(
+        const std::vector<int64_t> &mins, const std::vector<int64_t> *maxs,
+        VarAssignment &msg) {
+    for (size_t i = 0; i < mins.size(); i++) {
+        msg.add_var_min(mins[i]);
+        if (maxs) {
+            msg.add_var_max((*maxs)[i]);
+        }
+    }
+}
+
+void SearchlightMessenger::UnpackAssignment(const VarAssignment &msg,
+        std::vector<int64_t> &mins, std::vector<int64_t> *maxs) {
+    mins.resize(msg.var_min_size());
+    if (maxs) {
+        assert(msg.var_min_size() == msg.var_max_size());
+        maxs->resize(msg.var_max_size());
+    }
+    for (int i = 0; i < msg.var_min_size(); i++) {
+        mins[i] = msg.var_min(i);
+        if (maxs) {
+            (*maxs)[i] = msg.var_max(i);
+        }
+    }
+}
+
+void SearchlightMessenger::UnpackAssignment(const VarAssignment &msg,
+        LiteVarAssignment &asgn) {
+    const bool msg_is_range = msg.var_max_size();
+    assert(!msg_is_range || msg.var_min_size() == msg.var_max_size());
+
+    asgn.mins_.resize(msg.var_min_size());
+    if (msg_is_range) {
+        asgn.maxs_.resize(msg.var_max_size());
+    }
+
+    for (int i = 0; i < msg.var_min_size(); i++) {
+        asgn.mins_[i] = msg.var_min(i);
+        if (msg_is_range) {
+            asgn.maxs_[i] = msg.var_max(i);
+        }
+    }
+}
+
+void SearchlightMessenger::PackAssignment(const LiteVarAssignment &asgn,
+        VarAssignment &msg) {
+    const bool asgn_is_range = !asgn.maxs_.empty();
+    for (int i = 0; i < asgn.mins_.size(); i++) {
+        msg.add_var_min(asgn.mins_[i]);
+        if (asgn_is_range) {
+            msg.add_var_max(asgn.maxs_[i]);
+        }
+    }
+}
+
+void SearchlightMessenger::FillBalanceMessage(SearchlightBalance &msg,
+        const LiteAssignmentVector &asgns) {
+    for (const auto &a: asgns) {
+        VarAssignment *var_asgn = msg.add_load();
+        PackAssignment(a, *var_asgn);
+    }
+}
+
+boost::shared_ptr<scidb::MessageDesc> SearchlightMessenger::PrepareMessage(
+        QueryID qid,
+        SearchlightMessageType type) const {
+    // Create message
+    boost::shared_ptr<scidb::MessageDesc> msg(new SearchlightMessageDesc);
+    msg->initRecord(type);
+    msg->setQueryID(qid);
+
+    // Update stats
+    const QueryContextPtr query_ctx = GetQueryContext(qid, true);
+    query_ctx->stats_.msgs_sent_++;
+
+    return msg;
+}
 }

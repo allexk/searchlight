@@ -52,7 +52,7 @@ public:
      *
      * @param asgn the assignment to restore
      */
-    RestoreAssignment(AssignmentPtr asgn) : asgn_(asgn) {}
+    RestoreAssignment(AssignmentPtr asgn) : asgn_(std::move(asgn)) {}
 
     /**
      * The left branch. In this case it restores the assignment.
@@ -114,12 +114,14 @@ public:
      * @param validator the validator producing assignments
      * @param s the solver
      * @param restart_period validator restart period
+     * @param prototype prototype assignment to generate validations
      */
     explicit RestoreAssignmentBuilder(Validator &validator, Solver *s,
-            int restart_period)
+            int restart_period, const Assignment *prototype)
         : validator_(validator),
           just_restored_(false),
-          aux_monitor_(&just_restored_, s, restart_period) {}
+          aux_monitor_(&just_restored_, s, restart_period),
+          asgn_prototype_{new Assignment{prototype}} {}
 
 
     /**
@@ -162,13 +164,13 @@ public:
         // pick the next assignment
         if (asgns_.empty()) {
             // need to ask the validator
-            AssignmentPtrVector *new_asgns = validator_.GetNextAssignments();
+            LiteAssignmentVector *new_asgns = validator_.GetNextAssignments();
             if (!new_asgns) {
                 // No more assignments: stop the validator search
                 LOG4CXX_INFO(logger, "Stopping the validator search");
                 solver->Fail();
             }
-            asgns_.insert(asgns_.end(), new_asgns->begin(), new_asgns->end());
+            asgns_.swap(*new_asgns);
 
             LOG4CXX_TRACE(logger, "Got " << asgns_.size() << " new assignments "
                     "to check");
@@ -181,9 +183,10 @@ public:
          */
         validator_.adapter_->SetAdapterMode(Adapter::EXACT);
 
-        AssignmentPtr next_asgn = asgns_.back();
+        AssignmentPtr validation{new Assignment{asgn_prototype_.get()}};
+        LiteToFullAssignment(*validation, asgns_.back());
         asgns_.pop_back();
-        return solver->RevAlloc(new RestoreAssignment(next_asgn));
+        return solver->RevAlloc(new RestoreAssignment{std::move(validation)});
     }
 
     /**
@@ -244,7 +247,7 @@ public:
     Validator &validator_;
 
     // Assignments to validate
-    AssignmentPtrVector asgns_;
+    LiteAssignmentVector asgns_;
 
     /*
      * Was the last decision a restoration? This flag is set by the decision
@@ -255,6 +258,9 @@ public:
 
     // The auxiliiary monitor
     AuxRestoreMonitor aux_monitor_;
+
+    // Prototype assignment to assign values to variables
+    AssignmentPtr asgn_prototype_;
 };
 
 Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
@@ -322,23 +328,15 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
 }
 
 void Validator::AddSolution(const Assignment &sol) {
-    // All assignments have the same structure
-    Assignment *asgn = new Assignment(&search_vars_prototype_);
-
-    Assignment::IntContainer *to_vars = asgn->MutableIntVarContainer();
-    const Assignment::IntContainer &from_vars = sol.IntVarContainer();
-
-    for (size_t i = 0; i < to_vars->Size(); i++) {
-        const IntVarElement &from_elem = from_vars.Element(i);
-        IntVarElement *to_elem = to_vars->MutableElement(i);
-        to_elem->SetRange(from_elem.Min(), from_elem.Max());
-        // The only thing we ignore here is "Activated", which is not needed
-    }
+    LiteVarAssignment lite_sol;
+    FullAssignmentToLite(sol, lite_sol);
 
     LOG4CXX_TRACE(logger, "New solution to validate: " << sol.DebugString());
 
     std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
-    to_validate_.push_back(AssignmentPtr(asgn));
+    to_validate_.push_back(std::move(lite_sol));
+
+    // We might have to wait -- flood control
     while (to_validate_.size() > max_pending_validations_) {
         /*
          * It is safe to use the same condition since the validator will be
@@ -366,12 +364,12 @@ void Validator::operator()() {
     LOG4CXX_INFO(logger, "Starting the validator search");
     DecisionBuilder *db =
             solver_.RevAlloc(new RestoreAssignmentBuilder(*this, &solver_,
-                    restart_period_));
+                    restart_period_, &search_vars_prototype_));
     solver_status_ = solver_.Solve(db, collector_);
     LOG4CXX_INFO(logger, "Validator exited solve()");
 }
 
-AssignmentPtrVector *Validator::GetNextAssignments() {
+LiteAssignmentVector *Validator::GetNextAssignments() {
     /*
      * For now, a simple policy: wait until we get an assignment to
      * validate and then check it.
@@ -408,10 +406,8 @@ AssignmentPtrVector *Validator::GetNextAssignments() {
     }
 
     // We should be here only if we have some candidates to check
-    AssignmentPtrVector *res = new AssignmentPtrVector;
-    res->reserve(to_validate_.size());
-    res->insert(res->end(), to_validate_.begin(), to_validate_.end());
-    to_validate_.clear();
+    LiteAssignmentVector *res = new LiteAssignmentVector;
+    res->swap(to_validate_);
 
     // Flow control: notify the main solver about catching up
     validate_cond_.notify_one();

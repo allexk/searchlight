@@ -56,7 +56,7 @@ public:
      * @param secondary_vars secondary decision variables used in the search
      * @param search_time_limit time limit in seconds; negative -- no limit
      */
-    SLSearch(const Searchlight &sl,
+    SLSearch(Searchlight &sl,
             Solver &solver,
             const IntVarVector &primary_vars,
             const IntVarVector &secondary_vars);
@@ -311,7 +311,7 @@ private:
     bool intervals_explored_;
 
     // The searchlight instance
-    const Searchlight &sl_;
+    Searchlight &sl_;
 
     // The main solver
     Solver &solver_;

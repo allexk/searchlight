@@ -27,17 +27,19 @@ message SearchlightControl {
     }
 
     required Type type      = 1; // Control message type
-    optional int32 instance = 2; // Instance related to the message
+    repeated int32 instance = 2 [packed=true]; // Instance related to the message
 }
 
 message SearchlightBalance {
     // Type for info messages between nodes
     enum Type {
-        HELPER_DISPATCH = 1; // Giving a helper instance
-        REJECT_HELPER   = 2; // Rejecting help just given
-        HELP_LOAD       = 3; // Message contains load for the helper
+        HELPER_DISPATCH      = 1; // Giving a helper instance
+        REJECT_HELPER_SOFT   = 2; // Rejecting help just given (soft reject)
+        REJECT_HELPER_HARD   = 3; // Rejecting help just given (hard reject)
+        HELP_LOAD            = 4; // Message contains load for the helper
     }
 
-    optional VarAssignment load = 1; // Load for the helper
-    optional int32 instance     = 2; // helper instance id
+    required Type type          = 1; // Type of the message
+    repeated VarAssignment load = 2; // Load for the helper
+    repeated int32 instance     = 3 [packed=true]; // helper instance id
 }

@@ -35,6 +35,8 @@
 #include <constraint_solver/constraint_solver.h>
 #include <constraint_solver/constraint_solveri.h>
 
+#include "base.h"
+
 namespace searchlight {
 
 using operations_research::Solver;
@@ -68,20 +70,29 @@ using operations_research::ACMRandom;
 typedef std::vector<IntVar *> IntVarVector;
 
 /**
- *  A vector of assignments.
+ * Pointer to a full assignment.
  */
-typedef std::vector<Assignment *> AssignmentVector;
+typedef std::unique_ptr<Assignment> AssignmentPtr;
+
 
 /**
- * An assignment shared pointer
+ * Converts a lite assignment to a full Assignment.
+ *
+ * @param asgn full assignment
+ * @param lite_asgn lite assignment
  */
-typedef std::shared_ptr<Assignment> AssignmentPtr;
+void LiteToFullAssignment(Assignment &asgn,
+        const LiteVarAssignment &lite_asgn);
 
 /**
- *  A vector of assignment pointers.
+ * Converts a lite assignment to a full Assignment.
+ *
+ * @param asgn full assignment
+ * @param lite_asgn lite assignment
  */
-typedef std::vector<AssignmentPtr> AssignmentPtrVector;
+void FullAssignmentToLite(const Assignment &asgn,
+        LiteVarAssignment &lite_asgn);
 
-}
+} /* namespace searchlight */
 
 #endif /* SEARCHLIGHT_ORTOOLS_INC_H_ */

@@ -99,6 +99,10 @@ public:
                 query,
                 SearchlightMessenger::mtSLControl,
                 std::bind(&SearchlightTask::HandleControlMessage, this, _1, _2));
+        SearchlightMessenger::getInstance()->RegisterUserMessageHandler(
+                query,
+                SearchlightMessenger::mtSLBalance,
+                std::bind(&SearchlightTask::HandleBalanceMessage, this, _1, _2));
 
         // Tasks just prepare Searchlight, solver is still idle, no threads
         task_(&searchlight_);
@@ -174,6 +178,26 @@ public:
      */
     void ReportFinValidator();
 
+    /**
+     * Rejects help from other solvers, returning helpers to the coordinator.
+     *
+     * @param helpers helpers to reject
+     * @param hard true, if hard reject; false, if soft
+     */
+    void RejectHelp(const std::vector<InstanceID> &helpers, bool hard);
+
+    /**
+     * Dispatches work to another solver.
+     *
+     * This function is used by a solver to off-load some of its work to
+     * another solver that was dispatched by the coordinator as a helper.
+     *
+     * @param work assignments to send
+     * @param solver id of the solver to send the work to
+     */
+    void DispatchWork(const LiteAssignmentVector &work,
+            InstanceID solver) const;
+
 private:
     // Make it a friend to modify the queue
     friend class SearchlightSolutionCollector;
@@ -186,7 +210,7 @@ private:
         // Solvers that have rejected help
         std::unordered_set<InstanceID> nonhelp_solvers_;
 
-        // Queue of solvers looking for help (lazily updated)
+        // Queue of solvers looking for help
         std::queue<InstanceID> help_queue_;
 
         // Number of validators still busy with the job
@@ -230,6 +254,17 @@ private:
     // Handles control messages
     void HandleControlMessage(InstanceID inst,
             const google::protobuf::Message *msg);
+
+    // Handles balance messages
+    void HandleBalanceMessage(InstanceID inst,
+            const google::protobuf::Message *msg);
+
+    // Handles remote workload for the solver (helper)
+    void HandleRemoteLoad(const SearchlightBalance &msg);
+
+    // Handles rejected help
+    void HandleRejectHelp(InstanceID src,
+            const std::vector<InstanceID> &helpers, bool hard);
 
     // Broadcasts control message to finish the main search
     void BroadcastFinishSearch();

@@ -29,10 +29,10 @@
  * @author Alexander Kalinin
  */
 
+#include "DepartArray.h"
+
 #include "../scidb_inc.h"
 #include <query/Operator.h>
-
-#include "DepartArray.h"
 
 namespace scidb
 {

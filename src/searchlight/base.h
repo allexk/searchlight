@@ -49,6 +49,11 @@ namespace searchlight {
 typedef std::pair<int64_t, int64_t> IntInterval;
 
 /**
+ * Vector of int64 values.
+ */
+typedef std::vector<int64_t> Int64Vector;
+
+/**
  * A general double interval.
  */
 typedef std::pair<double, double> DoubleInterval;
@@ -62,6 +67,25 @@ typedef std::vector<std::string> StringVector;
  * A set of strings.
  */
 typedef std::set<std::string> StringSet;
+
+/**
+ * An assignment to a variable.
+ *
+ * It is called "lite" to contrast the full-feature or-tools Assignment,
+ * which contains more features when we need most of the time.
+ *
+ * maxs_ part might be empty, if the assignment is complete, i.e., not a range,
+ * but a single value for each variable.
+ */
+struct LiteVarAssignment {
+    Int64Vector mins_, maxs_;
+};
+
+/**
+ *  A vector of lite assignment pointers.
+ */
+typedef std::vector<LiteVarAssignment> LiteAssignmentVector;
+
 
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_BASE_H_ */

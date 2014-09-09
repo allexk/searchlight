@@ -122,9 +122,9 @@ private:
     friend class RestoreAssignmentBuilder;
 
     // Returns the next portion of Assignments to validate
-    AssignmentPtrVector *GetNextAssignments();
+    LiteAssignmentVector *GetNextAssignments();
 
-    // Check if the searclight is terminating
+    // Check if the searchlight is terminating
     bool CheckTerminate() const {
         return sl_.CheckTerminate();
     }
@@ -142,7 +142,7 @@ private:
     Searchlight &sl_;
 
     // Pending validations
-    AssignmentPtrVector to_validate_;
+    LiteAssignmentVector to_validate_;
 
     // The duplicate solver for validation
     Solver solver_;

@@ -393,7 +393,7 @@ private:
     bool problem_infeasible_;
 };
 
-SLSearch::SLSearch(const Searchlight &sl,
+SLSearch::SLSearch(Searchlight &sl,
         Solver &solver,
         const IntVarVector &primary_vars,
         const IntVarVector &secondary_vars) :
@@ -476,6 +476,27 @@ Decision* SLSearch::Next(Solver* const s) {
             // cannot find a suitable interval: exhausted
             return s->MakeFailDecision();
         }
+    }
+
+    /*
+     *  Check if we can off-load some work. We can if:
+     *    1) We are not exploring the last region
+     *    2) We have some help available
+     */
+    if (s->SearchLeftDepth() > 0 && sl_.HelpAvailable()) {
+        // For now we just give out a single region
+        LOG4CXX_DEBUG(logger, "Off-loading a region to a helper");
+
+        // Take a snapshot of vars
+        AssignmentPtr asgn{new Assignment(s)};
+        asgn->Add(all_vars_);
+        asgn->Store();
+
+        LiteAssignmentVector work(1);
+        FullAssignmentToLite(*asgn, work.back());
+        sl_.DispatchWork(work);
+
+        return s->MakeFailDecision();
     }
 
     LOG4CXX_DEBUG(logger, "Initiating an in-interval search");

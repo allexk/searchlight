@@ -38,6 +38,7 @@
 #ifndef SEARCHLIGHT_SEARCHLIGHT_MESSENGER_H_
 #define SEARCHLIGHT_SEARCHLIGHT_MESSENGER_H_
 
+#include "base.h"
 #include "scidb_inc.h"
 
 #include <mutex>
@@ -45,6 +46,9 @@
 #include <unordered_map>
 
 namespace searchlight {
+
+class VarAssignment;
+class SearchlightBalance;
 
 /**
  * This class represents SearchlightMessenger. It allows communticating with
@@ -81,7 +85,9 @@ public:
         /** A solution arrived from another instance */
         mtSLSolution,
         /** Control message between instances and coordinator */
-        mtSLControl
+        mtSLControl,
+        /** Balance message between instances */
+        mtSLBalance
     };
 
     /**
@@ -232,11 +238,91 @@ public:
     void SendSolution(const boost::shared_ptr<Query> &query,
             const std::vector<int64_t> &vals) const;
 
+    /**
+     * Dispatches a helper to a remote instance.
+     *
+     * @param query caller's query context
+     * @param helper instance willing to help
+     * @param dest instance in need of help
+     */
     void DispatchHelper(const boost::shared_ptr<Query> &query,
-            InstanceID helper) const;
+            InstanceID helper, InstanceID dest) const;
+
+    /**
+     * Dispatches work for a remote helper.
+     *
+     * @param caller's query
+     * @param work assignments to send
+     * @param solver id of the helper solver
+     */
+    void DispatchWork(const boost::shared_ptr<Query> &query,
+            const LiteAssignmentVector &work,
+            InstanceID solver) const;
+
+    /**
+     * Sends a message rejecting help to the coordinator.
+     *
+     * @param query caller's query context
+     * @param ids ids of helpers
+     * @param hard true, if it's a hard reject; false, if soft
+     */
+    void RejectHelp(const boost::shared_ptr<Query> &query,
+            const std::vector<InstanceID> &ids, bool hard) const;
+
+    /**
+     * Packs min/max assignment into a message.
+     *
+     * The suitable message must already be provided. maxs might be nullptr
+     * for point assignments (e.g., where min[i] == max[i]).
+     *
+     * @param mins minimum values
+     * @param maxs maximum values (nullptr if not required)
+     * @param msg message to store the values into
+     */
+    static void PackAssignment(const std::vector<int64_t> &mins,
+            const std::vector<int64_t> *maxs, VarAssignment &msg);
+
+    /**
+     * Packs an assignment into a message.
+     *
+     * If the assignment's maxs is empty, only min values are taken from it.
+     * This is useful for complete assignments (i.e., without ranges).
+     *
+     * @param asgn assignment to pack
+     * @param msg message to store the values into
+     */
+    static void PackAssignment(const LiteVarAssignment &asgn,
+            VarAssignment &msg);
+
+    /**
+     * Unpacks a message assignment into min/max vectors.
+     *
+     * If the caller does not provide maxs, then max values are ignored. This
+     * is useful for point assignments.
+     *
+     * @param msg message to get the values from
+     * @param mins vector for minimum values
+     * @param maxs vector for maximum values (nullptr if not required)
+     */
+    static void UnpackAssignment(const VarAssignment &msg,
+            std::vector<int64_t> &mins, std::vector<int64_t> *maxs);
+
+    /**
+     * Unpacks a message assignment into assignment.
+     *
+     * If the message does not contain maxs, only mins are unpacked. This is
+     * useful for complete (non-range) assignments.
+     *
+     * @param msg message to get the values from
+     * @param asgn Assignment to unpack to
+     */
+    static void UnpackAssignment(const VarAssignment &msg,
+            LiteVarAssignment &asgn);
 
 private:
-
+    /*
+     * Information about a chunk request. Store in a mesage slot.
+     */
     struct ChunkRequestData {
         ArrayPtr array_;  // array
         Chunk *chunk_;    // chunk data (nullptr -- no data required)
@@ -336,6 +422,10 @@ private:
     void HandleGeneralMessage(
             const boost::shared_ptr<MessageDescription> &msg_desc);
 
+    // Helper to fill in a balance message
+    static void FillBalanceMessage(SearchlightBalance &msg,
+            const LiteAssignmentVector &asgns);
+
     // Deactivates the messenger from the query
     void deactivate(const boost::shared_ptr<Query> &query);
 
@@ -347,6 +437,11 @@ private:
 
     // Returns a message slot
     void ReturnMessageSlot(size_t slot);
+
+    // Helper to create a message and update stats
+    boost::shared_ptr<scidb::MessageDesc> PrepareMessage(
+            QueryID qid,
+            SearchlightMessageType type) const;
 
     // Returns pointer to the registered array with name
     QueryContext::ServedArrayPtr GetRegisteredArray(
