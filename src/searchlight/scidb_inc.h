@@ -61,6 +61,8 @@ namespace scidb {
 #include <util/Network.h>
 #include <network/proto/scidb_msg.pb.h>
 
+#include <unordered_set>
+
 namespace searchlight {
 
 // System structures
@@ -171,6 +173,24 @@ struct AddressHash {
         return h;
     }
 };
+
+/**
+ * Simple hash for scidb::Coordinates to use with unordered containers.
+ */
+struct CoordinatesHash {
+    size_t operator()(const Coordinates &coords) const {
+        size_t h = 17;
+        for (auto x: coords) {
+            h = 31 * h + static_cast<size_t>(x);
+        }
+        return h;
+    }
+};
+
+/**
+ * Set of coordinates.
+ */
+typedef std::unordered_set<Coordinates, CoordinatesHash> CoordinateSet;
 
 } /* namespace searchlight */
 

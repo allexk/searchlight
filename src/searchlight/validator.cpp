@@ -31,6 +31,7 @@
 #include "searchlight.h"
 #include "validator.h"
 #include "searchlight_collector.h"
+#include "searchlight_task.h"
 
 #include "ortools_model.h"
 
@@ -52,7 +53,7 @@ public:
      *
      * @param asgn the assignment to restore
      */
-    RestoreAssignment(AssignmentPtr asgn) : asgn_(std::move(asgn)) {}
+    RestoreAssignment(Assignment *asgn) : asgn_(asgn) {}
 
     /**
      * The left branch. In this case it restores the assignment.
@@ -82,7 +83,7 @@ public:
 
 private:
     // The assignment to restore
-    AssignmentPtr asgn_;
+    Assignment *asgn_;
 };
 
 /**
@@ -106,6 +107,27 @@ private:
  * is done via AfterDecision().
  */
 class RestoreAssignmentBuilder : public DecisionBuilder {
+private:
+    /*
+     *  Contains information about an action the DB issued.
+     *
+     *  The definition was put here, since Eclipse's codan freaks out otherwise.
+     */
+    struct Action {
+        // Type of action
+        enum class Type {
+            NOP, // Nothing: no-operation
+            SIM, // Simulation
+            LOCAL_CHECK, // Checking local candidate
+            REMOTE_CHECK // Checking remote candidate
+        };
+
+        // Type of action
+        Type type_ = Type::NOP;
+
+        // Forward id for remote solutions
+        int forward_id_;
+    };
 public:
 
     /**
@@ -119,9 +141,9 @@ public:
     explicit RestoreAssignmentBuilder(Validator &validator, Solver *s,
             int restart_period, const Assignment *prototype)
         : validator_(validator),
-          just_restored_(false),
-          aux_monitor_(&just_restored_, s, restart_period),
-          asgn_prototype_{new Assignment{prototype}} {}
+          action_succeeded_(false),
+          aux_monitor_(*this, s, restart_period),
+          last_asgn_{new Assignment{prototype}} {}
 
 
     /**
@@ -143,15 +165,30 @@ public:
      * @return the next decision or nullptr to signify a leaf
      */
     virtual Decision* Next(Solver* const solver) {
-        if (just_restored_) {
-           /*
-            * We are here since the restoration was successful: cut the branch.
-            *
-            * Also, this will trigger visiting the leaf at the collector, since
-            * this is a valid solution.
-            */
-            just_restored_ = false;
-            return nullptr;
+        if (last_action_.type_ != Action::Type::NOP) {
+            // We performed some action: should handle the result
+            if (last_action_.type_ == Action::Type::LOCAL_CHECK) {
+                if (action_succeeded_) {
+                    LiteVarAssignment lite_asgn;
+                    FullAssignmentToLite(*last_asgn_, lite_asgn);
+                    validator_.sl_task_.ReportSolution(lite_asgn.mins_);
+                }
+            } else if (last_action_.type_ == Action::Type::REMOTE_CHECK) {
+                validator_.SendForwardResult(last_action_.forward_id_,
+                        action_succeeded_);
+            } else {
+                // Simulation finished: we need to decide if we want to forward
+                assert(action_succeeded_);
+                validator_.adapter_->StopCollectingStats();
+                const bool forwarded =
+                        validator_.CheckForward(last_asgn_.get());
+                if (!forwarded) {
+                    last_action_.type_ = Action::Type::LOCAL_CHECK;
+                    validator_.adapter_->SetAdapterMode(Adapter::EXACT);
+                    return solver->RevAlloc(
+                            new RestoreAssignment{last_asgn_.get()});
+                }
+            }
         }
 
         // check for searchlight termination
@@ -164,7 +201,8 @@ public:
         // pick the next assignment
         if (asgns_.empty()) {
             // need to ask the validator
-            LiteAssignmentVector *new_asgns = validator_.GetNextAssignments();
+            Validator::CandidateVector *new_asgns =
+                    validator_.GetNextAssignments();
             if (!new_asgns) {
                 // No more assignments: stop the validator search
                 LOG4CXX_INFO(logger, "Stopping the validator search");
@@ -177,16 +215,30 @@ public:
             delete new_asgns;
         }
 
-        /*
-         * Set the mode to exact. It's here since we want to avoid working
-         * with real data until candidates show up from the main search.
-         */
-        validator_.adapter_->SetAdapterMode(Adapter::EXACT);
-
-        AssignmentPtr validation{new Assignment{asgn_prototype_.get()}};
-        LiteToFullAssignment(*validation, asgns_.back());
+        // Prepare assignment
+        const int forw_id = asgns_.back().forw_id_;
+        LiteToFullAssignment(*last_asgn_, asgns_.back().var_asgn_);
         asgns_.pop_back();
-        return solver->RevAlloc(new RestoreAssignment{std::move(validation)});
+
+        last_action_.forward_id_ = forw_id;
+        if (forw_id >= 0) {
+            last_action_.type_ = Action::Type::REMOTE_CHECK;
+        } else {
+            last_action_.type_ = validator_.balancing_enabled_ ?
+                    Action::Type::SIM : Action::Type::LOCAL_CHECK;
+        }
+
+        /*
+         * Set adapter to either perform simulation or check immediately.
+         */
+        if (last_action_.type_ == Action::Type::SIM) {
+            validator_.adapter_->SetAdapterMode(Adapter::DUMB);
+            validator_.adapter_->StartCollectingStats();
+        } else {
+            validator_.adapter_->SetAdapterMode(Adapter::EXACT);
+        }
+
+        return solver->RevAlloc(new RestoreAssignment{last_asgn_.get()});
     }
 
     /**
@@ -211,10 +263,10 @@ public:
          * accept_flag is the flag to toggle at the decision builder after a
          * successful validation.
          */
-        AuxRestoreMonitor(bool *accept_flag, Solver *solver,
+        AuxRestoreMonitor(RestoreAssignmentBuilder &restore_db, Solver *solver,
                 int restart_period) :
             SearchMonitor(solver),
-            accept_flag_(accept_flag),
+            restore_db_(restore_db),
             restart_period_(restart_period) {}
 
         /*
@@ -222,10 +274,17 @@ public:
          */
         virtual void AfterDecision(Decision* const d, bool apply) {
             if (apply) {
-                // Assignment was validated successfully
-                *accept_flag_ = true;
+                // Action was successful
+                restore_db_.action_succeeded_ = true;
+                my_fail_ = true;
+                solver()->Fail();
             } else {
+                if (!my_fail_) {
+                    // Action wasn't successful -- fail
+                    restore_db_.action_succeeded_ = false;
+                }
                 // Restart the search for garbage collecting
+                my_fail_ = false;
                 if (solver()->SearchDepth() > restart_period_) {
                     LOG4CXX_TRACE(logger,
                             "Restarting the validator for garbage collecting");
@@ -237,39 +296,41 @@ public:
 
     private:
         // Flag to change when the next assignment is validated
-        bool *accept_flag_;
+        RestoreAssignmentBuilder &restore_db_;
 
         // Restart period of the validator
         int restart_period_;
+
+        // True if we failed the accept branch
+        bool my_fail_ = false;
     };
 
     // The validator producing the assignments
     Validator &validator_;
 
     // Assignments to validate
-    LiteAssignmentVector asgns_;
+    Validator::CandidateVector asgns_;
 
-    /*
-     * Was the last decision a restoration? This flag is set by the decision
-     * and is automatically restored during backtracking(via a fail and
-     * leaf-based).
-     */
-    bool just_restored_;
+    // True, if the last action was a success (no fail on solver)
+    bool action_succeeded_;
 
-    // The auxiliiary monitor
+    // The auxiliary monitor
     AuxRestoreMonitor aux_monitor_;
 
-    // Prototype assignment to assign values to variables
-    AssignmentPtr asgn_prototype_;
+    // Assignment used in the last action
+    AssignmentPtr last_asgn_;
+
+    // Last action taken by the DB
+    Action last_action_;
 };
 
 Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
         const StringVector &var_names) :
         sl_(sl),
+        sl_task_(sl_task),
         solver_("validator solver"),
         adapter_(sl.CreateAdapter("validator")), // INTERVAL mode by default!
-        search_vars_prototype_(&solver_),
-        solver_status_(false) {
+        search_vars_prototype_(&solver_) {
 
     // Start adapter in the dumb mode, since we don't need estimations
     adapter_->SetAdapterMode(Adapter::DUMB);
@@ -325,6 +386,11 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
             sl_config.get("searchlight.validator.max_validations", 1000000);
     restart_period_ = sl_config.get("searchlight.validator.restart_period",
             1024);
+
+    balancing_enabled_ = sl_config.get("balance.validator_balance", 1);
+    if (balancing_enabled_) {
+        LOG4CXX_INFO(logger, "Forwarding is enabled for the validator...");
+    }
 }
 
 void Validator::AddSolution(const Assignment &sol) {
@@ -334,7 +400,7 @@ void Validator::AddSolution(const Assignment &sol) {
     LOG4CXX_TRACE(logger, "New solution to validate: " << sol.DebugString());
 
     std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
-    to_validate_.push_back(std::move(lite_sol));
+    to_validate_.push_back({std::move(lite_sol), -1});
 
     // We might have to wait -- flood control
     while (to_validate_.size() > max_pending_validations_) {
@@ -349,6 +415,81 @@ void Validator::AddSolution(const Assignment &sol) {
 
     // Notify the validator in case it is blocked and unlock
     validate_cond_.notify_one();
+}
+
+void Validator::AddRemoteCandidates(LiteAssignmentVector &cands,
+        InstanceID src, int forw_id) {
+    std::lock_guard<std::mutex> validate_lock(to_validate_mtx_);
+    while (!cands.empty()) {
+        const int cand_id = remote_cand_id_++;
+        to_validate_.push_back({std::move(cands.back()), cand_id});
+        cands.pop_back();
+        remote_candidates_.emplace(cand_id, std::make_pair(src, forw_id++));
+    }
+    validate_cond_.notify_one();
+}
+
+void Validator::HandleForwardResult(int id, bool result) {
+    std::lock_guard<std::mutex> validate_lock{to_validate_mtx_};
+    assert(forwarded_candidates_.find(id) != forwarded_candidates_.end());
+    if (result) {
+        sl_task_.ReportSolution(forwarded_candidates_[id].mins_);
+    }
+    forwarded_candidates_.erase(id);
+    if (forwarded_candidates_.empty()) {
+        validate_cond_.notify_one();
+    }
+}
+
+void Validator::SendForwardResult(int forw_id, bool result) {
+    std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
+    const auto forw_info = remote_candidates_[forw_id];
+    remote_candidates_.erase(forw_id);
+    validate_lock.unlock();
+
+    sl_task_.SendBalanceResult(forw_info.first, forw_info.second, result);
+}
+
+bool Validator::CheckForward(const Assignment *asgn) {
+    const CoordinateSet &chunks = adapter_->GetCurrentStats().chunks_pos_;
+    boost::shared_ptr<Query> query = sl_task_.GetQueryContext();
+    std::vector<int> inst_counts(sl_task_.GetQueryInstanceCount(), 0);
+    const InstanceID my_inst = sl_task_.GetInstanceID();
+
+    // Get the distribution
+    adapter_->GetSearchArrayDesc().GetChunksDistribution(
+            query, chunks, inst_counts);
+
+    /*
+     *  For now we just pick the validator with the maximum count, which
+     *  means it contains most of the chunks. In case the local instance
+     *  contains the same number of chunks, we don't forward.
+     */
+    int max_inst = -1, max_count = -1;
+    for (size_t i = 0; i < inst_counts.size(); ++i) {
+        if (max_count < inst_counts[i]) {
+            max_inst = i;
+            max_count = inst_counts[i];
+        }
+    }
+    if (max_inst != my_inst && inst_counts[my_inst] == max_count) {
+        max_inst = my_inst;
+    }
+
+    if (max_inst != my_inst) {
+        // forward
+        LiteAssignmentVector asgns(1);
+        FullAssignmentToLite(*asgn, asgns[0]);
+        const int cand_id = forw_id_++;
+        {
+            std::lock_guard<std::mutex> lock{to_validate_mtx_};
+            forwarded_candidates_.emplace(cand_id, asgns[0]);
+        }
+        sl_task_.ForwardCandidates(asgns, max_inst, cand_id);
+        return true;
+    }
+
+    return false;
 }
 
 void Validator::Synchronize() const {
@@ -369,7 +510,7 @@ void Validator::operator()() {
     LOG4CXX_INFO(logger, "Validator exited solve()");
 }
 
-LiteAssignmentVector *Validator::GetNextAssignments() {
+Validator::CandidateVector *Validator::GetNextAssignments() {
     /*
      * For now, a simple policy: wait until we get an assignment to
      * validate and then check it.
@@ -406,7 +547,7 @@ LiteAssignmentVector *Validator::GetNextAssignments() {
     }
 
     // We should be here only if we have some candidates to check
-    LiteAssignmentVector *res = new LiteAssignmentVector;
+    CandidateVector *res = new CandidateVector;
     res->swap(to_validate_);
 
     // Flow control: notify the main solver about catching up

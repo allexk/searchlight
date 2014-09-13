@@ -46,6 +46,15 @@ Adapter::~Adapter() {
             secs << '.' << usecs << 's');
 }
 
+void Adapter::UpdateStatsWithRegion(
+        const Coordinates &low, const Coordinates &high) const {
+    RegionIterator iter{array_desc_.GetOriginalArrayDesc(), low, high};
+    while (!iter.end()) {
+        stats_.chunks_pos_.insert(iter.CurrentPosition());
+        ++iter;
+    }
+}
+
 IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
         const Coordinates &high, AttributeID attr,
         const StringVector &aggr_names) const {
@@ -64,6 +73,10 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
         deb_str << " Mode: " << mode_;
 
         logger->trace(deb_str.str(), LOG4CXX_LOCATION);
+    }
+
+    if (stats_enabled_) {
+        UpdateStatsWithRegion(low, high);
     }
 
     // The original attribute
@@ -166,6 +179,10 @@ IntervalValue Adapter::GetElement(const Coordinates &point,
         deb_str << " Mode: " << mode_;
 
         logger->trace(deb_str.str(), LOG4CXX_LOCATION);
+    }
+
+    if (stats_enabled_) {
+        UpdateStatsWithRegion(point, point);
     }
 
     // starting the timer

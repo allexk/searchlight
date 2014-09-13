@@ -257,8 +257,6 @@ SearchlightMessenger::GetRegisteredArray(
         const std::string &name) const {
     const auto &iter = query_ctx->reg_arrays_.find(name);
     if (iter == query_ctx->reg_arrays_.end()) {
-        LOG4CXX_ERROR(logger,
-                "Requesting chunk from unregistered array: " << name);
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << "Array is not registered on the messenger!";
     }
@@ -321,13 +319,28 @@ void SearchlightMessenger::RegisterHandlers(bool init) {
             boost::bind(&SearchlightMessenger::HandleGeneralMessage, this, _1));
 }
 
+bool SearchlightMessenger::ChunkFetched(const boost::shared_ptr<Query> &query,
+        const std::string &array_name, const Coordinates &pos) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    QueryContextPtr query_ctx = GetQueryContext(query->getQueryID(), false);
+    try {
+        QueryContext::ServedArrayPtr array =
+                GetRegisteredArray(query_ctx, array_name);
+        return array->fetched_chunks_.find(pos) != array->fetched_chunks_.end();
+    } catch (const scidb::SystemException &ex) {
+        // Check the case when the array is not registered
+        return false;
+    }
+}
+
 bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
         InstanceID inst, const std::string &array_name, const Coordinates &pos,
         AttributeID attr, Chunk *chunk) {
     // check if the array is registered
     QueryContextPtr query_ctx = GetQueryContext(query->getQueryID(), true);
     GetRegisteredQuery(query_ctx); // just error checking
-    ArrayPtr array = GetRegisteredArray(query_ctx, array_name)->array_;
+    QueryContext::ServedArrayPtr array =
+            GetRegisteredArray(query_ctx, array_name);
 
     // message params
     const bool confirm_only = (chunk == nullptr);
@@ -337,7 +350,7 @@ bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
     std::shared_ptr<ChunkRequestData> chunk_req =
             std::make_shared<ChunkRequestData>();
     chunk_req->chunk_ = chunk;
-    chunk_req->array_ = array;
+    chunk_req->array_ = array->array_;
     msg_slot.data_ = chunk_req.get();
     msg_slot.data_ready_ = false;
 
@@ -384,6 +397,11 @@ bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
         query_ctx->stats_.total_wait_time_ +=
                 std::chrono::duration_cast<std::chrono::microseconds>(
                         wait_end_time - wait_start_time);
+
+        // If we requested data, the chunk is local now (empty or nor)
+        if (!confirm_only) {
+            array->fetched_chunks_.insert(pos);
+        }
 
         // safe to unlock since we write only once to the slot
     }
@@ -750,9 +768,8 @@ void SearchlightMessenger::DispatchWork(const boost::shared_ptr<Query> &query,
         const LiteAssignmentVector &work,
         InstanceID solver) const {
     // prepare the message
-    boost::shared_ptr<scidb::MessageDesc> msg(new SearchlightMessageDesc);
-    msg->initRecord(mtSLBalance);
-    msg->setQueryID(query->getQueryID());
+    boost::shared_ptr<scidb::MessageDesc> msg =
+            PrepareMessage(query->getQueryID(), mtSLBalance);
     boost::shared_ptr<SearchlightBalance> record =
             msg->getRecord<SearchlightBalance>();
 
@@ -767,11 +784,55 @@ void SearchlightMessenger::DispatchWork(const boost::shared_ptr<Query> &query,
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
     network_manager->send(solver, msg);
+}
 
-    // stats
-    const QueryContextPtr query_ctx =
-            GetQueryContext(query->getQueryID(), true);
-    query_ctx->stats_.msgs_sent_++;
+void SearchlightMessenger::ForwardCandidates(
+        const boost::shared_ptr<Query> &query,
+        const LiteAssignmentVector &cands,
+        InstanceID dest,
+        int forw_id) const {
+    // prepare the message
+    boost::shared_ptr<scidb::MessageDesc> msg =
+            PrepareMessage(query->getQueryID(), mtSLBalance);
+    boost::shared_ptr<SearchlightBalance> record =
+            msg->getRecord<SearchlightBalance>();
+
+    // fill the record
+    record->set_type(SearchlightBalance::CANDIDATE_FORWARD);
+    FillBalanceMessage(*record, cands);
+    record->set_id(forw_id);
+
+    // log
+    LOG4CXX_DEBUG(logger, "Forwarding candidates: dest=" << dest
+            << ", forw_id=" << forw_id);
+
+    // send
+    NetworkManager *network_manager = NetworkManager::getInstance();
+    network_manager->send(dest, msg);
+}
+
+void SearchlightMessenger::SendBalanceResult(
+        const boost::shared_ptr<Query> &query,
+        InstanceID dest, int forw_id, bool result) const {
+
+    // prepare the message
+    boost::shared_ptr<scidb::MessageDesc> msg =
+            PrepareMessage(query->getQueryID(), mtSLBalance);
+    boost::shared_ptr<SearchlightBalance> record =
+            msg->getRecord<SearchlightBalance>();
+
+    // fill the record
+    record->set_type(SearchlightBalance::BALANCE_RESULT);
+    record->set_id(forw_id);
+    record->set_result(result);
+
+    // log
+    LOG4CXX_DEBUG(logger, "Sending balancing result: dest=" << dest
+            << ", id=" << forw_id << ", result=" << result);
+
+    // send
+    NetworkManager *network_manager = NetworkManager::getInstance();
+    network_manager->send(dest, msg);
 }
 
 void SearchlightMessenger::BroadcastFinishSearch(

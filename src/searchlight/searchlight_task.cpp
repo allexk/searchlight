@@ -30,6 +30,7 @@
 
 #include "searchlight_task.h"
 #include "searchlight_messages.pb.h"
+#include "validator.h"
 
 #include <dlfcn.h>
 
@@ -320,6 +321,14 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
                 searchlight_.HandleHelper(balance_msg->instance(i));
             }
             break;
+        case SearchlightBalance::CANDIDATE_FORWARD:
+            LOG4CXX_DEBUG(logger, "Got forwards for the validator ...");
+            HandleForwards(*balance_msg, inst);
+            break;
+        case SearchlightBalance::BALANCE_RESULT:
+            searchlight_.GetValidator().HandleForwardResult(
+                    balance_msg->id(), balance_msg->result());
+            break;
     }
 }
 
@@ -335,6 +344,18 @@ void SearchlightTask::HandleRemoteLoad(const SearchlightBalance &msg) {
     searchlight_.PrepareHelper(load);
     sl_cond_.notify_one();
 }
+
+void SearchlightTask::HandleForwards(const SearchlightBalance &msg,
+        InstanceID src) {
+    // Prepare the load
+    LiteAssignmentVector load(msg.load_size());
+    for (int i = 0; i < msg.load_size(); i++) {
+        SearchlightMessenger::UnpackAssignment(msg.load(i), load[i]);
+    }
+
+    searchlight_.GetValidator().AddRemoteCandidates(load, src, msg.id());
+}
+
 
 void SearchlightTask::HandleRejectHelp(InstanceID src,
         const std::vector<InstanceID> &helpers, bool hard) {
@@ -406,6 +427,22 @@ void SearchlightTask::DispatchWork(const LiteAssignmentVector &work,
     // For now a helper is always a remote instance.
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     SearchlightMessenger::getInstance()->DispatchWork(query, work, solver);
+}
+
+void SearchlightTask::ForwardCandidates(const LiteAssignmentVector &cands,
+        InstanceID dest, int forw_id) const {
+    // For now a helper is always a remote instance.
+    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+    SearchlightMessenger::getInstance()->ForwardCandidates(query, cands, dest,
+            forw_id);
+}
+
+void SearchlightTask::SendBalanceResult(InstanceID dest, int id,
+        bool result) const {
+    // For now a helper is always a remote instance.
+    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+    SearchlightMessenger::getInstance()->SendBalanceResult(query, dest, id,
+            result);
 }
 
 const ConstChunk *SearchlightResultsArray::nextChunk(AttributeID attId,

@@ -37,6 +37,7 @@
 #include "base.h"
 
 #include <chrono>
+#include <unordered_set>
 
 namespace searchlight {
 
@@ -132,6 +133,24 @@ public:
     };
 
     /**
+     * Statistics about data accesses. To make sense, collecting stats must
+     * be enabled.
+     */
+    struct AccessStats {
+        /**
+         * Start positions of chunks accessed.
+         */
+        std::unordered_set<Coordinates, CoordinatesHash> chunks_pos_;
+
+        /**
+         * Reset statistics.
+         */
+        void Reset() {
+            chunks_pos_.clear();
+        }
+    };
+
+    /**
      * Creates an adapter for a SciDb array.
      *
      * @param array the SciDb data array
@@ -139,7 +158,8 @@ public:
     Adapter(const SearchArrayDesc &array, const std::string &name) :
         array_desc_(array),
         mode_(Mode::INTERVAL),
-        name_(name) {}
+        name_(name),
+        stats_enabled_(false) {}
 
     /**
      * Destructor.
@@ -185,7 +205,130 @@ public:
      */
     IntervalValue GetElement(const Coordinates &point, AttributeID attr) const;
 
+    /**
+     * Enables stats collecting mode.
+     *
+     * Statistics is collected about all accesses performed during the time
+     * period the mode is active. The stats is also reset.
+     *
+     */
+    void StartCollectingStats() {
+        stats_enabled_ = true;
+        stats_.Reset();
+    }
+
+    /**
+     *
+     * Disables collecting stats about accesses.
+     *
+     * The stats is not reset, so the caller might retrieve it via
+     * subsequent calls.
+     */
+    void StopCollectingStats() {
+        stats_enabled_ = false;
+    }
+
+    /**
+     * Returns current statistics about data accesses.
+     *
+     * @return current stats
+     */
+    const AccessStats &GetCurrentStats() const {
+        return stats_;
+    }
+
+    /**
+     * Returns search array descriptor this adapter handles.
+     *
+     * @return search array descriptor of this adapter
+     */
+    const SearchArrayDesc &GetSearchArrayDesc() const {
+        return array_desc_;
+    }
+
 private:
+    /*
+     * Iterates over chunks of the specified region. Chunks correspond to
+     * the specified array. The iterator is initially set and then steps over
+     * starting positions of the chunks.
+     */
+    class RegionIterator {
+    public:
+        /*
+         * Creates an iterator over the region, specified by low and
+         * high coordinates (both inclusive).
+         *
+         * We assume that the low-high coordinates comprise a valid region,
+         * where high[i] >= low[i].
+         */
+        RegionIterator(const ArrayDesc &array_desc, const Coordinates &low,
+                const Coordinates &high) :
+                    array_desc_(array_desc),
+                    pos_(low),
+                    region_low_(low),
+                    region_high_(high),
+                    valid_(true) {
+            // Correct coordinates
+            const scidb::Dimensions &dims = array_desc_.getDimensions();
+            for (size_t i = 0; i < dims.size(); i++) {
+                const Coordinate low = dims[i].getCurrStart();
+                const Coordinate high = dims[i].getCurrEnd();
+                if (region_low_[i] < low) {
+                    region_low_[i] = low;
+                }
+                if (region_high_[i] > high) {
+                    region_high_[i] = high;
+                }
+            }
+            // Align coords, since we're interested in start positions only
+            array_desc_.getChunkPositionFor(pos_);
+            array_desc_.getChunkPositionFor(region_low_);
+            array_desc_.getChunkPositionFor(region_high_);
+        }
+
+        // prefix ++
+        RegionIterator &operator++() {
+            const scidb::Dimensions &dims = array_desc_.getDimensions();
+            size_t i = pos_.size() - 1;
+            while ((pos_[i] += dims[i].getChunkInterval()) > region_high_[i]) {
+                pos_[i] = region_low_[i];
+                if (i == 0) {
+                    valid_ = false;
+                    break;
+                }
+                i--;
+            }
+            return *this;
+        }
+
+        // Is the iterator invalid (at the end?)
+        bool end() const {
+            return !valid_;
+        }
+
+        // Returns current position
+        const Coordinates &CurrentPosition() const {
+            assert(valid_);
+            return pos_;
+        }
+
+    private:
+        // The original array descriptor
+        const ArrayDesc &array_desc_;
+
+        // Current position
+        Coordinates pos_;
+
+        // Boundaries for the region
+        Coordinates region_low_, region_high_;
+
+        // Are we pointing to a valid position?
+        bool valid_;
+    };
+
+    void UpdateStatsWithRegion(const Coordinates &low,
+            const Coordinates &high) const;
+
     // The search array descriptor
     const SearchArrayDesc &array_desc_;
 
@@ -197,6 +340,12 @@ private:
 
     // Total time spent for requests
     mutable std::chrono::microseconds total_req_time_;
+
+    // Accesses statistics collected in stats mode
+    mutable AccessStats stats_;
+
+    // True, if collecting stats is enabled
+    bool stats_enabled_;
 };
 
 /**

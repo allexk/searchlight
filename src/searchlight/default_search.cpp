@@ -555,7 +555,7 @@ Decision* SLSearch::Next(Solver* const s) {
     // wait for the validator
     if (search_config_.validator_synchronize_) {
         LOG4CXX_DEBUG(logger, "Waiting for the validator...");
-        sl_.GetValidator()->Synchronize();
+        sl_.GetValidator().Synchronize();
     }
 
     /*
@@ -629,7 +629,7 @@ void SLSearch::InitIntervals(Solver * const s) {
     // wait for the validator
     if (search_config_.validator_synchronize_) {
         LOG4CXX_DEBUG(logger, "Waiting for the validator...");
-        sl_.GetValidator()->Synchronize();
+        sl_.GetValidator().Synchronize();
     }
 }
 

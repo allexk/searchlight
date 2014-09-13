@@ -66,7 +66,11 @@ public:
         messenger_(SearchlightMessenger::getInstance()),
         cache_(desc, query),
         query_(query),
-        input_distr_(input_distr) {}
+        input_distr_(input_distr) {
+
+        // Set input partitioning schema (at delegate array)
+        this->desc.setPartitioningSchema(input_distr_.getPartitioningSchema());
+    }
 
     /**
      * Creates a new const departitioning array iterator.

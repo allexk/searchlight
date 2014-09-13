@@ -72,6 +72,24 @@ public:
     void AddSolution(const Assignment &sol);
 
     /**
+     * Submits forwarded candidates for validation.
+     *
+     * @param cands candidates to validate
+     * @param src source validator
+     * @param forw_id remote forward id of the first candidate
+     */
+    void AddRemoteCandidates(LiteAssignmentVector &cands, InstanceID src,
+            int forw_id);
+
+    /**
+     * Handles the result of the forwarder validation.
+     *
+     * @param id forward id
+     * @param result true, if the candidate is valid; false, otherwise
+     */
+    void HandleForwardResult(int id, bool result);
+
+    /**
      * Blocks until the validor clears the validator queue. This allows the
      * caller to sync with the validator and make sure the validator can
      * accept further requests.
@@ -116,13 +134,23 @@ public:
     }
 
 private:
+    // Info for a candidate assignment pending validation
+    struct CandidateAssignment {
+        // The assignment itself
+        LiteVarAssignment var_asgn_;
+
+        // Id >= 0, if the candidate is a remote; -1, local
+        int forw_id_;
+    };
+    using CandidateVector = std::vector<CandidateAssignment>;
+
     /*
      * We define the DB as a friend to grab the next portion of assignments
      */
     friend class RestoreAssignmentBuilder;
 
     // Returns the next portion of Assignments to validate
-    LiteAssignmentVector *GetNextAssignments();
+    CandidateVector *GetNextAssignments();
 
     // Check if the searchlight is terminating
     bool CheckTerminate() const {
@@ -132,17 +160,42 @@ private:
     /*
      *  Returns true if this validator finished locally:
      *    1) No local candidate solutions
-     *    2) TODO: No outstanding forwards
+     *    2) No outstanding forwards
      */
     bool FinishedLocally() const {
-        return to_validate_.empty();
+        std::lock_guard<std::mutex> validate_lock(to_validate_mtx_);
+        return to_validate_.empty() && forwarded_candidates_.empty();
     }
+
+    // Sends back the result of the forward
+    void SendForwardResult(int forw_id, bool result);
+
+    // Checks if we want to forward (returns true) and forwards if we can.
+    bool CheckForward(const Assignment *asgn);
 
     // Searchlight instance
     Searchlight &sl_;
 
+    // Searchlight task
+    SearchlightTask &sl_task_;
+
     // Pending validations
-    LiteAssignmentVector to_validate_;
+    CandidateVector to_validate_;
+
+    // Info about remote candidates (local id -> (instance, remote id))
+    std::unordered_map<int, std::pair<InstanceID, int>> remote_candidates_;
+
+    // Local ids for remote candidates
+    int remote_cand_id_ = 0;
+
+    // Contains information about forwarded candidates (local_id -> solution)
+    std::unordered_map<int, LiteVarAssignment> forwarded_candidates_;
+
+    // Forward ids for candidates
+    int forw_id_ = 0;
+
+    // True, if for candidate forwarding is enabled
+    bool balancing_enabled_;
 
     // The duplicate solver for validation
     Solver solver_;
@@ -163,7 +216,7 @@ private:
     mutable std::mutex to_validate_mtx_;
 
     // The resulting status of the validator solver
-    bool solver_status_;
+    bool solver_status_ = false;
 
     /*
      * The maximum number of pending validations. If the number is exceeded the

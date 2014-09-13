@@ -472,8 +472,8 @@ public:
      *
      * @return current validator or nullptr, if no exists
      */
-    const Validator *GetValidator() const {
-        return validator_;
+    Validator& GetValidator() {
+        return *validator_;
     }
 
     /**

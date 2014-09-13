@@ -270,6 +270,52 @@ public:
             const std::vector<InstanceID> &ids, bool hard) const;
 
     /**
+     * Forwards a candidate solution to another validator.
+     *
+     * The idea behind the id of the forward is that after the validation
+     * the validator will respond with the same id.
+     *
+     * @param query caller's query context
+     * @param cands candidates to forward
+     * @param dest destination validator
+     * @param forw_id id of this forward
+     */
+    void ForwardCandidates(const boost::shared_ptr<Query> &query,
+            const LiteAssignmentVector &cands,
+            InstanceID dest,
+            int forw_id) const;
+
+    /**
+     * Sends result of the balancing.
+     *
+     * @param query caller's query id
+     * @param dest destination Searchlight
+     * @param id id of the balancing load
+     * @param result result status of the load
+     */
+    void SendBalanceResult(const boost::shared_ptr<Query> &query,
+            InstanceID dest, int id, bool result) const;
+
+    /**
+     * Checks if a chunk has been fetched and stored locally.
+     *
+     * This function only checks for fetched remote chunks. It does not
+     * check for chunks that are local due to their distribution
+     * (i.e., the instance owns it).
+     *
+     * If the array has not been registered with this messenger, the result
+     * is always false, which is consistent with the knowledge this messenger
+     * possess.
+     *
+     * @param query caller's query context
+     * @param array_name the name of the array
+     * @param pos chunk position
+     * @return true, if the chunk has been fetched; false, otherwise
+     */
+    bool ChunkFetched(const boost::shared_ptr<Query> &query,
+            const std::string &array_name, const Coordinates &pos) const;
+
+    /**
      * Packs min/max assignment into a message.
      *
      * The suitable message must already be provided. maxs might be nullptr
@@ -361,6 +407,9 @@ private:
             // Cached iterators
             std::unordered_map<AttributeID,
                 boost::shared_ptr<ConstArrayIterator>> iters_;
+
+            // Chunks retrieved from other nodes
+            std::unordered_set<Coordinates, CoordinatesHash> fetched_chunks_;
 
             ServedArray(const ArrayPtr &array) : array_(array) {}
         };

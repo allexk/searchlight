@@ -127,6 +127,15 @@ public:
     }
 
     /**
+     * Returns original (i.e., SciDb) array descriptor.
+     *
+     * @return original array descriptor
+     */
+    const ArrayDesc &GetOriginalArrayDesc() const {
+        return array_->getArrayDesc();
+    }
+
+    /**
      * Returns the original array attribute id for the specified internal
      * access id.
      *
@@ -146,6 +155,21 @@ public:
         return aux_samplers_;
     }
 
+    /**
+     * Fills in chunk distribution info for a set of chunks.
+     *
+     * Chunk distribution is information about which instance has which
+     * chunks. It is passed to the function as a vector of counters (one per
+     * instance), and the vector is updated by using information about
+     * static distribution and chunks fetched by the local instance during
+     * the query execution.
+     *
+     * @param query caller's query context
+     * @param chunk_pos set of chunk positions
+     * @param distr vector of instance counters (will be updated)
+     */
+    void GetChunksDistribution(const boost::shared_ptr<Query> &query,
+            const CoordinateSet &chunk_pos, std::vector<int> &distr) const;
 
 private:
     // The data array

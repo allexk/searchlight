@@ -198,6 +198,46 @@ public:
     void DispatchWork(const LiteAssignmentVector &work,
             InstanceID solver) const;
 
+    /**
+     * Forwards candidates to another validator.
+     *
+     * The destination validator will reply with the same id when it's done.
+     *
+     * @param cands candidates to forward
+     * @param dest destination validator
+     * @param forw_id id of the forward
+     */
+    void ForwardCandidates(const LiteAssignmentVector &cands,
+            InstanceID dest, int forw_id) const;
+
+    /**
+     * Sends result of the balancing.
+     *
+     * @param dest destination Searchlight
+     * @param id id of the balancing load
+     * @param result result status of the load
+     */
+    void SendBalanceResult(InstanceID dest, int id, bool result) const;
+
+    /**
+     * Returns query context of this task.
+     *
+     * @return task's query context
+     */
+    boost::shared_ptr<Query> GetQueryContext() const {
+        return Query::getValidQueryPtr(query_);
+    }
+
+    /**
+     * Reports a real (not candidate) solution.
+     *
+     * This function will either cause the solution to be reported to the
+     * user (via SciDb) or be sent to the coordinator.
+     *
+     * @param values solution values
+     */
+    void ReportSolution(const std::vector<int64_t> &values);
+
 private:
     // Make it a friend to modify the queue
     friend class SearchlightSolutionCollector;
@@ -225,9 +265,6 @@ private:
 
     // Resolves the task in the DLL
     void ResolveTask(const std::string &lib_name, const std::string &task_name);
-
-    // Either add solution to the queue or send it out
-    void ReportSolution(const std::vector<int64_t> &values);
 
     // Handles an idle solver and possible dispatches it to another solver
     void HandleIdleSolver(InstanceID id);
@@ -261,6 +298,9 @@ private:
 
     // Handles remote workload for the solver (helper)
     void HandleRemoteLoad(const SearchlightBalance &msg);
+
+    // Handles forwarded candidates
+    void HandleForwards(const SearchlightBalance &msg, InstanceID src);
 
     // Handles rejected help
     void HandleRejectHelp(InstanceID src,

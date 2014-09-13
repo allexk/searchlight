@@ -246,8 +246,12 @@ private:
             }
 
             if (valid_) {
-                // align by the chunk boundary
-                pos_[i] -= pos_[i] % sampler_.chunk_sizes_[i];
+                /*
+                 *  Align by the chunk boundary. We need this to properly
+                 *  detect chunk pieces the region covers.
+                 */
+                pos_[i] -= (pos_[i] - sampler_.sample_origin_[i]) %
+                        sampler_.chunk_sizes_[i];
                 if (i == pos_.size() - 1) {
                     chunk_pos_++;
                 } else {
@@ -335,7 +339,9 @@ private:
         void GetHighChunkCoords(Coordinates &high) const {
             for (size_t i = 0; i < pos_.size(); i++) {
                 const Coordinate chunk_size = sampler_.chunk_sizes_[i];
-                high[i] = (pos_[i] - pos_[i] % chunk_size) + chunk_size - 1;
+                high[i] = (pos_[i] -
+                        (pos_[i] - sampler_.sample_origin_[i]) % chunk_size) +
+                        chunk_size - 1;
                 if (high[i] > region_high_[i]) {
                     high[i] = region_high_[i];
                 }

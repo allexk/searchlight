@@ -30,6 +30,8 @@
 
 #include "array_desc.h"
 
+#include "searchlight_messenger.h"
+
 namespace searchlight {
 
 // The logger
@@ -74,5 +76,24 @@ AttributeID SearchArrayDesc::RegisterAttribute(const std::string &attr_name,
     return search_id;
 }
 
+void SearchArrayDesc::GetChunksDistribution(
+        const boost::shared_ptr<Query> &query, const CoordinateSet &chunk_pos,
+        std::vector<int> &distr) const {
+    assert(query->getInstancesCount() == distr.size());
+    const InstanceID local_inst = query->getInstanceID();
+    const SearchlightMessenger *messenger = SearchlightMessenger::getInstance();
+    const ArrayDesc &array_desc = array_->getArrayDesc();
+
+    for (const auto &pos: chunk_pos) {
+        InstanceID chunk_inst = scidb::getInstanceForChunk(
+                query, pos, array_desc, array_desc.getPartitioningSchema(),
+                boost::shared_ptr<scidb::DistributionMapper>(), 0, local_inst);
+        if (chunk_inst != local_inst &&
+                messenger->ChunkFetched(query, array_desc.getName(), pos)) {
+            chunk_inst = local_inst;
+        }
+        ++distr[chunk_inst];
+    }
+}
 
 } /* namespace searchlight */
