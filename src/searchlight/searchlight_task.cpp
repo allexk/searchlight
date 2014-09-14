@@ -359,6 +359,17 @@ void SearchlightTask::HandleForwards(const SearchlightBalance &msg,
 
 void SearchlightTask::HandleRejectHelp(InstanceID src,
         const std::vector<InstanceID> &helpers, bool hard) {
+    // logging
+    if (logger->isDebugEnabled()) {
+        std::ostringstream deb_str;
+        deb_str << "Help was rejected: helpee=" << src << "hard="
+                << hard << ", helpers={";
+        std::copy(helpers.begin(), helpers.end(),
+                std::ostream_iterator<InstanceID>(deb_str, ", "));
+        deb_str << "}";
+        logger->debug(deb_str.str(), LOG4CXX_LOCATION);
+    }
+
     // If it's a hard reject we need to disable help for src solver
     if (hard) {
         std::unique_lock<std::mutex> lock(mtx_);
