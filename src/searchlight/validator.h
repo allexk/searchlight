@@ -163,7 +163,10 @@ private:
      *    2) No outstanding forwards
      */
     bool FinishedLocally() const {
-        std::lock_guard<std::mutex> validate_lock(to_validate_mtx_);
+        /*
+         *  No mutex here since it's called from the main validator loop,
+         *  which takes care of that.
+         */
         return to_validate_.empty() && forwarded_candidates_.empty();
     }
 
