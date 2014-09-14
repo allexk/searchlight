@@ -71,12 +71,14 @@ Searchlight::~Searchlight() {
      * continue after another candidate is found, so fails-sols should give
      * the number of true fails.
      */
-    const int64 total_fails = solver_.failures();
-    const int64_t total_candidates =
-            search_monitors_.validator_monitor_->CandidatesNumber();
-    LOG4CXX_INFO(logger, "Main search stats: fails=" << total_fails <<
-            ", true fails=" << (total_fails - total_candidates) <<
-            ", candidates=" << total_candidates);
+    if (search_monitors_.validator_monitor_) {
+        const int64 total_fails = solver_.failures();
+        const int64_t total_candidates =
+                search_monitors_.validator_monitor_->CandidatesNumber();
+        LOG4CXX_INFO(logger, "Main search stats: fails=" << total_fails <<
+                ", true fails=" << (total_fails - total_candidates) <<
+                ", candidates=" << total_candidates);
+    }
 
     if (status_ != Status::COMMITTED) {
         LOG4CXX_INFO(logger, "Solver was terminated unexpectedly!");
