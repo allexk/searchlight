@@ -317,6 +317,9 @@ void SearchlightMessenger::RegisterHandlers(bool init) {
     factory->addMessageType(mtSLControl,
             MessageCreator(&CreateMessageRecord),
             boost::bind(&SearchlightMessenger::HandleGeneralMessage, this, _1));
+    factory->addMessageType(mtSLBalance,
+            MessageCreator(&CreateMessageRecord),
+            boost::bind(&SearchlightMessenger::HandleGeneralMessage, this, _1));
 }
 
 bool SearchlightMessenger::ChunkFetched(const boost::shared_ptr<Query> &query,
