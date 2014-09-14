@@ -27,6 +27,11 @@
         "load_aux_samples": 1
     },
 
+    "balance": {
+        "solver_balance": 1,
+        "validator_balance": 1
+    },
+
     "sw": {
         "lx": 0,
         "ux": 50000,
@@ -53,6 +58,5 @@
 
         "db": "sl",
         "time_limit": 3600,
-        "solver_balance": 1
     }
 }
