@@ -79,7 +79,7 @@ public:
         if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
             distr_search_info_.reset(new DistributedSearchInfo);
             for (int i = 0; i < query_instance_count_; i++) {
-                distr_search_info_->help_queue_.push(i);
+                distr_search_info_->helpees_.Add(i);
                 distr_search_info_->busy_solvers_.insert(i);
             }
             distr_search_info_->busy_validators_count_ = query_instance_count_;
@@ -192,11 +192,14 @@ public:
      * This function is used by a solver to off-load some of its work to
      * another solver that was dispatched by the coordinator as a helper.
      *
+     * As one of its steps it notifies the coordinator that the helper
+     * has been accepted.
+     *
      * @param work assignments to send
      * @param solver id of the solver to send the work to
      */
     void DispatchWork(const LiteAssignmentVector &work,
-            InstanceID solver) const;
+            InstanceID solver);
 
     /**
      * Forwards candidates to another validator.
@@ -247,11 +250,33 @@ private:
         // Currently busy solvers
         std::unordered_set<InstanceID> busy_solvers_;
 
-        // Solvers that have rejected help
-        std::unordered_set<InstanceID> nonhelp_solvers_;
+        // Currently idle solvers
+        std::unordered_set<InstanceID> idle_solvers_;
 
-        // Queue of solvers looking for help
-        std::queue<InstanceID> help_queue_;
+        // Solvers needing help
+        struct {
+            // LRU queue of solvers that need help
+            std::list<InstanceID> help_reqs_;
+
+            // Index to quickly find and remove instances from the list
+            std::unordered_map<InstanceID, std::list<InstanceID>::iterator> index_;
+
+            // Erases instance id from helpees
+            void Erase(InstanceID id) {
+                const auto iter = index_.find(id);
+                if (iter != index_.end()) {
+                    help_reqs_.erase(iter->second);
+                    index_.erase(iter);
+                }
+            }
+
+            // Add instance id to helpees
+            void Add(InstanceID id) {
+                assert(!index_.count(id));
+                help_reqs_.push_back(id);
+                index_.emplace(id, --help_reqs_.end());
+            }
+        } helpees_;
 
         // Number of validators still busy with the job
         int busy_validators_count_;
@@ -311,6 +336,18 @@ private:
 
     // Broadcasts control message to commit Searchlight
     void BroadcastCommit();
+
+    // Checks if somebody needs help and dispatches a helper
+    void CheckForHelpees();
+
+    // Dispatches helper to another node
+    void DispatchHelper(InstanceID helper, InstanceID dest);
+
+    // Handles accept help message
+    void HandleAcceptHelper(InstanceID helper);
+
+    // Handles a new helper (note: it will be rejected/accepted later)
+    void HandleHelper(InstanceID helper);
 
     // Type of the task function (called from the library)
     typedef void (*SLTaskFunc)(Searchlight *);

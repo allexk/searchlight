@@ -789,6 +789,33 @@ void SearchlightMessenger::DispatchWork(const boost::shared_ptr<Query> &query,
     network_manager->send(solver, msg);
 }
 
+void SearchlightMessenger::AcceptHelp(const boost::shared_ptr<Query> &query,
+        InstanceID inst) const {
+    // prepare the message
+    const InstanceID coord_id = query->getCoordinatorID();
+    if (coord_id == scidb::COORDINATOR_INSTANCE) {
+        LOG4CXX_ERROR(logger, "Attempting to accept help at the coordinator");
+        return;
+    }
+
+    // prepare the message
+    boost::shared_ptr<scidb::MessageDesc> msg =
+            PrepareMessage(query->getQueryID(), mtSLBalance);
+    boost::shared_ptr<SearchlightBalance>  record =
+            msg->getRecord<SearchlightBalance>();
+
+    // Fill the record
+    record->set_type(SearchlightBalance::ACCEPT_HELP);
+    record->add_instance(inst);
+
+    // log
+    LOG4CXX_DEBUG(logger, "Sending help accept: helper=" << inst);
+
+    // send
+    NetworkManager *network_manager = NetworkManager::getInstance();
+    network_manager->send(inst, msg);
+}
+
 void SearchlightMessenger::ForwardCandidates(
         const boost::shared_ptr<Query> &query,
         const LiteAssignmentVector &cands,

@@ -270,6 +270,16 @@ public:
             const std::vector<InstanceID> &ids, bool hard) const;
 
     /**
+     * Sends a message accepting help to the coordinator.
+     *
+     * @param query caller's query context
+     * @param inst helper accepted
+     * @param hard true, if it's a hard reject; false, if soft
+     */
+    void AcceptHelp(const boost::shared_ptr<Query> &query,
+            InstanceID inst) const;
+
+    /**
      * Forwards a candidate solution to another validator.
      *
      * The idea behind the id of the forward is that after the validation

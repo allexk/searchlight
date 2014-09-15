@@ -36,9 +36,10 @@ message SearchlightBalance {
         HELPER_DISPATCH      = 1; // Giving a helper instance
         REJECT_HELPER_SOFT   = 2; // Rejecting help just given (soft reject)
         REJECT_HELPER_HARD   = 3; // Rejecting help just given (hard reject)
-        HELP_LOAD            = 4; // Message contains load for the helper
-        CANDIDATE_FORWARD    = 5; // Forwarding of a candidate to a validator
-        BALANCE_RESULT       = 6; // Result of balancing (e.g., for forwarder candidates)
+        ACCEPT_HELP          = 4; // Helper accepted
+        HELP_LOAD            = 5; // Message contains load for the helper
+        CANDIDATE_FORWARD    = 6; // Forwarding of a candidate to a validator
+        BALANCE_RESULT       = 7; // Result of balancing (e.g., for forwarder candidates)
     }
 
     required Type type          = 1; // Type of the message
