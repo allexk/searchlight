@@ -578,7 +578,7 @@ private:
 
     // Monitors participating in the search
     struct SearchMonitors {
-        // Validator monitor for the search
+        // Validator monitor for the search (owned by the solver -- no delete)
         ValidatorMonitor *validator_monitor_ = nullptr;
 
         // User monitors
@@ -586,10 +586,6 @@ private:
 
         // Auxiliary monitors established by SL
         std::vector<SearchMonitor *> aux_monitors_;
-
-        void Disband() {
-            delete validator_monitor_;
-        }
 
         // Returns a vector of all monitors that we install for search
         std::vector<SearchMonitor *> GetSearchMonitors() const {

@@ -71,10 +71,14 @@ Searchlight::~Searchlight() {
      * continue after another candidate is found, so fails-sols should give
      * the number of true fails.
      */
-    const int64 total_fails = solver_.failures();
-    LOG4CXX_INFO(logger, "Main search stats: fails=" << total_fails <<
-            ", true fails=" << (total_fails - candidates_) <<
-            ", candidates=" << candidates_);
+    if (search_monitors_.validator_monitor_) {
+        const int64 total_fails = solver_.failures();
+        const int64_t total_candidates =
+                search_monitors_.validator_monitor_->CandidatesNumber();
+        LOG4CXX_INFO(logger, "Main search stats: fails=" << total_fails <<
+                ", true fails=" << (total_fails - total_candidates) <<
+                ", candidates=" << total_candidates);
+    }
 
     if (status_ != Status::COMMITTED) {
         LOG4CXX_INFO(logger, "Solver was terminated unexpectedly!");
@@ -83,8 +87,7 @@ Searchlight::~Searchlight() {
     // First destroy validator (SL still has all its structures intact)
     EndAndDestroyValidator();
 
-    // Destroy the rest; the collector will be destroyed AFTER the validator.
-    search_monitors_.Disband();
+    // Destroy the rest
     delete array_desc_;
 }
 
@@ -98,26 +101,10 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
     secondary_vars_ = secondary_vars;
     db_ = db;
 
-    // Establish monitors: validator (to transfer leaves) and terminator
-    search_monitors_.user_monitors_ = monitors;
-    SearchLimit *terminator = solver_.MakeCustomLimit(
-            NewPermanentCallback(this, &Searchlight::CheckTerminate));
-    search_monitors_.aux_monitors_.push_back(terminator);
-
     // All vars, for convenience
     IntVarVector vars{primary_vars};
     vars.insert(vars.end(), secondary_vars.begin(), secondary_vars.end());
     vars_leaf_.Add(vars);
-
-    /*
-     * Here we want to create a new search. While it does not matter for
-     * the initial search, it it crucial to be able to rollback all changes
-     * when this search is used as a helper. The only way to do this is to
-     * initialize the search now, so that the Solver puts a INITIAL_SEARCH
-     * marker in the trace. Then, after the Solve() is finished it will
-     * roll-back everything to this point.
-     */
-    solver_.NewSearch(db, search_monitors_.GetSearchMonitors());
 
     // First, we need to find all names
     StringVector var_names(vars.size());
@@ -136,9 +123,28 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
         var_names[i++] = var_name;
     }
 
-    // establish collector and validator
+    // Set up the validator
     LOG4CXX_INFO(logger, "Initiating the validator");
     validator_ = new Validator(*this, sl_task_, var_names);
+
+    // Establish monitors: validator (to transfer leaves) and terminator
+    search_monitors_.user_monitors_ = monitors;
+    SearchLimit *terminator = solver_.MakeCustomLimit(
+            NewPermanentCallback(this, &Searchlight::CheckTerminate));
+    search_monitors_.aux_monitors_.push_back(terminator);
+    search_monitors_.validator_monitor_ = solver_.RevAlloc(
+            new ValidatorMonitor{*validator_, vars, &solver_});
+
+    /*
+     * Here we want to create a new search. While it does not matter for
+     * the initial search, it it crucial to be able to rollback all changes
+     * when this search is used as a helper. The only way to do this is to
+     * initialize the search now, so that the Solver puts a INITIAL_SEARCH
+     * marker in the trace. Then, after the Solve() is finished it will
+     * roll-back everything to this point.
+     */
+    solver_.NewSearch(db, search_monitors_.GetSearchMonitors());
+
 
     /*
      * Determine our partition. First, determine the variable with the largest
@@ -222,31 +228,13 @@ void Searchlight::Solve() {
         // Starting the timer
         const auto solve_start_time = std::chrono::steady_clock::now();
 
-        // start the search
+        /*
+         * Since the collector will visit all the leaves, the loop is empty.
+         * Also, some heuristics, like SLRandom, find candidates via
+         * nested search, which is not going to show up here anyway.
+         */
         LOG4CXX_INFO(logger, "Starting the main search");
-        while (solver_.NextSolution()) {
-            // We encountered a leaf -- a candidate solution
-           vars_leaf_.Store();
-           LOG4CXX_TRACE(logger, "Encountered a leaf: "
-                   << vars_leaf_.DebugString()
-                   << ", depth=" << solver_.SearchDepth());
-
-           // Is it a complete assignment?
-           bool complete = true;
-           for (const auto &var: vars_leaf_.IntVarContainer().elements()) {
-               if (!var.Bound()) {
-                   complete = false;
-                   break;
-               }
-           }
-
-           // TODO: check if need this; a leaf should always be complete
-           assert(complete);
-           if (complete) {
-               candidates_++;
-               validator_->AddSolution(vars_leaf_);
-           }
-        }
+        while (solver_.NextSolution());
         solver_.EndSearch();
 
         // stopping the timer
@@ -300,17 +288,16 @@ bool ValidatorMonitor::AtSolution() {
     LOG4CXX_TRACE(logger, "Encountered a leaf: " << asgn->DebugString() <<
             ", depth=" << solver()->SearchDepth());
 
-    // Should check if we have a complete assignment
+    // TODO: check if need this; a leaf should always be complete
     bool complete = true;
-    for (IntVarVector::const_iterator cit = vars_.begin(); cit != vars_.end();
-            cit++) {
-        const IntVar * const var = *cit;
-        if (!asgn->Bound(var)) {
+    for (const auto &var: asgn->IntVarContainer().elements()) {
+        if (!var.Bound()) {
             complete = false;
             break;
         }
     }
 
+    assert(complete);
     if (complete) {
         candidates_++;
         validator_.AddSolution(*asgn);
