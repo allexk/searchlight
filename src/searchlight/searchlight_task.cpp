@@ -133,7 +133,7 @@ InstanceID SearchlightTask::GetHelpee() {
     InstanceID res = scidb::INVALID_INSTANCE;
     if (!distr_search_info_->helpees_.help_reqs_.empty()) {
         res = distr_search_info_->helpees_.help_reqs_.front();
-        distr_search_info_->helpees_.help_reqs_.pop_front();
+        distr_search_info_->helpees_.Erase(res);
         distr_search_info_->helpees_.Add(res);
     }
     return res;
