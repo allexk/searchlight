@@ -228,7 +228,7 @@ public:
             DLLHandler &dll_handler) :
         solver_(name),
         db_(nullptr),
-        initial_var_values_(&solver_),
+        vars_leaf_(&solver_),
         validator_(nullptr),
         validator_thread_(nullptr),
         array_desc_(nullptr),
@@ -590,6 +590,16 @@ private:
         void Disband() {
             delete validator_monitor_;
         }
+
+        // Returns a vector of all monitors that we install for search
+        std::vector<SearchMonitor *> GetSearchMonitors() const {
+            std::vector<SearchMonitor *> mons{user_monitors_};
+            mons.insert(mons.end(), aux_monitors_.begin(), aux_monitors_.end());
+            if (validator_monitor_) {
+                mons.push_back(validator_monitor_);
+            }
+            return mons;
+        }
     };
 
     // The solver
@@ -604,8 +614,8 @@ private:
     // "Secondary" decision variables -- conveying additional info
     IntVarVector secondary_vars_;
 
-    // Contains initial var values to reset search before a new job
-    Assignment initial_var_values_;
+    // Contains all vars: for prototyping and sending to validator
+    Assignment vars_leaf_;
 
     // Monitors defined for the search
     SearchMonitors search_monitors_;
@@ -643,6 +653,9 @@ private:
 
     // Do we accept help?
     bool solver_balancing_enabled_;
+
+    // Total number of candidates met
+    uint64_t candidates_ = 0;
 
     // For concurrency control
     std::mutex mtx_;

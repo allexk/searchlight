@@ -71,14 +71,10 @@ Searchlight::~Searchlight() {
      * continue after another candidate is found, so fails-sols should give
      * the number of true fails.
      */
-    if (search_monitors_.validator_monitor_) {
-        const int64 total_fails = solver_.failures();
-        const int64_t total_candidates =
-                search_monitors_.validator_monitor_->CandidatesNumber();
-        LOG4CXX_INFO(logger, "Main search stats: fails=" << total_fails <<
-                ", true fails=" << (total_fails - total_candidates) <<
-                ", candidates=" << total_candidates);
-    }
+    const int64 total_fails = solver_.failures();
+    LOG4CXX_INFO(logger, "Main search stats: fails=" << total_fails <<
+            ", true fails=" << (total_fails - candidates_) <<
+            ", candidates=" << candidates_);
 
     if (status_ != Status::COMMITTED) {
         LOG4CXX_INFO(logger, "Solver was terminated unexpectedly!");
@@ -102,17 +98,28 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
     secondary_vars_ = secondary_vars;
     db_ = db;
 
-    // Store initial values to be able to reset everything
-    initial_var_values_.Add(primary_vars_);
-    initial_var_values_.Add(secondary_vars_);
-    initial_var_values_.Store();
+    // Establish monitors: validator (to transfer leaves) and terminator
+    search_monitors_.user_monitors_ = monitors;
+    SearchLimit *terminator = solver_.MakeCustomLimit(
+            NewPermanentCallback(this, &Searchlight::CheckTerminate));
+    search_monitors_.aux_monitors_.push_back(terminator);
 
-    /*
-     * First, we need to create the validator.
-     */
+    // All vars, for convenience
     IntVarVector vars{primary_vars};
     vars.insert(vars.end(), secondary_vars.begin(), secondary_vars.end());
+    vars_leaf_.Add(vars);
 
+    /*
+     * Here we want to create a new search. While it does not matter for
+     * the initial search, it it crucial to be able to rollback all changes
+     * when this search is used as a helper. The only way to do this is to
+     * initialize the search now, so that the Solver puts a INITIAL_SEARCH
+     * marker in the trace. Then, after the Solve() is finished it will
+     * roll-back everything to this point.
+     */
+    solver_.NewSearch(db, search_monitors_.GetSearchMonitors());
+
+    // First, we need to find all names
     StringVector var_names(vars.size());
     int i = 0;
     for (IntVarVector::const_iterator cit = vars.begin(); cit != vars.end();
@@ -166,14 +173,6 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
         solver_.Accept(pmv);
     }
 
-    // Establish monitors: validator (to transfer leaves) and terminator
-    search_monitors_.user_monitors_ = monitors;
-    search_monitors_.validator_monitor_ =
-            new ValidatorMonitor(*validator_, vars, &solver_);
-    SearchLimit *terminator = solver_.MakeCustomLimit(
-            NewPermanentCallback(this, &Searchlight::CheckTerminate));
-    search_monitors_.aux_monitors_.push_back(terminator);
-
     // Decide if the balancing is enabled
     solver_balancing_enabled_ = config_.get("balance.solver_balance", 1);
     status_ = Status::PREPARED;
@@ -206,24 +205,18 @@ void Searchlight::Solve() {
         // Remote load?
         if (!helper_load_.empty()) {
             // Get a remote assignment from the remote load
-            AssignmentPtr asgn{new Assignment{&initial_var_values_}};
-            LiteToFullAssignment(*asgn, helper_load_.back());
+            LiteToFullAssignment(vars_leaf_, helper_load_.back());
             helper_load_.pop_back();
 
             LOG4CXX_DEBUG(logger, "Restoring a remote assignment: "
-                    << asgn->DebugString());
+                    << vars_leaf_.DebugString());
             /*
-             * We should restore initial values here. Otherwise, we might
-             * get an infeasible problem, especially since different solvers
-             * work with disjoint sub-trees.
-             *
-             * We're freezing the queue for both assignments to make a single
-             * constraint propagation, instead of two (for each assignment).
+             * We want to set up the delegated work here. The idea is that we
+             * first create the search, which will be in the initial state
+             * and then set up the part
              */
-            initial_var_values_.FreezeQueue();
-            initial_var_values_.Restore();
-            asgn->Restore();
-            initial_var_values_.UnfreezeQueue();
+            solver_.NewSearch(db_, search_monitors_.GetSearchMonitors());
+            vars_leaf_.Restore();
         }
 
         // Starting the timer
@@ -231,13 +224,30 @@ void Searchlight::Solve() {
 
         // start the search
         LOG4CXX_INFO(logger, "Starting the main search");
-        std::vector<SearchMonitor *> solve_monitors(
-                search_monitors_.user_monitors_);
-        solve_monitors.insert(solve_monitors.end(),
-                search_monitors_.aux_monitors_.begin(),
-                search_monitors_.aux_monitors_.end());
-        solve_monitors.push_back(search_monitors_.validator_monitor_);
-        solver_.Solve(db_, solve_monitors);
+        while (solver_.NextSolution()) {
+            // We encountered a leaf -- a candidate solution
+           vars_leaf_.Store();
+           LOG4CXX_TRACE(logger, "Encountered a leaf: "
+                   << vars_leaf_.DebugString()
+                   << ", depth=" << solver_.SearchDepth());
+
+           // Is it a complete assignment?
+           bool complete = true;
+           for (const auto &var: vars_leaf_.IntVarContainer().elements()) {
+               if (!var.Bound()) {
+                   complete = false;
+                   break;
+               }
+           }
+
+           // TODO: check if need this; a leaf should always be complete
+           assert(complete);
+           if (complete) {
+               candidates_++;
+               validator_->AddSolution(vars_leaf_);
+           }
+        }
+        solver_.EndSearch();
 
         // stopping the timer
         const auto solve_end_time = std::chrono::steady_clock::now();

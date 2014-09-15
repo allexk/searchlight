@@ -482,15 +482,18 @@ Decision* SLSearch::Next(Solver* const s) {
      *  Check if we can off-load some work. We can if:
      *    1) We are not exploring the last region
      *    2) We have some help available
+     *
+     *  For now, we just send out a single region.
      */
     if (s->SearchLeftDepth() > 0 && sl_.HelpAvailable()) {
-        // For now we just give out a single region
-        LOG4CXX_DEBUG(logger, "Off-loading a region to a helper");
-
         // Take a snapshot of vars
         AssignmentPtr asgn{new Assignment(s)};
         asgn->Add(all_vars_);
         asgn->Store();
+
+        // Log
+        LOG4CXX_DEBUG(logger, "Off-loading a region to a helper: "
+                << asgn->DebugString());
 
         LiteAssignmentVector work(1);
         FullAssignmentToLite(*asgn, work.back());
