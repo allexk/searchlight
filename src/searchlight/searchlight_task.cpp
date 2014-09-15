@@ -332,7 +332,8 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
             }
             break;
         case SearchlightBalance::CANDIDATE_FORWARD:
-            LOG4CXX_DEBUG(logger, "Got forwards for the validator ...");
+            LOG4CXX_DEBUG(logger,
+                    "Got forwards for the validator from inst=" << inst);
             HandleForwards(*balance_msg, inst);
             break;
         case SearchlightBalance::BALANCE_RESULT:
@@ -342,6 +343,8 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
         case SearchlightBalance::ACCEPT_HELP:
             assert(balance_msg->instance_size());
             for (int i = 0; i < balance_msg->instance_size(); i++) {
+                LOG4CXX_DEBUG(logger, "Helper was accepted: helper="
+                        << balance_msg->instance(i) << ", helpee=" << inst);
                 HandleAcceptHelper(balance_msg->instance(i));
             }
             break;
@@ -378,7 +381,7 @@ void SearchlightTask::HandleRejectHelp(InstanceID src,
     // logging
     if (logger->isDebugEnabled()) {
         std::ostringstream deb_str;
-        deb_str << "Help was rejected: helpee=" << src << "hard="
+        deb_str << "Help was rejected: helpee=" << src << ", hard="
                 << hard << ", helpers={";
         std::copy(helpers.begin(), helpers.end(),
                 std::ostream_iterator<InstanceID>(deb_str, ", "));
