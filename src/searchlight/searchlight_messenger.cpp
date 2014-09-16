@@ -813,7 +813,7 @@ void SearchlightMessenger::AcceptHelp(const boost::shared_ptr<Query> &query,
 
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
-    network_manager->send(inst, msg);
+    network_manager->send(coord_id, msg);
 }
 
 void SearchlightMessenger::ForwardCandidates(
