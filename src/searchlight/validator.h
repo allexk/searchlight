@@ -34,7 +34,6 @@
 
 #include "scidb_inc.h"
 #include "ortools_inc.h"
-#include "searchlight_collector.h"
 
 #include <condition_variable>
 #include <mutex>
@@ -124,15 +123,6 @@ public:
         validate_cond_.notify_one();
     }
 
-    /**
-     * Returns solution collector for reporting validating results to the task.
-     *
-     * @return validated solutions collectors
-     */
-    SearchlightSolutionCollector &GetSolutionCollector() const {
-        return *collector_;
-    }
-
 private:
     // Info for a candidate assignment pending validation
     struct CandidateAssignment {
@@ -208,9 +198,6 @@ private:
 
     // The prototype assignment for search variables
     Assignment search_vars_prototype_;
-
-    // Valid solutions collector
-    SearchlightSolutionCollector *collector_;
 
     // Condition var to wait for solutions to validate
     mutable std::condition_variable validate_cond_;

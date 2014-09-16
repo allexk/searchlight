@@ -361,8 +361,19 @@ void Searchlight::DispatchWork(const LiteAssignmentVector &work) {
 
 std::string Searchlight::SolutionToString(
         const std::vector<int64_t> &vals) const {
-    assert(validator_);
-    return validator_->GetSolutionCollector().SolutionToString(vals);
+    // we can reuse the same prototype and do not have to store the values
+    const auto &var_elems = vars_leaf_.IntVarContainer().elements();
+
+    // stringify the solution
+    std::ostringstream sol_string;
+    for (size_t i = 0; i < var_elems.size(); i++) {
+        const IntVar *v = var_elems[i].Var();
+        sol_string << v->name() << "=" << vals[i];
+        if (i != var_elems.size() - 1) {
+            sol_string << ", ";
+        }
+    }
+    return sol_string.str();
 }
 
 DecisionBuilder *Searchlight::CreateDefaultHeuristic(

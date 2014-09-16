@@ -9,7 +9,7 @@ add_library(searchlight_udo SHARED searchlight/ortools_model.cpp
     searchlight/ops/LogicalSearchlight.cpp searchlight/ops/PhysicalSearchlight.cpp
     searchlight/sampler.cpp searchlight/searchlight_task.cpp
     searchlight/searchlight.cpp searchlight/validator.cpp
-    searchlight/searchlight_collector.cpp searchlight/ops/plugin.cpp
+    searchlight/ops/plugin.cpp
     searchlight/default_search.cpp searchlight/searchlight_messenger.cpp ${MSG_SRC}
     searchlight/ops/LogicalDepart.cpp searchlight/ops/PhysicalDepart.cpp
     searchlight/ops/DepartArray.cpp)

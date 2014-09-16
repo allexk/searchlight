@@ -30,7 +30,6 @@
 
 #include "searchlight.h"
 #include "validator.h"
-#include "searchlight_collector.h"
 #include "searchlight_task.h"
 
 #include "ortools_model.h"
@@ -351,10 +350,6 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
         solver_.Accept(pmv);
     }
 
-    // Create collector
-    collector_ = solver_.RevAlloc(
-            new SearchlightSolutionCollector(sl_task, &solver_));
-
     /*
      * Now, we want to find all decision variables. We do this via a
      * custom visitor.
@@ -378,7 +373,6 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
          *  changed during the search anyway, albeit later.
          */
         search_vars_prototype_.Add(const_cast<IntVar *>(var->second));
-        collector_->Add(const_cast<IntVar *>(var->second));
     }
 
     const SearchlightConfig &sl_config = sl.GetConfig();
@@ -506,7 +500,7 @@ void Validator::operator()() {
     DecisionBuilder *db =
             solver_.RevAlloc(new RestoreAssignmentBuilder(*this, &solver_,
                     restart_period_, &search_vars_prototype_));
-    solver_status_ = solver_.Solve(db, collector_);
+    solver_status_ = solver_.Solve(db);
     LOG4CXX_INFO(logger, "Validator exited solve()");
 }
 

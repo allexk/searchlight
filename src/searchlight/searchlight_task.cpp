@@ -40,6 +40,10 @@ namespace searchlight {
 static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.task"));
 
+// The logger for results
+static log4cxx::LoggerPtr result_logger(
+        log4cxx::Logger::getLogger("searchlight.result"));
+
 void SearchlightTask::operator()() {
     try {
         bool work_expected = true;
@@ -417,6 +421,7 @@ void SearchlightTask::ReportSolution(const std::vector<int64_t> &values) {
     if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
         // We are at the coordinator -- add the solution to the queue
         const std::string sol = searchlight_.SolutionToString(values);
+        LOG4CXX_INFO(result_logger, sol);
         std::lock_guard<std::mutex> lock(mtx_);
         solutions_queue_.push_back(sol);
         queue_cond_.notify_one();
