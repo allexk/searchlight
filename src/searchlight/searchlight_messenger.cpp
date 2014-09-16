@@ -54,6 +54,8 @@ MessagePtr CreateMessageRecord(MessageID id) {
             return MessagePtr(new SearchlightControl);
         case SearchlightMessenger::mtSLBalance:
             return MessagePtr(new SearchlightBalance);
+        case SearchlightMessenger::mtSLMeta:
+            return MessagePtr(new SearchlightMeta);
         default:
             LOG4CXX_ERROR(logger, "Unknown type of Searchlight message"
                     "to create!");
@@ -84,6 +86,7 @@ class SearchlightMessageDesc : public scidb::MessageDesc,
             case SearchlightMessenger::mtSLSolution:
             case SearchlightMessenger::mtSLControl:
             case SearchlightMessenger::mtSLBalance:
+            case SearchlightMessenger::mtSLMeta:
                 break;
             default:
                 return false;
@@ -251,6 +254,16 @@ void SearchlightMessenger::RegisterArray(const boost::shared_ptr<Query> &query,
             << ", array=" << array_name);
 }
 
+void SearchlightMessenger::SetDistributedMapUpdateFrequency(
+        const boost::shared_ptr<Query> &query,
+        const std::string &array_name, int map_update_freq) {
+    QueryContextPtr query_ctx = GetQueryContext(query->getQueryID(), true);
+    auto array = GetRegisteredArray(query_ctx, array_name);
+    array->map_broadcast_period_ = map_update_freq;
+    LOG4CXX_INFO(logger, "Set update frequency: array=" << array_name
+            << ", freq=" << map_update_freq);
+}
+
 SearchlightMessenger::QueryContext::ServedArrayPtr
 SearchlightMessenger::GetRegisteredArray(
         const SearchlightMessenger::QueryContextPtr &query_ctx,
@@ -320,19 +333,33 @@ void SearchlightMessenger::RegisterHandlers(bool init) {
     factory->addMessageType(mtSLBalance,
             MessageCreator(&CreateMessageRecord),
             boost::bind(&SearchlightMessenger::HandleGeneralMessage, this, _1));
+    factory->addMessageType(mtSLMeta,
+            MessageCreator(&CreateMessageRecord),
+            boost::bind(&SearchlightMessenger::HandleMetaMessage, this, _1));
 }
 
-bool SearchlightMessenger::ChunkFetched(const boost::shared_ptr<Query> &query,
-        const std::string &array_name, const Coordinates &pos) const {
+void SearchlightMessenger::GetDistrChunksInfo(
+        const boost::shared_ptr<Query> &query,
+        const std::string &array_name,
+        const CoordinateSet& chunks,
+        std::vector<int> instance_counts) const {
+
     std::lock_guard<std::mutex> lock(mtx_);
     QueryContextPtr query_ctx = GetQueryContext(query->getQueryID(), false);
     try {
         QueryContext::ServedArrayPtr array =
                 GetRegisteredArray(query_ctx, array_name);
-        return array->fetched_chunks_.find(pos) != array->fetched_chunks_.end();
+        for (const auto &chunk: chunks) {
+            const auto &inst_iter = array->chunks_map_.find(chunk);
+            if (inst_iter != array->chunks_map_.end()) {
+                for (auto inst: inst_iter->second) {
+                    assert(inst < instance_counts.size());
+                    ++instance_counts[inst];
+                }
+            }
+        }
     } catch (const scidb::SystemException &ex) {
-        // Check the case when the array is not registered
-        return false;
+        // Array not found; just don't update counters
     }
 }
 
@@ -403,9 +430,17 @@ bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
 
         // If we requested data, the chunk is local now (empty or nor)
         if (!confirm_only) {
-            array->fetched_chunks_.insert(pos);
+            array->chunks_map_[pos].push_back(query->getInstanceID());
+            if (array->map_broadcast_period_) {
+                array->last_fetched_chunks_.push_back(pos);
+                if (array->last_fetched_chunks_.size() ==
+                        array->map_broadcast_period_) {
+                    BroadcastDistrUpdate(query, array_name,
+                            array->last_fetched_chunks_);
+                    array->last_fetched_chunks_.clear();
+                }
+            }
         }
-
         // safe to unlock since we write only once to the slot
     }
 
@@ -581,6 +616,38 @@ void SearchlightMessenger::HandleSLChunk(
     std::lock_guard<std::mutex> lock(slot.mtx_);
     slot.data_ready_ = true;
     slot.cond_.notify_one();
+}
+
+void SearchlightMessenger::HandleMetaMessage(
+        const boost::shared_ptr<MessageDescription> &msg_desc) {
+    // some correctness checking
+    const QueryContextPtr query_ctx =
+            GetQueryContext(msg_desc->getQueryId(), true);
+    query_ctx->stats_.msgs_received_++;
+
+    // get the record
+    boost::shared_ptr<SearchlightMeta> record =
+            boost::dynamic_pointer_cast<SearchlightMeta>(msg_desc->getRecord());
+    if (!record) {
+        throw SYSTEM_EXCEPTION(scidb::SCIDB_SE_NETWORK,
+                scidb::SCIDB_LE_INVALID_MESSAGE_FORMAT) <<
+                        msg_desc->getMessageType();
+    }
+    const InstanceID source_inst = msg_desc->getSourceInstanceID();
+
+    switch (record->type()) {
+        case SearchlightMeta::DYNAMIC_DISTR: {
+            std::lock_guard<std::mutex> lock{mtx_};
+            const auto &distr_info = record->chunks();
+            auto array = GetRegisteredArray(query_ctx, distr_info.array_name());
+            for (const auto &chunk_pos: distr_info.chunks()) {
+                Coordinates pos{chunk_pos.position().begin(),
+                    chunk_pos.position().end()};
+                array->chunks_map_[pos].push_back(source_inst);
+            }
+            break;
+        }
+    }
 }
 
 void SearchlightMessenger::HandleGeneralMessage(
@@ -831,6 +898,8 @@ void SearchlightMessenger::ForwardCandidates(
     record->set_type(SearchlightBalance::CANDIDATE_FORWARD);
     FillBalanceMessage(*record, cands);
     record->set_id(forw_id);
+    GetQueryContext(query->getQueryID(), true)->stats_.forwards_sent_ +=
+            cands.size();
 
     // log
     LOG4CXX_DEBUG(logger, "Forwarding candidates: dest=" << dest
@@ -839,6 +908,35 @@ void SearchlightMessenger::ForwardCandidates(
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
     network_manager->send(dest, msg);
+}
+
+void SearchlightMessenger::BroadcastDistrUpdate(
+        const boost::shared_ptr<Query> &query,
+        const std::string &array_name,
+        const std::vector<Coordinates> &chunks) const {
+    // prepare the message
+    boost::shared_ptr<scidb::MessageDesc> msg =
+            PrepareMessage(query->getQueryID(), mtSLMeta);
+    boost::shared_ptr<SearchlightMeta> record =
+            msg->getRecord<SearchlightMeta>();
+
+    // fill it
+    record->set_type(SearchlightMeta::DYNAMIC_DISTR);
+    SearchlightMeta::ChunksInfo *map = record->mutable_chunks();
+    map->set_array_name(array_name);
+    for (const auto &chunk_pos: chunks) {
+        auto chunk = map->add_chunks();
+        for (auto pos: chunk_pos) {
+            chunk->add_position(pos);
+        }
+    }
+
+    // log
+    LOG4CXX_DEBUG(logger, "Broadcasting distribution update...");
+
+    // send
+    NetworkManager *network_manager = NetworkManager::getInstance();
+    network_manager->broadcast(msg);
 }
 
 void SearchlightMessenger::SendBalanceResult(

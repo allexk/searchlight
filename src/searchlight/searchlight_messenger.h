@@ -87,7 +87,9 @@ public:
         /** Control message between instances and coordinator */
         mtSLControl,
         /** Balance message between instances */
-        mtSLBalance
+        mtSLBalance,
+        /** Meta information between messengers */
+        mtSLMeta
     };
 
     /**
@@ -307,23 +309,34 @@ public:
             InstanceID dest, int id, bool result) const;
 
     /**
-     * Checks if a chunk has been fetched and stored locally.
+     * Determines instances on which specified chunks currently reside.
      *
-     * This function only checks for fetched remote chunks. It does not
-     * check for chunks that are local due to their distribution
-     * (i.e., the instance owns it).
+     * This function is used to determine which instances contain specified
+     * chunks. This includes only information about dynamic distribution,
+     * which is maintained by messengers individually and by broadcasting
+     * updates.
      *
-     * If the array has not been registered with this messenger, the result
-     * is always false, which is consistent with the knowledge this messenger
-     * possess.
+     * Essentially, the function increments the counter by the number of
+     * chunks located at the instance.
      *
      * @param query caller's query context
-     * @param array_name the name of the array
-     * @param pos chunk position
-     * @return true, if the chunk has been fetched; false, otherwise
+     * @param array_name array name
+     * @param chunks chunk positions
+     * @param instance_counts instance counters to update
      */
-    bool ChunkFetched(const boost::shared_ptr<Query> &query,
-            const std::string &array_name, const Coordinates &pos) const;
+    void GetDistrChunksInfo(const boost::shared_ptr<Query> &query,
+            const std::string &array_name, const CoordinateSet& chunks,
+            std::vector<int> instance_counts) const;
+
+    /**
+     * Sets the frequency of map updates broadcast messages.
+     *
+     * The user can specify the period (in chunks) for broadcasting dynamic
+     * distribution updates. When the messenger receives the specified number
+     * of chunks, it broadcasts this information to all other messengers.
+     */
+    void SetDistributedMapUpdateFrequency(const boost::shared_ptr<Query> &query,
+            const std::string &array_name, int map_update_freq);
 
     /**
      * Packs min/max assignment into a message.
@@ -418,10 +431,22 @@ private:
             std::unordered_map<AttributeID,
                 boost::shared_ptr<ConstArrayIterator>> iters_;
 
-            // Chunks retrieved from other nodes
-            std::unordered_set<Coordinates, CoordinatesHash> fetched_chunks_;
+            /*
+             *  Contains map dynamic chunk positions. We update it when we
+             *  fetch another chunk or when we get a meta message about the
+             *  dynamic distribution.
+             */
+            std::unordered_map<Coordinates, std::vector<InstanceID>,
+                CoordinatesHash> chunks_map_;
 
-            ServedArray(const ArrayPtr &array) : array_(array) {}
+            // Vector of chunks fetched last (for sending meta info)
+            std::vector<Coordinates> last_fetched_chunks_;
+
+            // Periodicity of sending dynamic updates (in chunks number)
+            int map_broadcast_period_{0};
+
+            ServedArray(const ArrayPtr &array) :
+                array_(array) {}
         };
         typedef std::shared_ptr<ServedArray> ServedArrayPtr;
 
@@ -436,6 +461,8 @@ private:
             std::atomic<uint64_t> chunk_data_sent_{0};
             std::atomic<uint64_t> chunk_data_received_{0};
 
+            std::atomic<uint64_t> forwards_sent_{0};
+
             std::chrono::microseconds total_wait_time_;
 
             void print(std::ostream &os) const {
@@ -445,6 +472,7 @@ private:
                 os << "\n\tChunks received=" << chunks_received_;
                 os << "\n\tChunk data sent=" << chunk_data_sent_;
                 os << "\n\tChunk data received=" << chunk_data_received_;
+                os << "\n\tForwards send (total)=" << forwards_sent_;
                 os << '\n';
             }
         };
@@ -496,6 +524,15 @@ private:
 
     // Returns a message slot
     void ReturnMessageSlot(size_t slot);
+
+    // Broadcasts dynamic distribution updates
+    void BroadcastDistrUpdate(const boost::shared_ptr<Query> &query,
+            const std::string &array_name,
+            const std::vector<Coordinates> &chunks) const;
+
+    // Handler for meta messages
+    void HandleMetaMessage(
+            const boost::shared_ptr<MessageDescription> &msg_desc);
 
     // Helper to create a message and update stats
     boost::shared_ptr<scidb::MessageDesc> PrepareMessage(

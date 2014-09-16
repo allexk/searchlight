@@ -48,3 +48,21 @@ message SearchlightBalance {
     repeated int32 instance     = 4 [packed=true]; // helper instance id
     optional bool result        = 5; // Result of the request (e.g., true if the validation succedeed)
 }
+
+message SearchlightMeta {
+    message ChunksInfo {
+        message ChunkPosition {
+            repeated int64 position = 1 [packed=true]; // Chunk position
+        }
+
+        required string array_name    = 1; // Array's name
+        repeated ChunkPosition chunks = 2; // Chunks
+    }
+
+    enum Type {
+        DYNAMIC_DISTR = 1; // Info about dynamic distribution
+    }
+
+    required Type type         = 1; // Type of message
+    optional ChunksInfo chunks = 2; // Chunks retrieved by the sender
+}

@@ -29,7 +29,8 @@
 
     "balance": {
         "solver_balance": 1,
-        "validator_balance": 1
+        "validator_balance": 1,
+        "map_update_frequency": 5
     },
 
     "sw": {

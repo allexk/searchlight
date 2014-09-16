@@ -84,16 +84,17 @@ void SearchArrayDesc::GetChunksDistribution(
     const SearchlightMessenger *messenger = SearchlightMessenger::getInstance();
     const ArrayDesc &array_desc = array_->getArrayDesc();
 
+    // First, retrieve static info (via catalog)
     for (const auto &pos: chunk_pos) {
         InstanceID chunk_inst = scidb::getInstanceForChunk(
                 query, pos, array_desc, array_desc.getPartitioningSchema(),
                 boost::shared_ptr<scidb::DistributionMapper>(), 0, local_inst);
-        if (chunk_inst != local_inst &&
-                messenger->ChunkFetched(query, array_desc.getName(), pos)) {
-            chunk_inst = local_inst;
-        }
         ++distr[chunk_inst];
     }
+
+    // Then, retrieve dynamic info
+    messenger->GetDistrChunksInfo(query, array_desc.getName(), chunk_pos,
+            distr);
 }
 
 } /* namespace searchlight */

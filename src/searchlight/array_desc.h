@@ -69,7 +69,6 @@ public:
                 aux_samplers_.emplace_back(samples[i], array->getArrayDesc());
             }
         }
-
     }
 
     /**

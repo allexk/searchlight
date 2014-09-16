@@ -89,6 +89,12 @@ public:
         searchlight_.ReadConfig(config_file_name);
         searchlight_.RegisterArray(data, samples);
 
+        // Set distribution update frequence for the data array
+        const int distr_update_freq =
+                searchlight_.GetConfig().get("balance.map_update_frequency", 5);
+        SearchlightMessenger::getInstance()->SetDistributedMapUpdateFrequency(
+                query, data->getArrayDesc().getName(), distr_update_freq);
+
         using std::placeholders::_1; // we have a clash with Boost
         using std::placeholders::_2; // we have a clash with Boost
         SearchlightMessenger::getInstance()->RegisterUserMessageHandler(
