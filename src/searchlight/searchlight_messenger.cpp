@@ -188,8 +188,9 @@ void SearchlightMessenger::RegisterQuery(
     const QueryID query_id = query->getQueryID();
     const auto &iter = served_queries_.find(query_id);
     if (iter == served_queries_.end()) {
-        served_queries_.emplace(query_id,
-                std::make_shared<QueryContext>(query));
+        auto qiter = served_queries_.emplace(query_id,
+                std::make_shared<QueryContext>(query)).first;
+        qiter->second->stats_.forwards_sent_.resize(query->getInstancesCount());
 
         // Establish query finalizer
         Query::Finalizer f =
@@ -898,8 +899,11 @@ void SearchlightMessenger::ForwardCandidates(
     record->set_type(SearchlightBalance::CANDIDATE_FORWARD);
     FillBalanceMessage(*record, cands);
     record->set_id(forw_id);
-    GetQueryContext(query->getQueryID(), true)->stats_.forwards_sent_ +=
-            cands.size();
+    {
+        std::lock_guard<std::mutex> lock{mtx_};
+        GetQueryContext(query->getQueryID(), false)->
+                stats_.forwards_sent_[dest] += cands.size();
+    }
 
     // log
     LOG4CXX_DEBUG(logger, "Forwarding candidates: dest=" << dest

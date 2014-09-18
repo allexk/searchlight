@@ -461,7 +461,7 @@ private:
             std::atomic<uint64_t> chunk_data_sent_{0};
             std::atomic<uint64_t> chunk_data_received_{0};
 
-            std::atomic<uint64_t> forwards_sent_{0};
+            std::vector<uint64_t> forwards_sent_;
 
             std::chrono::microseconds total_wait_time_;
 
@@ -472,7 +472,9 @@ private:
                 os << "\n\tChunks received=" << chunks_received_;
                 os << "\n\tChunk data sent=" << chunk_data_sent_;
                 os << "\n\tChunk data received=" << chunk_data_received_;
-                os << "\n\tForwards send (total)=" << forwards_sent_;
+                os << "\n\tForwards sent (total)=";
+                std::copy(forwards_sent_.begin(), forwards_sent_.end(),
+                        std::ostream_iterator<uint64_t>(os, ", "));
                 os << '\n';
             }
         };
