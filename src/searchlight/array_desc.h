@@ -167,8 +167,22 @@ public:
      * @param chunk_pos set of chunk positions
      * @param distr vector of instance counters (will be updated)
      */
-    void GetChunksDistribution(const boost::shared_ptr<Query> &query,
+    void GetDynamicChunksDistribution(const boost::shared_ptr<Query> &query,
             const CoordinateSet &chunk_pos, std::vector<int> &distr) const;
+
+    /**
+     * Fills in stripe-based chunk distribution for a set of chunks.
+     *
+     * Stripe distribution gives every validator a stripe of chunks, which
+     * is determined by splitting the first array dimension. It is assumed
+     * that the number of stripes is equal to the number of counters in the
+     * input array.
+     *
+     * @param chunk_pos set of chunk positions
+     * @param distr output counters (one per active instance)
+     */
+    void GetStripesChunkDistribution(const CoordinateSet &chunk_pos,
+            std::vector<int> &distr) const;
 
 private:
     // The data array

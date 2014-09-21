@@ -124,6 +124,16 @@ public:
     }
 
 private:
+    // Type of validator forwarding
+    enum class Forwarding {
+        // No forwarding
+        NONE,
+        // Each active validator takes a stripe
+        STRIPES,
+        // Based on the chunks each validator has (static + dynamic)
+        DYNAMIC
+    };
+
     // Info for a candidate assignment pending validation
     struct CandidateAssignment {
         // The assignment itself
@@ -187,9 +197,6 @@ private:
     // Forward ids for candidates
     int forw_id_ = 0;
 
-    // True, if for candidate forwarding is enabled
-    bool balancing_enabled_;
-
     // The duplicate solver for validation
     Solver solver_;
 
@@ -221,6 +228,14 @@ private:
      * the solver.
      */
     int restart_period_;
+
+    /*
+     * Type of forwarding used.
+     */
+    Forwarding forw_type_;
+
+    // Logical id of this validator among active ones (cached for perfomance)
+    int my_logical_id_;
 };
 
 

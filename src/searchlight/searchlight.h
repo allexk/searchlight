@@ -41,17 +41,11 @@
 #include <dlfcn.h>
 #include <boost/thread.hpp>
 #include <boost/make_shared.hpp>
-#include <boost/property_tree/ptree.hpp>
 #include <chrono>
 #include <thread>
 #include <mutex>
 
 namespace searchlight {
-
-/**
- * Property tree used to store configuration options.
- */
-using SearchlightConfig = boost::property_tree::ptree;
 
 class Validator;
 class SearchlightCollector;
@@ -280,14 +274,7 @@ public:
      * @param name the attribute's name
      * @return the access id for the attribute
      */
-    AttributeID RegisterAttribute(const std::string &name) {
-        if (!array_desc_) {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << "No array registered with SL to register an attribute";
-        }
-        return array_desc_->RegisterAttribute(name,
-                config_.get("searchlight.load_aux_samples", 0));
-    }
+    AttributeID RegisterAttribute(const std::string &name);
 
     /**
      * The main solve method that starts the search. It is assumed that the
@@ -452,22 +439,6 @@ public:
     }
 
     /**
-     * Returns the property tree containing configuration options.
-     *
-     * @return property tree with the config
-     */
-    const SearchlightConfig &GetConfig() const {
-        return config_;
-    }
-
-    /**
-     * Reads config from the specified file. Only JSON is supported for now.
-     *
-     * @param file_name path to the file containing config
-     */
-    void ReadConfig(const std::string &file_name);
-
-    /**
      * Returns the validator for the current search, if any.
      *
      * @return current validator or nullptr, if no exists
@@ -569,6 +540,13 @@ public:
         return primary_vars_;
     }
 
+    /**
+     * Returns config for the current task.
+     *
+     * @return task config
+     */
+    const SearchlightConfig &GetConfig() const;
+
 private:
     // Signals validator to end, waits and then destroys it
     void EndAndDestroyValidator();
@@ -634,9 +612,6 @@ private:
 
     // Searchlight task
     SearchlightTask &sl_task_;
-
-    // Contains various configuration options
-    SearchlightConfig config_;
 
     // Searchlight status
     std::atomic<Status> status_;

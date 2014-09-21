@@ -223,7 +223,8 @@ public:
         if (forw_id >= 0) {
             last_action_.type_ = Action::Type::REMOTE_CHECK;
         } else {
-            last_action_.type_ = validator_.balancing_enabled_ ?
+            last_action_.type_ =
+                    validator_.forw_type_ != Validator::Forwarding::NONE ?
                     Action::Type::SIM : Action::Type::LOCAL_CHECK;
         }
 
@@ -375,16 +376,32 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
         search_vars_prototype_.Add(const_cast<IntVar *>(var->second));
     }
 
-    const SearchlightConfig &sl_config = sl.GetConfig();
+    const SearchlightConfig &sl_config = sl_task_.GetConfig();
     max_pending_validations_ =
             sl_config.get("searchlight.validator.max_validations", 1000000);
     restart_period_ = sl_config.get("searchlight.validator.restart_period",
             1024);
 
-    balancing_enabled_ = sl_config.get("balance.validator_balance", 1);
-    if (balancing_enabled_) {
-        LOG4CXX_INFO(logger, "Forwarding is enabled for the validator...");
+    // Determine forwarding type
+    const std::string &forw_type =
+            sl_config.get("balance.validator_balance", "none");
+    if (forw_type == "stripes") {
+        forw_type_ = Forwarding::STRIPES;
+        LOG4CXX_INFO(logger, "Forwarding is stripe-based...");
+    } else if (forw_type == "dynamic") {
+        forw_type_ = Forwarding::DYNAMIC;
+        LOG4CXX_INFO(logger, "Forwarding is dynamic mapping...");
+    } else {
+        forw_type_ = Forwarding::NONE;
+        LOG4CXX_INFO(logger, "Forwarding is disabled for the validator...");
     }
+
+    // Determine logical id
+    const auto &active_validators = sl_task.GetActiveValidators();
+    const auto iter = std::find(active_validators.begin(),
+            active_validators.end(), sl_task.GetInstanceID());
+    my_logical_id_ = iter == active_validators.end() ? -1 :
+            iter - active_validators.begin();
 }
 
 void Validator::AddSolution(const Assignment &sol) {
@@ -446,18 +463,32 @@ void Validator::SendForwardResult(int forw_id, bool result) {
 
 bool Validator::CheckForward(const Assignment *asgn) {
     const CoordinateSet &chunks = adapter_->GetCurrentStats().chunks_pos_;
-    boost::shared_ptr<Query> query = sl_task_.GetQueryContext();
-    std::vector<int> inst_counts(sl_task_.GetQueryInstanceCount(), 0);
-    const InstanceID my_inst = sl_task_.GetInstanceID();
+    const auto &active_validators = sl_task_.GetActiveValidators();
+    std::vector<int> inst_counts(active_validators.size());
 
     // Get the distribution
-    adapter_->GetSearchArrayDesc().GetChunksDistribution(
-            query, chunks, inst_counts);
+    switch (forw_type_) {
+        case Forwarding::STRIPES:
+            adapter_->GetSearchArrayDesc().GetStripesChunkDistribution(
+                    chunks, inst_counts);
+            break;
+        case Forwarding::DYNAMIC: {
+            std::vector<int> inst_counts_all(sl_task_.GetQueryInstanceCount());
+            adapter_->GetSearchArrayDesc().GetDynamicChunksDistribution(
+                    sl_task_.GetQueryContext(), chunks, inst_counts_all);
+            for (size_t i = 0; i < active_validators.size(); i++) {
+                inst_counts[i] = inst_counts_all[active_validators[i]];
+            }
+            break;
+        }
+        case Forwarding::NONE:
+            assert(false);
+            break;
+    }
 
     /*
      *  For now we just pick the validator with the maximum count, which
-     *  means it contains most of the chunks. In case the local instance
-     *  contains the same number of chunks, we don't forward.
+     *  means it contains most of the chunks.
      */
     int max_inst = -1, max_count = -1;
     for (size_t i = 0; i < inst_counts.size(); ++i) {
@@ -466,11 +497,18 @@ bool Validator::CheckForward(const Assignment *asgn) {
             max_count = inst_counts[i];
         }
     }
-    if (max_inst != my_inst && inst_counts[my_inst] == max_count) {
-        max_inst = my_inst;
+
+    /*
+     *  In case the local instance contains the same number of chunks,
+     *  we don't forward.
+     */
+    if (my_logical_id_ != -1 && max_inst != my_logical_id_ &&
+            inst_counts[my_logical_id_] == max_count) {
+
+        max_inst = my_logical_id_;
     }
 
-    if (max_inst != my_inst) {
+    if (max_inst != my_logical_id_) {
         // forward
         LiteAssignmentVector asgns(1);
         FullAssignmentToLite(*asgn, asgns[0]);
@@ -479,10 +517,13 @@ bool Validator::CheckForward(const Assignment *asgn) {
             std::lock_guard<std::mutex> lock{to_validate_mtx_};
             forwarded_candidates_.emplace(cand_id, asgns[0]);
         }
-        sl_task_.ForwardCandidates(asgns, max_inst, cand_id);
+        sl_task_.ForwardCandidates(asgns, active_validators[max_inst],
+                cand_id);
         return true;
     }
 
+    // This validator must be active here!
+    assert(my_logical_id_ != -1);
     return false;
 }
 

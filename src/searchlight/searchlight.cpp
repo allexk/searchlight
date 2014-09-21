@@ -33,20 +33,6 @@
 #include "default_search.h"
 #include "searchlight_task.h"
 
-/*
- * There is a compile warning here about an always-true comparison in
- * json_parser_write inside the header. Actually, the warning is
- * valid for char-based strings, but harmless. See boost bug #5598
- */
-#if defined(__GNUC__) && (((__GNUC__ * 100) + __GNUC_MINOR__) >= 406)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wtype-limits"
-#endif
-#include <boost/property_tree/json_parser.hpp>
-#if defined(__GNUC__) && (((__GNUC__ * 100) + __GNUC_MINOR__) >= 406)
-#pragma GCC diagnostic pop
-#endif
-
 namespace searchlight {
 
 // The logger
@@ -91,6 +77,19 @@ Searchlight::~Searchlight() {
     delete array_desc_;
 }
 
+AttributeID Searchlight::RegisterAttribute(const std::string &name) {
+    if (!array_desc_) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << "No array registered with SL to register an attribute";
+    }
+    return array_desc_->RegisterAttribute(name,
+            sl_task_.GetConfig().get("searchlight.load_aux_samples", 0));
+}
+
+const SearchlightConfig &Searchlight::GetConfig() const {
+    return sl_task_.GetConfig();
+}
+
 void Searchlight::Prepare(const IntVarVector &primary_vars,
         const IntVarVector &secondary_vars,
         DecisionBuilder *db, const std::vector<SearchMonitor *> &monitors) {
@@ -123,65 +122,87 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
         var_names[i++] = var_name;
     }
 
-    // Set up the validator
-    LOG4CXX_INFO(logger, "Initiating the validator");
-    validator_ = new Validator(*this, sl_task_, var_names);
-
-    // Establish monitors: validator (to transfer leaves) and terminator
-    search_monitors_.user_monitors_ = monitors;
-    SearchLimit *terminator = solver_.MakeCustomLimit(
-            NewPermanentCallback(this, &Searchlight::CheckTerminate));
-    search_monitors_.aux_monitors_.push_back(terminator);
-    search_monitors_.validator_monitor_ = solver_.RevAlloc(
-            new ValidatorMonitor{*validator_, vars, &solver_});
-
     /*
-     * Here we want to create a new search. While it does not matter for
-     * the initial search, it it crucial to be able to rollback all changes
-     * when this search is used as a helper. The only way to do this is to
-     * initialize the search now, so that the Solver puts a INITIAL_SEARCH
-     * marker in the trace. Then, after the Solve() is finished it will
-     * roll-back everything to this point.
+     * Set up the validator. We start if the instance is active.
+     * Depending on the active solvers/validators configuration, it
+     * act as a full-fledged validator or just a forwarder.
      */
-    solver_.NewSearch(db, search_monitors_.GetSearchMonitors());
-
-
-    /*
-     * Determine our partition. First, determine the variable with the largest
-     * domain and the assume equivalent stripes along its domain.
-     */
-    IntVar *split_var = nullptr;
-    uint64_t max_size = 0;
-    for (const auto var: primary_vars) {
-        const uint64_t var_size = var->Max() - var->Min() + 1;
-        if (!split_var || var_size > max_size) {
-            split_var = var;
-            max_size = var_size;
-        }
+    if (sl_task_.InstanceActive(sl_task_.GetInstanceID())) {
+        LOG4CXX_INFO(logger, "Initiating the validator");
+        validator_ = new Validator(*this, sl_task_, var_names);
+        LOG4CXX_INFO(logger, "Starting the validator thread");
+        validator_thread_ = new std::thread(std::ref(*validator_));
     }
-    assert(split_var);
 
-    // define partition
-    const int64_t partition_len = max_size / sl_task_.GetQueryInstanceCount();
-    const int64_t partition_start = split_var->Min() +
-            partition_len * sl_task_.GetInstanceID();
-    const int64_t partition_end = partition_start + partition_len - 1;
-    split_var->SetRange(partition_start, partition_end);
-    LOG4CXX_INFO(logger, "Set partition for var=" << split_var->DebugString());
+    if (sl_task_.SolverActive(sl_task_.GetInstanceID())) {
+        LOG4CXX_INFO(logger, "Solver is active at this instance...");
+        // Establish monitors: validator (to transfer leaves) and terminator
+        search_monitors_.user_monitors_ = monitors;
+        SearchLimit *terminator = solver_.MakeCustomLimit(
+                NewPermanentCallback(this, &Searchlight::CheckTerminate));
+        search_monitors_.aux_monitors_.push_back(terminator);
+        search_monitors_.validator_monitor_ = solver_.RevAlloc(
+                new ValidatorMonitor{*validator_, vars, &solver_});
 
-    // logging
-    if (logger->isDebugEnabled()) {
         /*
-         *  Unfortunately, it will dump it into std::cerr, which is
-         *  redirected by SciDb to a file.
+         * Here we want to create a new search. While it does not matter for
+         * the initial search, it it crucial to be able to rollback all changes
+         * when this search is used as a helper. The only way to do this is to
+         * initialize the search now, so that the Solver puts a INITIAL_SEARCH
+         * marker in the trace. Then, after the Solve() is finished it will
+         * roll-back everything to this point.
          */
-        ModelVisitor *pmv = solver_.MakePrintModelVisitor();
-        solver_.Accept(pmv);
-    }
+        solver_.NewSearch(db, search_monitors_.GetSearchMonitors());
 
-    // Decide if the balancing is enabled
-    solver_balancing_enabled_ = config_.get("balance.solver_balance", 1);
-    status_ = Status::PREPARED;
+
+        /*
+         * Determine our partition. First, determine the variable with the
+         * largest domain and the assume equivalent stripes along its domain.
+         */
+        IntVar *split_var = nullptr;
+        uint64_t max_size = 0;
+        for (const auto var: primary_vars) {
+            const uint64_t var_size = var->Max() - var->Min() + 1;
+            if (!split_var || var_size > max_size) {
+                split_var = var;
+                max_size = var_size;
+            }
+        }
+        assert(split_var);
+
+        // define partition
+        const auto &active_solvers = sl_task_.GetActiveSolvers();
+        const auto iter = std::find(active_solvers.begin(),
+                active_solvers.end(), sl_task_.GetInstanceID());
+        assert(iter != active_solvers.end());
+        const int solver_id = iter - active_solvers.begin();
+
+        const uint64_t partition_len =
+                ceil(double(max_size) / active_solvers.size());
+        const int64_t partition_start = split_var->Min() +
+                partition_len * solver_id;
+        const int64_t partition_end = partition_start + partition_len - 1;
+        split_var->SetRange(partition_start, partition_end);
+        LOG4CXX_INFO(logger,
+                "Set partition for var=" << split_var->DebugString());
+
+        // logging
+        if (logger->isDebugEnabled()) {
+            /*
+             *  Unfortunately, it will dump it into std::cerr, which is
+             *  redirected by SciDb to a file.
+             */
+            ModelVisitor *pmv = solver_.MakePrintModelVisitor();
+            solver_.Accept(pmv);
+        }
+
+        // Decide if the balancing is enabled
+        solver_balancing_enabled_ = sl_task_.GetConfig().get(
+                "balance.solver_balance", 1);
+        status_ = Status::PREPARED;
+    } else {
+        LOG4CXX_INFO(logger, "Solver is not configured at this instance...");
+    }
 }
 
 void Searchlight::PrepareHelper(LiteAssignmentVector &load) {
@@ -192,18 +213,13 @@ void Searchlight::PrepareHelper(LiteAssignmentVector &load) {
     helper_load_.swap(load);
 
     // Decide if the balancing is enabled
-    solver_balancing_enabled_ = config_.get("solver_balance", 1);
+    solver_balancing_enabled_ = sl_task_.GetConfig().get("solver_balance", 1);
     status_ = Status::PREPARED;
 }
 
 void Searchlight::Solve() {
     // Enter the search
     status_ = Status::SEARCHING;
-
-    if (!validator_thread_) {
-        LOG4CXX_INFO(logger, "Starting the validator thread");
-        validator_thread_ = new std::thread(std::ref(*validator_));
-    }
 
     // Initially we always have work: local or remote
     bool solver_has_work = true;
@@ -380,22 +396,6 @@ DecisionBuilder *Searchlight::CreateDefaultHeuristic(
         const IntVarVector &primary_vars,
         const IntVarVector &secondary_vars) {
     return new SLSearch(*this, solver_, primary_vars, secondary_vars);
-}
-
-void Searchlight::ReadConfig(const std::string &file_name) {
-    try {
-        boost::property_tree::read_json(file_name, config_);
-    } catch (const boost::property_tree::json_parser_error &e) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << e.what();
-    }
-
-    if (logger->isDebugEnabled()) {
-        std::ostringstream deb;
-        deb << "Config for the task follows:\n";
-        boost::property_tree::write_json(deb, config_, true);
-        logger->debug(deb.str(), LOG4CXX_LOCATION);
-    }
 }
 
 SearchMonitor *MakeCumulativeTimeLimit(Solver &s, int64 time_ms) {

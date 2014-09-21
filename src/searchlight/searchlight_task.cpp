@@ -34,6 +34,46 @@
 
 #include <dlfcn.h>
 
+/*
+ * There is a compile warning here about an always-true comparison in
+ * json_parser_write inside the header. Actually, the warning is
+ * valid for char-based strings, but harmless. See boost bug #5598
+ */
+#if defined(__GNUC__) && (((__GNUC__ * 100) + __GNUC_MINOR__) >= 406)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wtype-limits"
+#endif
+#include <boost/property_tree/json_parser.hpp>
+#if defined(__GNUC__) && (((__GNUC__ * 100) + __GNUC_MINOR__) >= 406)
+#pragma GCC diagnostic pop
+#endif
+
+namespace {
+/*
+ * Read and parses a JSON array of InstanceIDs at the specified path.
+ * If the path doesn't exist, it returns an array of
+ * [0, ..., default_fill - 1].
+ */
+std::vector<scidb::InstanceID> ReadJSONArray(
+        searchlight::SearchlightConfig &sl_config,
+        const std::string &path, size_t default_fill) {
+    std::vector<scidb::InstanceID> res;
+    try {
+        for (const auto &node: sl_config.get_child(path)) {
+            const int val = node.second.get_value<scidb::InstanceID>();
+            res.push_back(val);
+        }
+    } catch (const boost::property_tree::ptree_bad_path &) {
+        // Assume all instances are active
+        for (size_t i = 0; i < default_fill; i++) {
+            res.push_back(i);
+        }
+    }
+    return res;
+}
+
+} /* namespace <anonymous> */
+
 namespace searchlight {
 
 // The logger
@@ -44,9 +84,94 @@ static log4cxx::LoggerPtr logger(
 static log4cxx::LoggerPtr result_logger(
         log4cxx::Logger::getLogger("searchlight.result"));
 
+SearchlightTask::SearchlightTask(const std::string &library_name,
+        const std::string &task_name, const std::string &config_file_name,
+        ArrayPtr &data, const ArrayPtrVector &samples,
+        const boost::shared_ptr<Query> &query) :
+            query_instance_count_(query->getInstancesCount()),
+            my_instance_id_(query->getInstanceID()),
+            searchlight_(*this, task_name, dll_handler_),
+            query_(query) {
+
+    // Read the config
+    ReadConfig(config_file_name);
+
+    // Fill in distributed search info
+    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
+        distr_search_info_.reset(new DistributedSearchInfo);
+        for (auto inst: active_solvers_) {
+            distr_search_info_->helpees_.Add(inst);
+            distr_search_info_->busy_solvers_.insert(inst);
+        }
+
+        /*
+         *  We need the list of active instances here. An instance is active if
+         *  it contains an active solver or validator. What's important is that
+         *  these instances will contain a validator (active or just
+         *  a forwarder), and we need to count all of them. We use set here
+         *  for de-duplication.
+         */
+        std::unordered_set<InstanceID> active_instances{active_solvers_.begin(),
+            active_solvers_.end()};
+        active_instances.insert(active_validators_.begin(),
+                active_validators_.end());
+        distr_search_info_->busy_validators_count_ = active_instances.size();
+    }
+
+    ResolveTask(library_name, task_name);
+    searchlight_.RegisterArray(data, samples);
+
+    // Set distribution update frequence for the data array
+    const int distr_update_freq =
+            config_.get("balance.map_update_frequency", 5);
+    SearchlightMessenger::getInstance()->SetDistributedMapUpdateFrequency(
+            query, data->getArrayDesc().getName(), distr_update_freq);
+
+    using std::placeholders::_1; // we have a clash with Boost
+    using std::placeholders::_2; // we have a clash with Boost
+    SearchlightMessenger::getInstance()->RegisterUserMessageHandler(
+         query,
+         SearchlightMessenger::mtSLSolution,
+         std::bind(&SearchlightTask::HandleRemoteSolution, this, _1, _2));
+    SearchlightMessenger::getInstance()->RegisterUserMessageHandler(
+            query,
+            SearchlightMessenger::mtSLControl,
+            std::bind(&SearchlightTask::HandleControlMessage, this, _1, _2));
+    SearchlightMessenger::getInstance()->RegisterUserMessageHandler(
+            query,
+            SearchlightMessenger::mtSLBalance,
+            std::bind(&SearchlightTask::HandleBalanceMessage, this, _1, _2));
+
+    // Tasks just prepare Searchlight, solver is still idle, no threads
+    task_(&searchlight_);
+}
+
+void SearchlightTask::ReadConfig(const std::string &file_name) {
+    try {
+        boost::property_tree::read_json(file_name, config_);
+    } catch (const boost::property_tree::json_parser_error &e) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << e.what();
+    }
+
+    if (logger->isDebugEnabled()) {
+        std::ostringstream deb;
+        deb << "Config for the task follows:\n";
+        boost::property_tree::write_json(deb, config_, true);
+        logger->debug(deb.str(), LOG4CXX_LOCATION);
+    }
+
+    // Read solvers and validators
+    active_solvers_ = ReadJSONArray(config_, "setup.solvers",
+            query_instance_count_);
+    active_validators_ = ReadJSONArray(config_, "setup.validators",
+            query_instance_count_);
+}
+
 void SearchlightTask::operator()() {
     try {
-        bool work_expected = true;
+        // Solver has some work to do if it's active (by the user config)
+        bool work_expected = SolverActive(my_instance_id_);
         while (work_expected) {
             // Wait until something interesting happens
             Searchlight::Status sl_status;

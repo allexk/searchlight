@@ -76,7 +76,7 @@ AttributeID SearchArrayDesc::RegisterAttribute(const std::string &attr_name,
     return search_id;
 }
 
-void SearchArrayDesc::GetChunksDistribution(
+void SearchArrayDesc::GetDynamicChunksDistribution(
         const boost::shared_ptr<Query> &query, const CoordinateSet &chunk_pos,
         std::vector<int> &distr) const {
     assert(query->getInstancesCount() == distr.size());
@@ -95,6 +95,21 @@ void SearchArrayDesc::GetChunksDistribution(
     // Then, retrieve dynamic info
     messenger->GetDistrChunksInfo(query, array_desc.getName(), chunk_pos,
             distr);
+}
+
+void SearchArrayDesc::GetStripesChunkDistribution(
+        const CoordinateSet &chunk_pos, std::vector<int> &distr) const {
+
+    const DimensionDesc &split_dim = array_->getArrayDesc().getDimensions()[0];
+    const Coordinate low = split_dim.getLowBoundary();
+    const uint64_t stripe_len =
+            ceil(double(split_dim.getCurrLength()) / distr.size());
+
+    for (const auto &pos: chunk_pos) {
+        const InstanceID inst = (pos[0] - low) / stripe_len;
+        assert(inst < distr.size());
+        distr[inst]++;
+    }
 }
 
 } /* namespace searchlight */

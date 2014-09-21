@@ -40,8 +40,14 @@
 #include <unordered_map>
 
 #include <log4cxx/log4cxx.h>
+#include <boost/property_tree/ptree.hpp>
 
 namespace searchlight {
+
+/**
+ * Property tree used to store configuration options.
+ */
+using SearchlightConfig = boost::property_tree::ptree;
 
 /**
  * A general integer interval.

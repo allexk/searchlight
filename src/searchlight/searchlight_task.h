@@ -69,50 +69,7 @@ public:
     SearchlightTask(const std::string &library_name,
             const std::string &task_name, const std::string &config_file_name,
             ArrayPtr &data, const ArrayPtrVector &samples,
-            const boost::shared_ptr<Query> &query) :
-                query_instance_count_(query->getInstancesCount()),
-                my_instance_id_(query->getInstanceID()),
-                searchlight_(*this, task_name, dll_handler_),
-                query_(query) {
-
-        // Fill in distributed search info
-        if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
-            distr_search_info_.reset(new DistributedSearchInfo);
-            for (int i = 0; i < query_instance_count_; i++) {
-                distr_search_info_->helpees_.Add(i);
-                distr_search_info_->busy_solvers_.insert(i);
-            }
-            distr_search_info_->busy_validators_count_ = query_instance_count_;
-        }
-
-        ResolveTask(library_name, task_name);
-        searchlight_.ReadConfig(config_file_name);
-        searchlight_.RegisterArray(data, samples);
-
-        // Set distribution update frequence for the data array
-        const int distr_update_freq =
-                searchlight_.GetConfig().get("balance.map_update_frequency", 5);
-        SearchlightMessenger::getInstance()->SetDistributedMapUpdateFrequency(
-                query, data->getArrayDesc().getName(), distr_update_freq);
-
-        using std::placeholders::_1; // we have a clash with Boost
-        using std::placeholders::_2; // we have a clash with Boost
-        SearchlightMessenger::getInstance()->RegisterUserMessageHandler(
-             query,
-             SearchlightMessenger::mtSLSolution,
-             std::bind(&SearchlightTask::HandleRemoteSolution, this, _1, _2));
-        SearchlightMessenger::getInstance()->RegisterUserMessageHandler(
-                query,
-                SearchlightMessenger::mtSLControl,
-                std::bind(&SearchlightTask::HandleControlMessage, this, _1, _2));
-        SearchlightMessenger::getInstance()->RegisterUserMessageHandler(
-                query,
-                SearchlightMessenger::mtSLBalance,
-                std::bind(&SearchlightTask::HandleBalanceMessage, this, _1, _2));
-
-        // Tasks just prepare Searchlight, solver is still idle, no threads
-        task_(&searchlight_);
-    }
+            const boost::shared_ptr<Query> &query);
 
     /**
      * Operator for running the task. Basically, just calls the function from
@@ -247,6 +204,64 @@ public:
      */
     void ReportSolution(const std::vector<int64_t> &values);
 
+    /**
+     * Returns the property tree containing configuration options.
+     *
+     * @return property tree with the config
+     */
+    const SearchlightConfig &GetConfig() const {
+        return config_;
+    }
+
+    /**
+     * Returns a list of instances containing active solvers.
+     *
+     * Active solvers are specified in the configuration file.
+     *
+     * @return list of active solver instances
+     */
+    const std::vector<InstanceID> &GetActiveSolvers() const {
+        return active_solvers_;
+    }
+
+    /**
+     * Returns a list of instances containing active validators.
+     *
+     * Active validators are specified in the configuration file.
+     *
+     * @return list of active validator instances
+     */
+    const std::vector<InstanceID> &GetActiveValidators() const {
+        return active_validators_;
+    }
+
+    /**
+     * Checks if the solver is active at the instance.
+     *
+     * @param id instance to check
+     * @return true, if the solver is active; false, otherwise
+     */
+    bool SolverActive(InstanceID id) const {
+        return std::find(active_solvers_.begin(),
+                active_solvers_.end(), id) != active_solvers_.end();
+    }
+
+    /**
+     * Checks if the specified instance is active.
+     *
+     * An instance is active if it has an active solver or validator.
+     *
+     * @param id instance to check
+     * @return true, if the instance is active; false, otherwise
+     */
+    bool InstanceActive(InstanceID id) const {
+        const bool solver_active = std::find(active_solvers_.begin(),
+                active_solvers_.end(), id) != active_solvers_.end();
+        const bool validator_active = std::find(active_validators_.begin(),
+                active_validators_.end(), id) != active_validators_.end();
+        return solver_active || validator_active;
+    }
+
 private:
     // Make it a friend to modify the queue
     friend class SearchlightSolutionCollector;
@@ -355,6 +370,9 @@ private:
     // Handles a new helper (note: it will be rejected/accepted later)
     void HandleHelper(InstanceID helper);
 
+    // Reads config from the specified file. Only JSON is supported for now.
+    void ReadConfig(const std::string &file_name);
+
     // Type of the task function (called from the library)
     typedef void (*SLTaskFunc)(Searchlight *);
 
@@ -369,6 +387,13 @@ private:
 
     // The main sl instance
     Searchlight searchlight_;
+
+    // Task config
+    SearchlightConfig config_;
+
+    // Active solvers and validators
+    std::vector<InstanceID> active_solvers_;
+    std::vector<InstanceID> active_validators_;
 
     // The task function
     SLTaskFunc task_;
