@@ -126,10 +126,15 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
      * Set up the validator. We start if the instance is active.
      * Depending on the active solvers/validators configuration, it
      * act as a full-fledged validator or just a forwarder.
+     *
+     * Even if the instance is in-active, we create it anyway, since it
+     * simplifies message passing and maintenance (some messages are
+     * broadcasted to be handled by everybody). Such a validator doesn't
+     * consume any resources and pretty cheap to construct.
      */
+    LOG4CXX_INFO(logger, "Initiating the validator");
+    validator_ = new Validator(*this, sl_task_, var_names);
     if (sl_task_.InstanceActive(sl_task_.GetInstanceID())) {
-        LOG4CXX_INFO(logger, "Initiating the validator");
-        validator_ = new Validator(*this, sl_task_, var_names);
         LOG4CXX_INFO(logger, "Starting the validator thread");
         validator_thread_ = new std::thread(std::ref(*validator_));
     }
