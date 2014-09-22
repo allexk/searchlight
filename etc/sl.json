@@ -29,8 +29,13 @@
 
     "balance": {
         "solver_balance": 1,
-        "validator_balance": 1,
-        "map_update_frequency": 5
+        "validator_balance": "stripes",
+        "map_update_frequency": 0
+    },
+
+    "setup": {
+        "solvers": [0, 1, 2, 3, 4],
+        "validators": [0, 1, 2, 3, 4]
     },
 
     "sw": {
