@@ -385,6 +385,17 @@ public:
             const IntVarVector &secondary_vars);
 
     /**
+     * Create default balancer for general heuristics.
+     *
+     * @param vars search variables
+     * @param low low balance threshold
+     * @param high high balance threshold
+     * @return general balancer monitor
+     */
+    SearchMonitor *CreateBalancingMonitor(const IntVarVector &vars,
+            double low, double high);
+
+    /**
      * Returns user monitors attached to the main solver during the search.
      * Since this function returns a reference to the internal list, it is safe
      * to call before the Solve(). The list will be populated there. This also

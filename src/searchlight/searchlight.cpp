@@ -400,7 +400,14 @@ std::string Searchlight::SolutionToString(
 DecisionBuilder *Searchlight::CreateDefaultHeuristic(
         const IntVarVector &primary_vars,
         const IntVarVector &secondary_vars) {
-    return new SLSearch(*this, solver_, primary_vars, secondary_vars);
+    return solver_.RevAlloc(
+            new SLSearch(*this, solver_, primary_vars, secondary_vars));
+}
+
+SearchMonitor *Searchlight::CreateBalancingMonitor(const IntVarVector &vars,
+        double low, double high) {
+    return solver_.RevAlloc(
+            new BalancingMonitor(solver_, *this, vars, low, high));
 }
 
 SearchMonitor *MakeCumulativeTimeLimit(Solver &s, int64 time_ms) {

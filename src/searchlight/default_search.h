@@ -323,5 +323,97 @@ private:
     const SLConfig search_config_;
 };
 
+/**
+ * Balancing monitor implements solver balancing in the general case, when
+ * there is no access to the search heuristic (decision builder).
+ *
+ * It monitors the state of the search space, and when it falls in the
+ * specified interval, it detaches the corresponding sub-tree and sends it
+ * to the helper. It then fails the search, thus cutting the sub-tree from
+ * this solver.
+ *
+ * There is a number of restrictions for the balancer to work:
+ *  1) It doesn't detach when the current path is all-right. The reason is that
+ *      detaching at this point would end the current search, not just balance
+ *      it.
+ *  2) For a sub-tree to be detachable, all variables must not have holes
+ *      in their domains. The reason behind that is to make serialization of
+ *      domains faster. No holes means only intervals are required.
+ *
+ * User specifies threshold interval for possible off-loads. If the current
+ * sub-tree is inside the interval, it can be detached. Otherwise,
+ * the balancer waits until another sub-tree is available.
+ */
+class BalancingMonitor : public SearchMonitor {
+public:
+    /**
+     * Creates a new balancing monitor.
+     *
+     * @param s solver to monitor
+     * @param sl searchlight instance
+     * @param all_vars all search variables
+     * @param low_thr low threshold for candidate sub-tree
+     * @param high_thr high threshold for candidate sub-tree
+     */
+    BalancingMonitor(Solver &s, Searchlight &sl,
+            const std::vector<IntVar *> &all_vars,
+            double low_thr, double high_thr) :
+                SearchMonitor{&s},
+                low_thr_{low_thr},
+                high_thr_{high_thr},
+                all_vars_{all_vars},
+                sl_(sl),
+                snapshot_asgn_{&s} {
+
+        snapshot_asgn_.Add(all_vars_);
+    }
+
+    /**
+     * Callback called at the beginning of the search.
+     */
+    virtual void EnterSearch() override;
+
+    /**
+     * Callback called before the decision builder produces a new decision.
+     *
+     * @param b decision builder
+     */
+    virtual void BeginNextDecision(DecisionBuilder* const b) override;
+
+    /**
+     * Callback called when the search starts failing, but before actual jump.
+     */
+    virtual void BeginFail() override;
+
+private:
+    // Compute current search space size
+    uint64_t CurrentSearchSpaceSize() const;
+
+    // Check if it is possible to detach current sub-tree
+    bool CanDetachSubTree() const;
+
+    // Low tree detach threshold
+    const double low_thr_;
+
+    // High tree detach threshold
+    const double high_thr_;
+
+    // Intial search space size
+    uint64_t initial_ss_size_ = 1;
+
+    // True, if the balancing is paused for now
+    bool paused_ = false;
+
+    // All variables in a single vector
+    const std::vector<IntVar *> all_vars_;
+
+    // Searchlight instance
+    Searchlight &sl_;
+
+    // Assignment for taking snapshots
+    Assignment snapshot_asgn_;
+};
+
+
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_DEFAULT_SEARCH_H_ */

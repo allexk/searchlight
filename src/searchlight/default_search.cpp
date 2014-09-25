@@ -746,4 +746,72 @@ std::ostream &SLSearch::OutputConfig(std::ostream &os) const {
     return os;
 }
 
+void BalancingMonitor::EnterSearch() {
+    initial_ss_size_ = CurrentSearchSpaceSize();
+    paused_ = false;
+}
+
+void BalancingMonitor::BeginNextDecision(DecisionBuilder* const b) {
+    if (!paused_ && sl_.HelpAvailable()) {
+        const auto ss_size = CurrentSearchSpaceSize();
+        const double ss_part = double(ss_size) / initial_ss_size_;
+        if (ss_part >= low_thr_ && ss_part <= high_thr_ && CanDetachSubTree()) {
+            // Off-load some work
+            // Take a snapshot of vars
+            snapshot_asgn_.Store();
+
+            // Log
+            LOG4CXX_DEBUG(logger, "General balancer: Off-loading a region to a"
+                    "helper: " << snapshot_asgn_.DebugString());
+
+            LiteAssignmentVector work(1);
+            FullAssignmentToLite(snapshot_asgn_, work.back());
+            sl_.DispatchWork(work);
+
+            // Fail will "detach" the tree from the current solver
+            solver()->Fail();
+        } else {
+            // Cannot detach; try again later
+            if (ss_part < low_thr_) {
+                // Search space cannot increase until fail
+                paused_ = true;
+            }
+        }
+    }
+}
+
+void BalancingMonitor::BeginFail() {
+    paused_ = false;
+}
+
+bool BalancingMonitor::CanDetachSubTree() const {
+    /*
+     *  First of all, we shouldn't be at the right-only path. Detaching
+     *  at this point will end the current search.
+     */
+    if (solver()->SearchLeftDepth() == 0) {
+        return false;
+    }
+
+    /*
+     * Secondly, all domains must be without holes.
+     */
+    for (const IntVar *var: all_vars_) {
+        if (var->Max() - var->Min() + 1 != var->Size()) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+uint64_t BalancingMonitor::CurrentSearchSpaceSize() const {
+    uint64_t ss_size = 1;
+    for (const IntVar *var: all_vars_) {
+        ss_size *= var->Size();
+    }
+    return ss_size;
+}
+
+
 } /* namespace searchlight */
