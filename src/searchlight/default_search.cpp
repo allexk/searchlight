@@ -746,12 +746,16 @@ std::ostream &SLSearch::OutputConfig(std::ostream &os) const {
     return os;
 }
 
-void BalancingMonitor::EnterSearch() {
-    initial_ss_size_ = CurrentSearchSpaceSize();
-    paused_ = false;
+void BalancingMonitor::ExitSearch() {
+    initial_ss_size_ = 0;
 }
 
 void BalancingMonitor::BeginNextDecision(DecisionBuilder* const b) {
+    if (initial_ss_size_ == 0) {
+        initial_ss_size_ = CurrentSearchSpaceSize();
+        paused_ = false;
+    }
+
     if (!paused_ && sl_.HelpAvailable()) {
         const auto ss_size = CurrentSearchSpaceSize();
         const double ss_part = double(ss_size) / initial_ss_size_;

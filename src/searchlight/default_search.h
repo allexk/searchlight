@@ -369,9 +369,9 @@ public:
     }
 
     /**
-     * Callback called at the beginning of the search.
+     * Callback called at the end of the search.
      */
-    virtual void EnterSearch() override;
+    virtual void ExitSearch() override;
 
     /**
      * Callback called before the decision builder produces a new decision.
@@ -399,7 +399,7 @@ private:
     const double high_thr_;
 
     // Intial search space size
-    uint64_t initial_ss_size_ = 1;
+    uint64_t initial_ss_size_ = 0;
 
     // True, if the balancing is paused for now
     bool paused_ = false;
