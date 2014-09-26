@@ -565,6 +565,9 @@ private:
     // Reject/release helpers
     void RejectHelpers(bool hard);
 
+    // Determines the local workload for this solver
+    void DetermineLocalWorkload();
+
     // Monitors participating in the search
     struct SearchMonitors {
         // Validator monitor for the search (owned by the solver -- no delete)
@@ -632,6 +635,9 @@ private:
 
     // Work given to us by another instance
     LiteAssignmentVector helper_load_;
+
+    // Local work defined at the beginning
+    LiteAssignmentVector local_load_;
 
     // Do we accept help?
     bool solver_balancing_enabled_;

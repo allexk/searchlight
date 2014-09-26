@@ -104,6 +104,7 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
     IntVarVector vars{primary_vars};
     vars.insert(vars.end(), secondary_vars.begin(), secondary_vars.end());
     vars_leaf_.Add(vars);
+    vars_leaf_.Store();
 
     // First, we need to find all names
     StringVector var_names(vars.size());
@@ -149,47 +150,8 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
         search_monitors_.validator_monitor_ = solver_.RevAlloc(
                 new ValidatorMonitor{*validator_, vars, &solver_});
 
-        /*
-         * Here we want to create a new search. While it does not matter for
-         * the initial search, it it crucial to be able to rollback all changes
-         * when this search is used as a helper. The only way to do this is to
-         * initialize the search now, so that the Solver puts a INITIAL_SEARCH
-         * marker in the trace. Then, after the Solve() is finished it will
-         * roll-back everything to this point.
-         */
-        solver_.NewSearch(db, search_monitors_.GetSearchMonitors());
-
-
-        /*
-         * Determine our partition. First, determine the variable with the
-         * largest domain and the assume equivalent stripes along its domain.
-         */
-        IntVar *split_var = nullptr;
-        uint64_t max_size = 0;
-        for (const auto var: primary_vars) {
-            const uint64_t var_size = var->Max() - var->Min() + 1;
-            if (!split_var || var_size > max_size) {
-                split_var = var;
-                max_size = var_size;
-            }
-        }
-        assert(split_var);
-
-        // define partition
-        const auto &active_solvers = sl_task_.GetActiveSolvers();
-        const auto iter = std::find(active_solvers.begin(),
-                active_solvers.end(), sl_task_.GetInstanceID());
-        assert(iter != active_solvers.end());
-        const int solver_id = iter - active_solvers.begin();
-
-        const uint64_t partition_len =
-                ceil(double(max_size) / active_solvers.size());
-        const int64_t partition_start = split_var->Min() +
-                partition_len * solver_id;
-        const int64_t partition_end = partition_start + partition_len - 1;
-        split_var->SetRange(partition_start, partition_end);
-        LOG4CXX_INFO(logger,
-                "Set partition for var=" << split_var->DebugString());
+        // Determine the worload; it will be assigned at Solve()
+        DetermineLocalWorkload();
 
         // logging
         if (logger->isDebugEnabled()) {
@@ -218,8 +180,62 @@ void Searchlight::PrepareHelper(LiteAssignmentVector &load) {
     helper_load_.swap(load);
 
     // Decide if the balancing is enabled
-    solver_balancing_enabled_ = sl_task_.GetConfig().get("solver_balance", 1);
+    solver_balancing_enabled_ =
+            sl_task_.GetConfig().get("balance.solver_balance", 1);
     status_ = Status::PREPARED;
+}
+
+void Searchlight::DetermineLocalWorkload() {
+    /*
+     * Determine our partition. First, determine the variable with the
+     * largest domain and the assume equivalent stripes along its domain.
+     */
+    IntVar *split_var = nullptr;
+    uint64_t max_size = 0;
+    size_t split_var_num = 0;
+    for (size_t i = 0; i < primary_vars_.size(); i++) {
+        const auto var = primary_vars_[i];
+        const uint64_t var_size = var->Max() - var->Min() + 1;
+        if (!split_var || var_size > max_size) {
+            split_var = var;
+            max_size = var_size;
+            split_var_num = i;
+        }
+    }
+    assert(split_var);
+
+    /*
+     * Then, determine intervals.
+     */
+    const auto &active_solvers = sl_task_.GetActiveSolvers();
+    const size_t active_solvers_num = active_solvers.size();
+    const auto iter = std::find(active_solvers.begin(),
+            active_solvers.end(), sl_task_.GetInstanceID());
+    assert(iter != active_solvers.end());
+    const int solver_id = iter - active_solvers.begin();
+
+    int slices_number = sl_task_.GetConfig().get("balance.slices_number", 0);
+    if (slices_number < active_solvers_num || active_solvers_num == 1) {
+        slices_number = active_solvers_num;
+    } else if (slices_number > split_var->Size()) {
+        slices_number = split_var->Size();
+    }
+    const uint64_t slice_len = ceil(double(max_size) / slices_number);
+    LOG4CXX_INFO(logger, "The number of slices is " << slices_number
+            << " and the slice length is " << slice_len);
+    for (int64_t start = split_var->Min() + slice_len * solver_id;
+            start <= split_var->Max();
+            start += active_solvers_num * slice_len) {
+        // end might fall out of range, which is okay
+        const int64_t end = start + slice_len - 1;
+
+        // we define the load in terms of initial vars + split_var intervals
+        LiteVarAssignment asgn;
+        FullAssignmentToLite(vars_leaf_, asgn);
+        asgn.mins_[split_var_num] = start;
+        asgn.maxs_[split_var_num] = end;
+        local_load_.push_back(std::move(asgn));
+    }
 }
 
 void Searchlight::Solve() {
@@ -227,24 +243,33 @@ void Searchlight::Solve() {
     status_ = Status::SEARCHING;
 
     // Initially we always have work: local or remote
-    bool solver_has_work = true;
+    bool solver_has_work = !local_load_.empty() || !helper_load_.empty();
     while (solver_has_work) {
-        // Remote load?
-        if (!helper_load_.empty()) {
+        // Local load has priority
+        if (!local_load_.empty()) {
+            LiteToFullAssignment(vars_leaf_, local_load_.back());
+            local_load_.pop_back();
+
+        } else if (!helper_load_.empty()) {
             // Get a remote assignment from the remote load
             LiteToFullAssignment(vars_leaf_, helper_load_.back());
             helper_load_.pop_back();
-
-            LOG4CXX_DEBUG(logger, "Restoring a remote assignment: "
-                    << vars_leaf_.DebugString());
-            /*
-             * We want to set up the delegated work here. The idea is that we
-             * first create the search, which will be in the initial state
-             * and then set up the part
-             */
-            solver_.NewSearch(db_, search_monitors_.GetSearchMonitors());
-            vars_leaf_.Restore();
+        } else {
+            assert(false);
         }
+
+        /*
+         * Here we want to create a new search. It is crucial to be able to
+         * roll-back all changes when this solver gets a new local or remote
+         * assignment. The only way to do this is to
+         * initialize the search now, so that the Solver puts a INITIAL_SEARCH
+         * marker in the trace. Then, after the Solve() is finished it will
+         * roll-back everything up to this point.
+         */
+        solver_.NewSearch(db_, search_monitors_.GetSearchMonitors());
+        LOG4CXX_INFO(logger, "Setting up solver assignment: "
+                << vars_leaf_.DebugString());
+        vars_leaf_.Restore();
 
         // Starting the timer
         const auto solve_start_time = std::chrono::steady_clock::now();
@@ -265,7 +290,7 @@ void Searchlight::Solve() {
                 solve_end_time - solve_start_time);
 
         // Continue only if we have another remote assignment
-        solver_has_work = !helper_load_.empty();
+        solver_has_work = !local_load_.empty() || !helper_load_.empty();
     }
 
     LOG4CXX_INFO(logger, "Finished solver's workload...");
