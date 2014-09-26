@@ -149,6 +149,94 @@ private:
      */
     friend class RestoreAssignmentBuilder;
 
+    /**
+     * ValidatorHelper is an advanced solver for validating candidates.
+     *
+     * The basic idea behind a helper is to off-load a bunch of candidates
+     * to it to validate in parallel. It uses the main validator to
+     * perform all important stuff, like forwarding and reporting.
+     */
+    class ValidatorHelper {
+    public:
+        /**
+         * Unique pointer for ValidatorHelper.
+         */
+        using UniquePtr = std::unique_ptr<ValidatorHelper>;
+
+        /**
+         * Constructs a new validator helper.
+         *
+         * @param id unique id if the helper
+         * @param parent main validator
+         * @param init_assignment assignment to init the vars
+         */
+        ValidatorHelper(int id, Validator &parent,
+                const Assignment &init_assignment);
+
+        /**
+         * Destructor.
+         *
+         * If the thread is still joinable (validator joins them lazily) then
+         * it will be joined.
+         */
+        ~ValidatorHelper() {
+            Prepare();
+        }
+
+        /**
+         * Main loop for the helper's solver.
+         */
+        void operator()();
+
+        /**
+         * Starts the specified workload in a separate thread.
+         *
+         * The helper must not have the current workload and it must not
+         * be running in a thread.
+         *
+         * @param workload workload to validate
+         */
+        void RunWorkload(CandidateVector &&workload);
+
+    private:
+        /*
+         * Internal helper for setting up the workload.
+         */
+        void SetWorkload(CandidateVector &&workload) {
+            workload_ = std::move(workload);
+        }
+
+        /*
+         * Internal helper to prepare the helper for use.
+         */
+        void Prepare() {
+            if (thr_.joinable()) {
+                thr_.join();
+            }
+        }
+
+        // Parent validator
+        Validator &parent_;
+
+        // Validation workload
+        CandidateVector workload_;
+
+        // Solver
+        Solver solver_;
+
+        // Adapter to use for UDFs
+        AdapterPtr adapter_;
+
+        // The prototype assignment for search variables
+        Assignment prototype_;
+
+        // Thread to run the helper
+        std::thread thr_;
+
+        // Id of the helper
+        const int id_;
+    };
+
     // Returns the next portion of Assignments to validate
     CandidateVector *GetNextAssignments();
 
@@ -156,6 +244,9 @@ private:
     bool CheckTerminate() const {
         return sl_.CheckTerminate();
     }
+
+    // Tries to dispatch a helper; nullptr -- not possible
+    ValidatorHelper *DispatchValidatorHelper();
 
     /*
      *  Returns true if this validator finished locally:
@@ -167,14 +258,18 @@ private:
          *  No mutex here since it's called from the main validator loop,
          *  which takes care of that.
          */
-        return to_validate_.empty() && forwarded_candidates_.empty();
+        return to_validate_.empty() && forwarded_candidates_.empty() &&
+                free_validator_helpers_.size() == validator_helpers_.size();
     }
 
     // Sends back the result of the forward
     void SendForwardResult(int forw_id, bool result);
 
     // Checks if we want to forward (returns true) and forwards if we can.
-    bool CheckForward(const Assignment *asgn);
+    bool CheckForward(const CoordinateSet &chunks, const Assignment *asgn);
+
+    // Pushes candidate to to_validate_
+    void PushCandidate(CandidateAssignment &&asgn);
 
     // Searchlight instance
     Searchlight &sl_;
@@ -182,8 +277,9 @@ private:
     // Searchlight task
     SearchlightTask &sl_task_;
 
-    // Pending validations
-    CandidateVector to_validate_;
+    // Pending validations and their count
+    std::deque<CandidateVector> to_validate_;
+    size_t to_validate_total_ = 0;
 
     // Info about remote candidates (local id -> (instance, remote id))
     std::unordered_map<int, std::pair<InstanceID, int>> remote_candidates_;
@@ -236,6 +332,18 @@ private:
 
     // Logical id of this validator among active ones (cached for perfomance)
     int my_logical_id_;
+
+    // Initialized validator helpers
+    std::unordered_map<int, ValidatorHelper::UniquePtr> validator_helpers_;
+
+    // Free validator helpers (finished their workloads)
+    std::deque<int> free_validator_helpers_;
+
+    // Maximum number of helpers allowed
+    size_t max_helpers_allowed_;
+
+    // Number of assignments to off-load to a helper
+    size_t helper_workload_;
 };
 
 
@@ -246,7 +354,10 @@ private:
 class VariableFinder : public ModelVisitor {
 public:
     /**
-     * A var_name --> var_address map
+     * A var_name --> var_address map.
+     *
+     * The IntVar is const since that is the way they are traversed at model
+     * visitors.
      */
     typedef std::map<std::string, const IntVar *> StringVarMap;
 

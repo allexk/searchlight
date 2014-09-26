@@ -132,17 +132,26 @@ public:
     /**
      * Creates a new restore assignment builder.
      *
-     * @param validator the validator producing assignments
+     * @param validator servicing validator
+     * @param adapter adapter used for access
      * @param s the solver
      * @param restart_period validator restart period
      * @param prototype prototype assignment to generate validations
+     * @param asgns initial assignments to validate
+     * @param slave true, if this is a slave builder for a helper
      */
-    explicit RestoreAssignmentBuilder(Validator &validator, Solver *s,
-            int restart_period, const Assignment *prototype)
+    explicit RestoreAssignmentBuilder(Validator &validator,
+            const AdapterPtr &adapter, Solver *s,
+            int restart_period, const Assignment *prototype,
+            Validator::CandidateVector &&asgns,
+            bool slave)
         : validator_(validator),
+          adapter_{adapter},
+          asgns_{std::move(asgns)},
           action_succeeded_(false),
           aux_monitor_(*this, s, restart_period),
-          last_asgn_{new Assignment{prototype}} {}
+          last_asgn_{new Assignment{prototype}},
+          slave_{slave} {}
 
 
     /**
@@ -178,12 +187,14 @@ public:
             } else {
                 // Simulation finished: we need to decide if we want to forward
                 assert(action_succeeded_);
-                validator_.adapter_->StopCollectingStats();
+                adapter_->StopCollectingStats();
                 const bool forwarded =
-                        validator_.CheckForward(last_asgn_.get());
+                        validator_.CheckForward(
+                                adapter_->GetCurrentStats().chunks_pos_,
+                                last_asgn_.get());
                 if (!forwarded) {
                     last_action_.type_ = Action::Type::LOCAL_CHECK;
-                    validator_.adapter_->SetAdapterMode(Adapter::EXACT);
+                    adapter_->SetAdapterMode(Adapter::EXACT);
                     return solver->RevAlloc(
                             new RestoreAssignment{last_asgn_.get()});
                 }
@@ -199,19 +210,24 @@ public:
 
         // pick the next assignment
         if (asgns_.empty()) {
-            // need to ask the validator
-            Validator::CandidateVector *new_asgns =
-                    validator_.GetNextAssignments();
-            if (!new_asgns) {
-                // No more assignments: stop the validator search
-                LOG4CXX_INFO(logger, "Stopping the validator search");
+            if (!slave_) {
+                // need to ask the validator
+                Validator::CandidateVector *new_asgns =
+                        validator_.GetNextAssignments();
+                if (!new_asgns) {
+                    // No more assignments: stop the validator search
+                    LOG4CXX_INFO(logger, "Stopping the validator search");
+                    solver->Fail();
+                }
+                asgns_.swap(*new_asgns);
+
+                LOG4CXX_TRACE(logger, "Got " << asgns_.size()
+                        << " new assignments to check");
+                delete new_asgns;
+            } else {
+                LOG4CXX_INFO(logger, "Helper validator finished workload...");
                 solver->Fail();
             }
-            asgns_.swap(*new_asgns);
-
-            LOG4CXX_TRACE(logger, "Got " << asgns_.size() << " new assignments "
-                    "to check");
-            delete new_asgns;
         }
 
         // Prepare assignment
@@ -232,10 +248,10 @@ public:
          * Set adapter to either perform simulation or check immediately.
          */
         if (last_action_.type_ == Action::Type::SIM) {
-            validator_.adapter_->SetAdapterMode(Adapter::DUMB);
-            validator_.adapter_->StartCollectingStats();
+            adapter_->SetAdapterMode(Adapter::DUMB);
+            adapter_->StartCollectingStats();
         } else {
-            validator_.adapter_->SetAdapterMode(Adapter::EXACT);
+            adapter_->SetAdapterMode(Adapter::EXACT);
         }
 
         return solver->RevAlloc(new RestoreAssignment{last_asgn_.get()});
@@ -245,8 +261,9 @@ public:
      * Returns the name for debugging logging.
      * @return
      */
-    virtual string DebugString() const {
-        return "RestoreAssignment";
+    virtual std::string DebugString() const {
+        return std::string{"RestoreAssignment "} +
+                (slave_ ? "(slave)" : "(master)");
     }
 
  private:
@@ -285,7 +302,8 @@ public:
                 }
                 // Restart the search for garbage collecting
                 my_fail_ = false;
-                if (solver()->SearchDepth() > restart_period_) {
+                if (restart_period_ &&
+                        solver()->SearchDepth() > restart_period_) {
                     LOG4CXX_TRACE(logger,
                             "Restarting the validator for garbage collecting");
                     RestartCurrentSearch();
@@ -305,8 +323,11 @@ public:
         bool my_fail_ = false;
     };
 
-    // The validator producing the assignments
+    // The servicing validator. For slaves -- the parent validator.
     Validator &validator_;
+
+    // Adapter used for access
+    AdapterPtr adapter_;
 
     // Assignments to validate
     Validator::CandidateVector asgns_;
@@ -322,6 +343,9 @@ public:
 
     // Last action taken by the DB
     Action last_action_;
+
+    // True if this is a slave builder
+    const bool slave_;
 };
 
 Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
@@ -375,12 +399,17 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
          */
         search_vars_prototype_.Add(const_cast<IntVar *>(var->second));
     }
+    search_vars_prototype_.Store(); // Store initial values
 
     const SearchlightConfig &sl_config = sl_task_.GetConfig();
     max_pending_validations_ =
             sl_config.get("searchlight.validator.max_validations", 1000000);
     restart_period_ = sl_config.get("searchlight.validator.restart_period",
             1024);
+    max_helpers_allowed_ =
+            sl_config.get("searchlight.validator.max_helpers", 1);
+    helper_workload_ =
+            sl_config.get("searchlight.validator.helper_workload", 1000);
 
     // Determine forwarding type
     const std::string &forw_type =
@@ -411,16 +440,16 @@ void Validator::AddSolution(const Assignment &sol) {
     LOG4CXX_TRACE(logger, "New solution to validate: " << sol.DebugString());
 
     std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
-    to_validate_.push_back({std::move(lite_sol), -1});
+    PushCandidate({std::move(lite_sol), -1});
 
     // We might have to wait -- flood control
-    while (to_validate_.size() > max_pending_validations_) {
+    while (to_validate_total_ > max_pending_validations_) {
         /*
          * It is safe to use the same condition since the validator will be
          * certainly non-blocked.
          */
         LOG4CXX_TRACE(logger, "Waiting for the validator to catch up"
-                ", queue size=" << to_validate_.size());
+                ", queue size=" << to_validate_total_);
         validate_cond_.wait(validate_lock);
     }
 
@@ -428,12 +457,22 @@ void Validator::AddSolution(const Assignment &sol) {
     validate_cond_.notify_one();
 }
 
+void Validator::PushCandidate(CandidateAssignment &&asgn) {
+    if (to_validate_.empty() ||
+            to_validate_.back().size() >= helper_workload_) {
+        to_validate_.emplace_back();
+        to_validate_.back().reserve(helper_workload_);
+    }
+    to_validate_.back().push_back(std::move(asgn));
+    to_validate_total_++;
+}
+
 void Validator::AddRemoteCandidates(LiteAssignmentVector &cands,
         InstanceID src, int forw_id) {
     std::lock_guard<std::mutex> validate_lock(to_validate_mtx_);
     while (!cands.empty()) {
         const int cand_id = remote_cand_id_++;
-        to_validate_.push_back({std::move(cands.back()), cand_id});
+        PushCandidate({std::move(cands.back()), cand_id});
         cands.pop_back();
         remote_candidates_.emplace(cand_id, std::make_pair(src, forw_id++));
     }
@@ -461,8 +500,8 @@ void Validator::SendForwardResult(int forw_id, bool result) {
     sl_task_.SendBalanceResult(forw_info.first, forw_info.second, result);
 }
 
-bool Validator::CheckForward(const Assignment *asgn) {
-    const CoordinateSet &chunks = adapter_->GetCurrentStats().chunks_pos_;
+bool Validator::CheckForward(const CoordinateSet &chunks,
+        const Assignment *asgn) {
     const auto &active_validators = sl_task_.GetActiveValidators();
     std::vector<int> inst_counts(active_validators.size());
 
@@ -531,7 +570,7 @@ void Validator::Synchronize() const {
     std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
     while (!to_validate_.empty()) {
         LOG4CXX_TRACE(logger, "Synchronizing with the validator"
-                ", queue size=" << to_validate_.size());
+                ", queue size=" << to_validate_total_);
         validate_cond_.wait(validate_lock);
     }
 }
@@ -539,8 +578,9 @@ void Validator::Synchronize() const {
 void Validator::operator()() {
     LOG4CXX_INFO(logger, "Starting the validator search");
     DecisionBuilder *db =
-            solver_.RevAlloc(new RestoreAssignmentBuilder(*this, &solver_,
-                    restart_period_, &search_vars_prototype_));
+            solver_.RevAlloc(new RestoreAssignmentBuilder(*this, adapter_,
+                    &solver_, restart_period_, &search_vars_prototype_, {},
+                    false));
     solver_status_ = solver_.Solve(db);
     LOG4CXX_INFO(logger, "Validator exited solve()");
 }
@@ -581,14 +621,115 @@ Validator::CandidateVector *Validator::GetNextAssignments() {
         validate_cond_.wait(validate_lock);
     }
 
-    // We should be here only if we have some candidates to check
+    // First, try to offload to helpers
+    while (to_validate_.size() > 1) {
+        ValidatorHelper *helper = DispatchValidatorHelper();
+        if (helper) {
+            CandidateVector &workload = to_validate_.front();
+            LOG4CXX_INFO(logger, "Off-loading " << workload.size()
+                    << " assignments to a helper...");
+            to_validate_total_ -= workload.size();
+            helper->RunWorkload(std::move(workload));
+            to_validate_.pop_front();
+        } else {
+            break;
+        }
+    }
+
+    // The rest we'll handle ourselves
+    assert(to_validate_.size() > 0);
     CandidateVector *res = new CandidateVector;
-    res->swap(to_validate_);
+    res->swap(to_validate_.front());
+    to_validate_.pop_front();
+    to_validate_total_ -= res->size();
 
     // Flow control: notify the main solver about catching up
     validate_cond_.notify_one();
 
     return res;
+}
+
+Validator::ValidatorHelper *Validator::DispatchValidatorHelper() {
+    if (!free_validator_helpers_.empty()) {
+        const int id = free_validator_helpers_.front();
+        free_validator_helpers_.pop_front();
+        ValidatorHelper *helper = validator_helpers_[id].get();
+        return helper;
+    } else if (validator_helpers_.size() < max_helpers_allowed_) {
+        const int id = validator_helpers_.size();
+        ValidatorHelper *helper =
+                new ValidatorHelper{id, *this, search_vars_prototype_};
+        validator_helpers_.emplace(id, ValidatorHelper::UniquePtr{helper});
+        return helper;
+    }
+
+    return nullptr;
+}
+
+Validator::ValidatorHelper::ValidatorHelper(int id, Validator &parent,
+        const Assignment &init_assignment) :
+                parent_(parent),
+                solver_{"validator helper solver " + std::to_string(id)},
+                adapter_{parent_.sl_.CreateAdapter(
+                        "validator helper_" + std::to_string(id))},
+                prototype_{&solver_},
+                id_{id} {
+    // Start adapter in the dumb mode, since we don't need estimations
+    adapter_->SetAdapterMode(Adapter::DUMB);
+
+    // First, clone the solver
+    if (!CloneModel(parent_.sl_, parent_.solver_, solver_, adapter_)) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << "Cannot create a validator helper solver!";
+    }
+
+    /*
+     * Now, we want to find all decision variables. We do this via a
+     * custom visitor.
+     */
+    VariableFinder var_finder;
+    solver_.Accept(&var_finder);
+    VariableFinder::StringVarMap var_map = var_finder.GetVarMap();
+    for (const auto &elem: init_assignment.IntVarContainer().elements()) {
+        const std::string &var_name = elem.Var()->name();
+        VariableFinder::StringVarMap::const_iterator it = var_map.find(var_name);
+        if (it == var_map.end()) {
+            std::ostringstream err_msg;
+            err_msg << "Cannot find a variable in a duplicate solver: name="
+                    << var_name;
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                    << err_msg.str();
+        }
+        /*
+         *  const_cast is perfectly fine. Vars just come from the visitor,
+         *  which does not change them. But these vars are supposed to be
+         *  changed during the search anyway, albeit later.
+         */
+        IntVar *var = const_cast<IntVar *>(it->second);
+        prototype_.Add(var);
+        var->SetRange(elem.Var()->Min(), elem.Var()->Max());
+    }
+}
+
+void Validator::ValidatorHelper::operator()() {
+    LOG4CXX_INFO(logger, "Starting the helper validator search...");
+    DecisionBuilder *db =
+            solver_.RevAlloc(new RestoreAssignmentBuilder(parent_, adapter_,
+                    &solver_, 0, &prototype_,
+                    std::move(workload_), true));
+    solver_.Solve(db);
+    LOG4CXX_INFO(logger, "Validator helper exited solve()");
+
+    std::lock_guard<std::mutex> lock{parent_.to_validate_mtx_};
+    parent_.free_validator_helpers_.push_back(id_);
+    parent_.validate_cond_.notify_one();
+}
+
+void Validator::ValidatorHelper::RunWorkload(CandidateVector &&workload) {
+    assert(workload_.empty());
+    Prepare();
+    SetWorkload(std::move(workload));
+    thr_ = std::thread{std::ref(*this)};
 }
 
 } /* namespace searchlight */
