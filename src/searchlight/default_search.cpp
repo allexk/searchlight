@@ -802,7 +802,20 @@ bool BalancingMonitor::CanDetachSubTree() const {
      */
     for (const IntVar *var: all_vars_) {
         if (var->Max() - var->Min() + 1 != var->Size()) {
-            return false;
+            /*
+             * We still might have a case of a variable x * c, which might
+             * not have holes, but the above condition obviously would be
+             * false.
+             */
+            auto hole_iter = var->MakeHoleIterator(true);
+            int holes = 0;
+            while (hole_iter->Ok()) {
+                holes++;
+                hole_iter->Next();
+            }
+            if (holes) {
+                return false;
+            }
         }
     }
 
