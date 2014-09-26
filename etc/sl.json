@@ -30,7 +30,9 @@
     "balance": {
         "solver_balance": 1,
         "validator_balance": "stripes",
-        "map_update_frequency": 0
+        "map_update_frequency": 0,
+        "general_low": 0.1,
+        "general_high": 0.5
     },
 
     "setup": {

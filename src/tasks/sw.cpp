@@ -218,8 +218,11 @@ void SemWindowsAvg(Searchlight *sl) {
         db = solver.MakePhase(all_vars, Solver::CHOOSE_MAX_SIZE,
             Solver::SPLIT_LOWER_HALF);
         const bool balance = config.get("balance.solver_balance", 1);
+        const double low_thr = config.get("balance.general_low", 0.1);
+        const double high_thr = config.get("balance.general_high", 0.5);
         if (balance) {
-            mons.push_back(sl->CreateBalancingMonitor(all_vars, 0.1, 0.5));
+            mons.push_back(sl->CreateBalancingMonitor(all_vars, low_thr,
+                    high_thr));
         }
     } else if (search_heuristic == "sl") {
         if (time_limit != 0) {

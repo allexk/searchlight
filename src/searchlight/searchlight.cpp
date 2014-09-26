@@ -406,6 +406,8 @@ DecisionBuilder *Searchlight::CreateDefaultHeuristic(
 
 SearchMonitor *Searchlight::CreateBalancingMonitor(const IntVarVector &vars,
         double low, double high) {
+    LOG4CXX_INFO(logger, "Creating general balancer with interval ["
+            << low << ", " << high << "]");
     return solver_.RevAlloc(
             new BalancingMonitor(solver_, *this, vars, low, high));
 }
