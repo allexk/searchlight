@@ -426,21 +426,21 @@ SLSearch::SLSearch(Searchlight &sl,
             primary_vars.end());
     all_vars_.insert(all_vars_.end(), secondary_vars.begin(),
             secondary_vars.end());
+
+    if (logger->isDebugEnabled()) {
+        std::ostringstream deb;
+        deb << "SLSearch config follows:\n";
+        OutputConfig(deb);
+        logger->debug(deb.str(), LOG4CXX_LOCATION);
+    }
 }
 
 Decision* SLSearch::Next(Solver* const s) {
-    if (!intervals_explored_) {
-        if (logger->isDebugEnabled()) {
-            std::ostringstream deb;
-            deb << "SLSearch config follows:\n";
-            OutputConfig(deb);
-            logger->debug(deb.str(), LOG4CXX_LOCATION);
-        }
-
+    if (!intervals_explored_ && !VarsIntervalBound()) {
         const auto init_start_time = std::chrono::steady_clock::now();
         InitIntervals(s);
-        //s->SaveAndSetValue(&intervals_explored_, true);
-        intervals_explored_ = true;
+        s->SaveAndSetValue(&intervals_explored_, true);
+        //intervals_explored_ = true;
         const auto init_end_time = std::chrono::steady_clock::now();
         const int64_t init_seconds =
                 std::chrono::duration_cast<std::chrono::seconds>
@@ -609,8 +609,10 @@ void SLSearch::InitIntervals(Solver * const s) {
                 s->Solve(&explorer);
                 nested_monitors.pop_back();
 
-                imp.tried_assigns_ = explorer_monitor.GetTotalFails();
-                imp.succ_assigns_ = explorer_monitor.GetLeavesReached();
+                s->SaveAndSetValue(&imp.tried_assigns_,
+                        explorer_monitor.GetTotalFails());
+                s->SaveAndSetValue(&imp.succ_assigns_,
+                        explorer_monitor.GetLeavesReached());
                 if (explorer.ProblemInfeasible()) {
                     // We should deactivate the interval
                     LOG4CXX_TRACE(logger, "The interval is infeasible");
