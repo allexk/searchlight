@@ -35,7 +35,8 @@
         "map_update_frequency": 0,
         "general_low": 0.1,
         "general_high": 0.5,
-        "slices_number": 0
+        "slices_number": 0,
+        "load_slices": 1
     },
 
     "setup": {

@@ -639,6 +639,9 @@ private:
     // Local work defined at the beginning
     LiteAssignmentVector local_load_;
 
+    // If true, no local/remote assignment will be restored in Solve()
+    bool local_remote_override_ = false;
+
     // Do we accept help?
     bool solver_balancing_enabled_;
 

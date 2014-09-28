@@ -223,18 +223,41 @@ void Searchlight::DetermineLocalWorkload() {
     const uint64_t slice_len = ceil(double(max_size) / slices_number);
     LOG4CXX_INFO(logger, "The number of slices is " << slices_number
             << " and the slice length is " << slice_len);
-    for (int64_t start = split_var->Min() + slice_len * solver_id;
-            start <= split_var->Max();
-            start += active_solvers_num * slice_len) {
-        // end might fall out of range, which is okay
-        const int64_t end = start + slice_len - 1;
+    const bool load_slices = sl_task_.GetConfig().get("balance.load_slices", 1);
+    if (load_slices) {
+        // See comment in Solve() about NewSearch()
+        solver_.NewSearch(db_, search_monitors_.GetSearchMonitors());
+        vars_leaf_.FreezeQueue();
+        // Remove first hole
+        split_var->RemoveInterval(split_var->Min(),
+                split_var->Min() + slice_len * solver_id - 1);
 
-        // we define the load in terms of initial vars + split_var intervals
-        LiteVarAssignment asgn;
-        FullAssignmentToLite(vars_leaf_, asgn);
-        asgn.mins_[split_var_num] = start;
-        asgn.maxs_[split_var_num] = end;
-        local_load_.push_back(std::move(asgn));
+        // Remaining holes
+        int64_t hole_start = split_var->Min() + slice_len * (solver_id + 1);
+        while (hole_start <= split_var->Max()) {
+            const int64_t hole_end =
+                    hole_start + (active_solvers_num - 1) * slice_len - 1;
+            split_var->RemoveInterval(hole_start, hole_end);
+            hole_start = hole_end + 1 + slice_len;
+        }
+        vars_leaf_.UnfreezeQueue();
+        LOG4CXX_INFO(logger, "Loaded slices into the split var: "
+                << split_var->DebugString());
+        local_remote_override_ = true;
+    } else {
+        for (int64_t start = split_var->Min() + slice_len * solver_id;
+                start <= split_var->Max();
+                start += active_solvers_num * slice_len) {
+            // end might fall out of range, which is okay
+            const int64_t end = start + slice_len - 1;
+
+            // we define the load in terms of initial vars + split_var intervals
+            LiteVarAssignment asgn;
+            FullAssignmentToLite(vars_leaf_, asgn);
+            asgn.mins_[split_var_num] = start;
+            asgn.maxs_[split_var_num] = end;
+            local_load_.push_back(std::move(asgn));
+        }
     }
 }
 
@@ -243,33 +266,38 @@ void Searchlight::Solve() {
     status_ = Status::SEARCHING;
 
     // Initially we always have work: local or remote
-    bool solver_has_work = !local_load_.empty() || !helper_load_.empty();
+    bool solver_has_work = !local_load_.empty() || !helper_load_.empty() ||
+            local_remote_override_;
     while (solver_has_work) {
-        // Local load has priority
-        if (!local_load_.empty()) {
-            LiteToFullAssignment(vars_leaf_, local_load_.back());
-            local_load_.pop_back();
+        if (!local_remote_override_) {
+            // Local load has priority
+            if (!local_load_.empty()) {
+                LiteToFullAssignment(vars_leaf_, local_load_.back());
+                local_load_.pop_back();
 
-        } else if (!helper_load_.empty()) {
-            // Get a remote assignment from the remote load
-            LiteToFullAssignment(vars_leaf_, helper_load_.back());
-            helper_load_.pop_back();
+            } else if (!helper_load_.empty()) {
+                // Get a remote assignment from the remote load
+                LiteToFullAssignment(vars_leaf_, helper_load_.back());
+                helper_load_.pop_back();
+            } else {
+                assert(false);
+            }
+
+            /*
+             * Here we want to create a new search. It is crucial to be able to
+             * roll-back all changes when this solver gets a new local or remote
+             * assignment. The only way to do this is to
+             * initialize the search now, so that the Solver puts a
+             * INITIAL_SEARCH marker in the trace. Then, after the Solve() is
+             * finished it will roll-back everything up to this point.
+             */
+            solver_.NewSearch(db_, search_monitors_.GetSearchMonitors());
+            LOG4CXX_INFO(logger, "Setting up solver assignment: "
+                    << vars_leaf_.DebugString());
+            vars_leaf_.Restore();
         } else {
-            assert(false);
+            local_remote_override_ = false;
         }
-
-        /*
-         * Here we want to create a new search. It is crucial to be able to
-         * roll-back all changes when this solver gets a new local or remote
-         * assignment. The only way to do this is to
-         * initialize the search now, so that the Solver puts a INITIAL_SEARCH
-         * marker in the trace. Then, after the Solve() is finished it will
-         * roll-back everything up to this point.
-         */
-        solver_.NewSearch(db_, search_monitors_.GetSearchMonitors());
-        LOG4CXX_INFO(logger, "Setting up solver assignment: "
-                << vars_leaf_.DebugString());
-        vars_leaf_.Restore();
 
         // Starting the timer
         const auto solve_start_time = std::chrono::steady_clock::now();
@@ -289,8 +317,9 @@ void Searchlight::Solve() {
                 std::chrono::duration_cast<decltype(total_solve_time_)>(
                 solve_end_time - solve_start_time);
 
-        // Continue only if we have another remote assignment
-        solver_has_work = !local_load_.empty() || !helper_load_.empty();
+        // Continue only if we have another assignment to set up
+        solver_has_work = !local_load_.empty() || !helper_load_.empty() ||
+                local_remote_override_;
     }
 
     LOG4CXX_INFO(logger, "Finished solver's workload...");
