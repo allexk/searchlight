@@ -229,11 +229,12 @@ void Searchlight::DetermineLocalWorkload() {
         solver_.NewSearch(db_, search_monitors_.GetSearchMonitors());
         vars_leaf_.FreezeQueue();
         // Remove first hole
+        const int64_t initial_var_min = split_var->Min();
         split_var->RemoveInterval(split_var->Min(),
                 split_var->Min() + slice_len * solver_id - 1);
 
         // Remaining holes (note, Min() might have changed!)
-        int64_t hole_start = split_var->Min() + slice_len;
+        int64_t hole_start = initial_var_min + slice_len * (solver_id + 1);
         while (hole_start <= split_var->Max()) {
             const int64_t hole_end =
                     hole_start + (active_solvers_num - 1) * slice_len - 1;
