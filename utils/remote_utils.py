@@ -17,12 +17,18 @@ import os
 DEFAULT_SCIDB_DIR = '/opt/scidb/14.3'
 # default data prefix dir
 DEFAULT_DATA_PREFIX = '/mnt/sdb/scidb'
-# default task dir
-DEFAULT_TASK_DIR = '~'
+# default remote dir to put the task to
+DEFAULT_REMOTE_TASK_DIR = '~'
 # default sudo password filr
 DEFAULT_SUDO_PASSWD_FILE = 'sudo_passwd'
+# default file with queries
+DEFAULT_QUERY_FILE = 'query.txt'
+# default task file to run in a query 
+DEFAULT_TASK_FILE = 'sl.json'
+# default scidb user to login and run SciDb
+DEFAULT_SCIDB_USER = 'scidb'
 
-# Some utilities
+# Some utility functions
 
 def get_hosts(cluster):
     """
@@ -60,7 +66,8 @@ def get_sudo_passwd():
 def stop_scidb(db):
     """ Stops the specified SciDb cluster"""
     with cd(DEFAULT_SCIDB_DIR):
-        run('python bin/scidb.py stop_all %s' % db)
+        with settings(warn_only=True):
+            run('python bin/scidb.py stop_all %s' % db)
 
 def drop_caches():
     """ Drops OS caches on a host """
@@ -77,7 +84,7 @@ def copy_task(task_file):
     
     By default, the task file is copied in the user's home.
     """
-    put(task_file, DEFAULT_TASK_DIR)
+    put(task_file, DEFAULT_REMOTE_TASK_DIR)
     
 def copy_logs(cluster, log_dir):
     """
@@ -112,12 +119,30 @@ def copy_logs(cluster, log_dir):
 
 def get_remote_task(log_dir, task_file):
     """Retrieves remote task definition from the host"""
-    get(os.path.join(DEFAULT_TASK_DIR, task_file), log_dir)
+    get(os.path.join(DEFAULT_REMOTE_TASK_DIR, task_file), log_dir)
+
+def run_query(query_file):
+    """
+    Runs AFL/AQL queries from the specified file.
+    
+    One query per line. Empty lines are ignored.
+    """
+    with open(query_file, 'r') as f:
+        with cd(DEFAULT_SCIDB_DIR):
+            for query in f:
+                query = query.strip()
+                if query:
+                    run('bin/iquery -a -q "%s"' % query)
+
+def set_env(cluster):
+    """Sets environment before running a task."""
+    env.hosts = env.hosts or get_hosts(cluster)
+    env.password = env.password or get_sudo_passwd()
 
 # Main tasks
 
-@task()
-def prepare(cluster, task_file='sl.json', user='scidb'):
+@task
+def prepare(cluster, task_file=DEFAULT_TASK_FILE):
     """
     Prepares the specified SciDb cluster for running a task.
     
@@ -131,15 +156,24 @@ def prepare(cluster, task_file='sl.json', user='scidb'):
         task_file -- file with the JSON task specification
         user      -- user to login and run SciDb from
     """
-    env.hosts = get_hosts(cluster)
-    env.user = user
-    env.password = get_sudo_passwd()
+    set_env(cluster)
     execute(drop_caches)
     execute(copy_task, task_file)
     execute(start_scidb, cluster, hosts=[env.hosts[0]])
 
-@task()
-def stop(cluster, log_dir, task_file='sl.json', user='scidb'):
+@task
+def query(cluster, query_file=DEFAULT_QUERY_FILE):
+    """
+    Runs AFL/AQL queries specified in the query_file on the remote cluster.
+    
+    The query file is supposed to have a single query per line. Empty lines are
+    ignored.
+    """
+    set_env(cluster)
+    execute(run_query, query_file, hosts=[env.hosts[0]])
+
+@task
+def stop(cluster, log_dir, task_file=DEFAULT_TASK_FILE):
     """
     Stops the SciDb cluster and retrieves logs to the specified dir
     
@@ -151,9 +185,39 @@ def stop(cluster, log_dir, task_file='sl.json', user='scidb'):
     """
     if not os.path.exists(log_dir):
         os.mkdir(log_dir)
-    env.hosts = get_hosts(cluster)
-    env.user = user
-    env.inst_count = 0  # total instance counter
+    set_env(cluster)
+    env.inst_count = 0  # total instance counter (user variable)
     execute(stop_scidb, cluster, hosts=[env.hosts[0]])
     execute(copy_logs, cluster, log_dir)
     execute(get_remote_task, log_dir, task_file, hosts=[env.hosts[0]])
+
+@task
+def sl(cluster, log_dir, task_file=DEFAULT_TASK_FILE,
+       query_file=DEFAULT_QUERY_FILE):
+    """
+    Prepares SciDb cluster for running the task, runs the queries, stops it and
+    retrieves the logs.
+    
+    Multiple executions of this task with the same parameters will result
+    in running the same query multiple times. This can be used to run the same
+    query in an experiment.
+    """
+    # should enforce 'localhost' since sub-tasks might change env.hosts
+    execute(prepare, cluster, task_file, hosts='localhost')
+    execute(query, cluster, query_file, hosts='localhost')
+    execute(stop, cluster, log_dir, task_file, hosts='localhost')
+    
+@task
+def exp(cluster, log_dir, runs, task_file=DEFAULT_TASK_FILE,
+        query_file=DEFAULT_QUERY_FILE):
+    """
+    Runs an experiment, which is a query executed specified number of times.
+    """
+    if not os.path.exists(log_dir):
+        os.mkdir(log_dir)
+    for run in range(int(runs)):
+        run_log_dir = os.path.join(log_dir, 'run-%d' % (run + 1))
+        # doesn't make any sense to run on any host except localhost
+        print 'Running experiment: run=%d' % (run + 1)
+        execute(sl, cluster, run_log_dir, task_file, query_file,
+                hosts='localhost')
