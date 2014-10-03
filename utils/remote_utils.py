@@ -10,21 +10,31 @@ The second is "stop", which stops the server and retrieves remote logs from
 the hosts. It also retrieves the task config from the first host.
 """
 
-from fabric.api import env, run, sudo, get, put, settings, cd, task, execute
+from fabric.api import env, run, sudo, get, put, settings, cd, task, \
+    execute, parallel
 import os
 
 # default SciDb dir
 DEFAULT_SCIDB_DIR = '/opt/scidb/14.3'
+
 # default data prefix dir
 DEFAULT_DATA_PREFIX = '/mnt/sdb/scidb'
+
 # default remote dir to put the task to
 DEFAULT_REMOTE_TASK_DIR = '~'
+
+# default Searchlight repo dir
+DEFAULT_SL_REPO_DIR = 'src/searchlight'
+
 # default sudo password filr
 DEFAULT_SUDO_PASSWD_FILE = 'sudo_passwd'
+
 # default file with queries
 DEFAULT_QUERY_FILE = 'query.txt'
+
 # default task file to run in a query 
 DEFAULT_TASK_FILE = 'sl.json'
+
 # default scidb user to login and run SciDb
 DEFAULT_SCIDB_USER = 'scidb'
 
@@ -69,6 +79,7 @@ def stop_scidb(db):
         with settings(warn_only=True):
             run('python bin/scidb.py stop_all %s' % db)
 
+@parallel
 def drop_caches():
     """ Drops OS caches on a host """
     sudo('echo 3 > /proc/sys/vm/drop_caches')
@@ -78,14 +89,6 @@ def start_scidb(db):
     with cd(DEFAULT_SCIDB_DIR):
         run('python bin/scidb.py start_all %s' % db)
 
-def copy_task(task_file):
-    """
-    Copies the specified task file to a host.
-    
-    By default, the task file is copied in the user's home.
-    """
-    put(task_file, DEFAULT_REMOTE_TASK_DIR)
-    
 def copy_logs(cluster, log_dir):
     """
     Retrieves *.log files of the current host to the log_dir.
@@ -134,12 +137,38 @@ def run_query(query_file):
                 if query:
                     run('bin/iquery -a -q "%s"' % query)
 
+@parallel
+def copy_to_remote(remote_dir, local_file):
+    "Places the specified file to a remote host in the specified dir."
+    put(local_file, remote_dir)
+
+@parallel
+def update_src(repo_dir):
+    "Updates a remote repo by pulling from git and building the tree."
+    with cd(os.path.join(repo_dir, 'build')):
+        run('git pull')
+        run('cmake .')
+        run('make')
+        run('sudo make install')
+
 def set_env(cluster):
     """Sets environment before running a task."""
     env.hosts = env.hosts or get_hosts(cluster)
     env.password = env.password or get_sudo_passwd()
 
 # Main tasks
+
+@task
+def copy(cluster, file, remote_dir):
+    "Copies a file to a remote dir."
+    set_env(cluster)
+    execute(copy_to_remote, remote_dir, file)
+
+@task
+def update_src(cluster):
+    "Updates and rebuilds a repository."
+    set_env(cluster)
+    execute(DEFAULT_SL_REPO_DIR)
 
 @task
 def prepare(cluster, task_file=DEFAULT_TASK_FILE):
@@ -158,7 +187,7 @@ def prepare(cluster, task_file=DEFAULT_TASK_FILE):
     """
     set_env(cluster)
     execute(drop_caches)
-    execute(copy_task, task_file)
+    execute(copy_to_remote, DEFAULT_REMOTE_TASK_DIR, task_file)
     execute(start_scidb, cluster, hosts=[env.hosts[0]])
 
 @task
