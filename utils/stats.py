@@ -15,6 +15,7 @@ VAL_TOTAL_CPU_RE = re.compile('Total aggregates CPU time: ([\d.]+)s')
 SEARCH_STATS_RE = re.compile('Main search stats: fails=(\d+), true fails=(\d+),'
     ' candidates=(\d+)')
 MSG_FORW_RE = 'Forwards sent \(total\)=([\d\s,]+),'
+RES_TIME_RE = re.compile('([\d-]+) ([\d:,]+): .+')
 
 class ParseDict(dict):
     """
@@ -71,6 +72,15 @@ class ParseDict(dict):
         if m:
             self['cand_forwarded'] = [int(c) for c in m.group(1).split(', ')]
 
+    def _parse_result_time(self, l):
+        """Parses time of a single result."""
+        m = re.search(RES_TIME_RE, l)
+        if m:
+            if not 'res_times' in self:
+                self['res_times'] = []
+            dt = self._parse_timepoint(m.group(1), m.group(2))
+            self['res_times'].append(dt)
+
     def _parse_timepoint(self, date, time):
         """Parses time out of the date and time strings.
         
@@ -92,6 +102,7 @@ class ParseDict(dict):
         self._parse_search_time(l)
         self._parse_validator_times(l)
         self._parse_candidates(l)
+        self._parse_result_time(l)
 
 def process_run_dir(dir):
     """ Process a run dir from a Searchlight query and returns some stats.
@@ -113,15 +124,23 @@ def process_run_dir(dir):
         inst = int(d)
         print 'Parsing logs for instance %d' % inst
         stats = ParseDict()
-        with open(os.path.join(dir, d, 'searchlight.log'), 'r') as sl_log:
+        rd = os.path.join(dir, d)
+        with open(os.path.join(rd, 'searchlight.log'), 'r') as sl_log:
             for l in sl_log:
                 stats.parse_line(l)
+        if inst == 0:
+            # results come only from the coordinator
+            with open(os.path.join(rd,
+                                   'searchlight_results.log'), 'r') as slr_log:
+                for l in slr_log:
+                    stats.parse_line(l)
         inst_stats.insert(inst, stats)
 
     # we should merge stats from instances together
     res = {}
-    res['total_time'] = inst_stats[0]['end_time'] - inst_stats[0]['start_time']
-    res['search_time'] = inst_stats[0]['search_time'] - inst_stats[0]['start_time']
+    coord_stats = inst_stats[0]
+    res['total_time'] = coord_stats['end_time'] - coord_stats['start_time']
+    res['search_time'] = coord_stats['search_time'] - coord_stats['start_time']
     
     res['solver_times'] = [st['solver_time'] for st in inst_stats]
     res['validator_times'] = [st['val_times'] for st in inst_stats]
@@ -131,6 +150,25 @@ def process_run_dir(dir):
     res['cands_forwarded'] = [sum(st['cand_forwarded']) for st in inst_stats]
     res['cands_validated'] = [t[0] - t[1] for t in zip(res['cands_produced'],
                                                        res['cands_forwarded'])]
+    # result durations from the coordinator
+    if 'res_times' in coord_stats:
+        times = coord_stats['res_times']
+        delays = [times[i] - times[i - 1] for i in range(1, len(times))]
+        res['first_delay'] = times[0] - coord_stats['start_time']
+        delays.insert(0, res['first_delay'])
+
+        # don't count zero delays (i.e., count batches of results)
+        delays = [d for d in delays if not d == datetime.timedelta()]
+
+        res['min_delay'] = min(delays)
+        res['max_delay'] = max(delays)
+        res['avg_delay'] = sum(delays, datetime.timedelta()) / len(delays)
+    else:
+        res['first_delay'] = 0
+        res['min_delay'] = 0
+        res['max_delay'] = 0
+        res['avg_delay'] = 0
+
     for st in inst_stats:
         forw = st['cand_forwarded']
         for i in range(len(forw)):
@@ -195,6 +233,17 @@ def parse_experiment(dir):
     res['cands_forwarded'] = avg_list_stat(runs_stats, 'cands_forwarded')
     res['cands_validated'] = avg_list_stat(runs_stats, 'cands_validated')
     
+    res['solver_times'] = avg_list_stat(runs_stats, 'solver_times',
+                                        datetime.timedelta())
+
+    res['first_delay'] = avg_stat(runs_stats, 'first_delay',
+                                           datetime.timedelta())
+    res['min_delay'] = avg_stat(runs_stats, 'min_delay',
+                                           datetime.timedelta())
+    res['max_delay'] = avg_stat(runs_stats, 'max_delay',
+                                           datetime.timedelta())
+    res['avg_delay'] = avg_stat(runs_stats, 'avg_delay',
+                                           datetime.timedelta())
     return res
 
 def print_stats(stats):
@@ -213,6 +262,11 @@ def print_stats(stats):
     print 'Candidates forwarded: ', stats['cands_forwarded']
     print 'Candidates validated: ', stats['cands_validated']
 
+    print
+    print 'First result delay: ', stats['first_delay']
+    print 'Minimum result delay: ', stats['min_delay']
+    print 'Maximum result delay: ', stats['max_delay']
+    print 'Average result delay: ', stats['avg_delay']
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
