@@ -67,8 +67,12 @@ def get_sudo_passwd():
     Get sudo password for remote hosts from the local file, if exists.
     """
     passwd = None
-    with open(DEFAULT_SUDO_PASSWD_FILE, 'r') as passwd_file:
-        passwd = passwd_file.read().strip()
+    try:
+        with open(DEFAULT_SUDO_PASSWD_FILE, 'r') as passwd_file:
+            passwd = passwd_file.read().strip()
+    except:
+        # no file with the password; fab will prompt the user later if needed
+        pass
     return passwd
 
 # Sub-tasks ran from other tasks
