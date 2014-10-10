@@ -159,6 +159,7 @@ def set_env(cluster):
     """Sets environment before running a task."""
     env.hosts = env.hosts or get_hosts(cluster)
     env.password = env.password or get_sudo_passwd()
+    env.use_ssh_config = True
 
 # Main tasks
 
