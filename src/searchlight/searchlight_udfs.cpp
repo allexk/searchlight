@@ -382,7 +382,7 @@ bool AggrFuncExpr::CheckSupport() const {
         if (!low_lens_[i]->Contains(min_support_low_[i]) ||
                 !low_lens_[dims_ + i]->Contains(min_support_lens_[i]) ||
                 !low_lens_[i]->Contains(max_support_low_[i]) ||
-                !low_lens_[dims_ + i]->Contains(min_support_lens_[i])) {
+                !low_lens_[dims_ + i]->Contains(max_support_lens_[i])) {
             return false;
         }
     }
