@@ -78,27 +78,35 @@ def execute_query(query):
         print("\tAttribute %d %s %s" % \
             (attrs[i].getId(), attrs[i].getName(), attrs[i].getType()))
 
-    # attribute partitioning: an iterator per attribute
-    iters = []
-    for i in range(attrs.size()):
-        if not attrs[i].getName() == "EmptyTag":
-            attrid = attrs[i].getId()
-            iters.append(result.array.getConstIterator(attrid))
+    try:
+        # attribute partitioning: an iterator per attribute
+        iters = []
+        for i in range(attrs.size()):
+            if not attrs[i].getName() == "EmptyTag":
+                attrid = attrs[i].getId()
+                iters.append(result.array.getConstIterator(attrid))
 
-    # retrieve chunks and time them
-    while not iters[0].end():
-        # get and time another portion of the result
-        chunks = []
-        for i in range(len(iters)):
-            chunks.append(iters[i].getChunk())
-        times.append(datetime.datetime.now())
+        # retrieve chunks and time them
+        while not iters[0].end():
+            # get and time another portion of the result
+            chunks = []
+            for i in range(len(iters)):
+                chunks.append(iters[i].getChunk())
+            times.append(datetime.datetime.now())
 
-        for i in range(len(iters)):
-            iters[i].increment_to_next()
+            for i in range(len(iters)):
+                iters[i].increment_to_next()
+    except KeyboardInterrupt:
+        # on Control-C just exit
+        print('Interrupted by Control-C')
 
-    db.completeQuery(result.queryID)
+    try:
+        db.completeQuery(result.queryID)
+        db.disconnect()  # Disconnect from the SciDB server.
+    except:
+        handle_exception(inst, False, op="disconnecting")
+
     times.append(datetime.datetime.now())
-    db.disconnect()  # Disconnect from the SciDB server.
     return times
 
 if __name__ == "__main__":
