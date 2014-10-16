@@ -293,9 +293,12 @@ private:
 
             // Add instance id to helpees
             void Add(InstanceID id) {
-                assert(!index_.count(id));
-                help_reqs_.push_back(id);
-                index_.emplace(id, --help_reqs_.end());
+                // Might be already here if accept ack came too late.
+                // In this case we might've been added by another helpee...
+                if (index_.find(id) == index_.end()) {
+                    help_reqs_.push_back(id);
+                    index_.emplace(id, --help_reqs_.end());
+                }
             }
         } helpees_;
 

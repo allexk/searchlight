@@ -318,8 +318,12 @@ void SearchlightTask::HandleHelper(InstanceID helper) {
 
 void SearchlightTask::HandleAcceptHelper(InstanceID helper) {
     std::lock_guard<std::mutex> lock(mtx_);
-    distr_search_info_->helpees_.Add(helper);
-    CheckForHelpees();
+    // Check if the message came too late; solver could report idleness already
+    if (distr_search_info_->busy_solvers_.find(helper) !=
+            distr_search_info_->busy_solvers_.end()) {
+        distr_search_info_->helpees_.Add(helper);
+        CheckForHelpees();
+    }
 }
 
 void SearchlightTask::HandleEndOfSearch() {
