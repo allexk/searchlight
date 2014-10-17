@@ -21,9 +21,9 @@
  */
 
 /**
- * @file common.cpp
+ * @file sw.cpp
  *
- * Implementation of common taks function and classes.
+ * Implementation of Semantic Windows (SW) task.
  *
  * @author Alexander Kalinin
  */
