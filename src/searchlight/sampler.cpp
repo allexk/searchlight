@@ -521,14 +521,14 @@ Sampler::Sampler(const ArrayPtr &array, const ArrayDesc &data_desc) :
                 << err_msg.str();
     }
 
-    if (sample_desc.getDimensions()[0].getCurrStart() != 0) {
+    if (sample_desc.getDimensions()[0].getStartMin() != 0) {
         std::ostringstream err_msg;
         err_msg << "Chunk coordinate should start from 0: sample="
                 << sample_desc.getName();
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << err_msg.str();
     }
-    chunks_num_ = sample_desc.getDimensions()[0].getCurrEnd() + 1;
+    chunks_num_ = sample_desc.getDimensions()[0].getEndMax() + 1;
 
     // Register default aggregates
     aggrs_["avg"] = AverageSampleAggregate::Create;
