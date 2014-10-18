@@ -52,8 +52,8 @@ namespace {
  * @param name the name for the variable
  * @return integer variable with the specified name
  */
-IntVar *MakeIntVarWithName(Solver &solver, int32 start, int32 end,
-        int32 step, const std::string &name) {
+IntVar *MakeIntVarWithName(Solver &solver, int64 start, int64 end,
+        int64 step, const std::string &name) {
     IntVar *var;
     if (step == 1) {
         var = solver.MakeIntVar(start, end);
@@ -98,20 +98,20 @@ void SdssUgrizAvg(Searchlight *sl) {
     const SearchlightConfig &config = sl->GetConfig();
 
     // task params
-    const int32 start_x = config.get<int32>("sdss.lx");
-    const int32 end_x   = config.get<int32>("sdss.ux");
-    const int32 start_y = config.get<int32>("sdss.ly");
-    const int32 end_y   = config.get<int32>("sdss.uy");
-    const int32 size_l  = config.get<int32>("sdss.size_l");
-    const int32 size_u  = config.get<int32>("sdss.size_u");
-    const int32 len_lx  = config.get<int32>("sdss.len_lx");
-    const int32 len_ux  = config.get<int32>("sdss.len_ux");
-    const int32 len_ly  = config.get<int32>("sdss.len_ly");
-    const int32 len_uy  = config.get<int32>("sdss.len_uy");
-    const int32 step_x  = config.get<int32>("sdss.step_x", 1);
-    const int32 step_y  = config.get<int32>("sdss.step_y", 1);
-    const int32 step_lx  = config.get<int32>("sdss.step_lx", 1);
-    const int32 step_ly  = config.get<int32>("sdss.step_ly", 1);
+    const int64 start_x = config.get<int64>("sdss.lx");
+    const int64 end_x   = config.get<int64>("sdss.ux");
+    const int64 start_y = config.get<int64>("sdss.ly");
+    const int64 end_y   = config.get<int64>("sdss.uy");
+    const int64 size_l  = config.get<int64>("sdss.size_l");
+    const int64 size_u  = config.get<int64>("sdss.size_u");
+    const int64 len_lx  = config.get<int64>("sdss.len_lx");
+    const int64 len_ux  = config.get<int64>("sdss.len_ux");
+    const int64 len_ly  = config.get<int64>("sdss.len_ly");
+    const int64 len_uy  = config.get<int64>("sdss.len_uy");
+    const int64 step_x  = config.get<int64>("sdss.step_x", 1);
+    const int64 step_y  = config.get<int64>("sdss.step_y", 1);
+    const int64 step_lx  = config.get<int64>("sdss.step_lx", 1);
+    const int64 step_ly  = config.get<int64>("sdss.step_ly", 1);
 
     auto avg_low = ReadJSONArray(config, "sdss.avg_l");
     auto avg_high = ReadJSONArray(config, "sdss.avg_h");
