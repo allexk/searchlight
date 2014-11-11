@@ -116,6 +116,9 @@ void SdssUgrizAvg(Searchlight *sl) {
     auto avg_low = ReadJSONArray(config, "sdss.avg_l");
     auto avg_high = ReadJSONArray(config, "sdss.avg_h");
 
+    auto min_low = ReadJSONArray(config, "sdss.min_l");
+    auto min_high = ReadJSONArray(config, "sdss.min_h");
+
     const int32 time_limit = config.get("sdss.time_limit", 3600);
     const int luby_scale = config.get("searchlight.sl.luby_scale", 1);
 
@@ -145,22 +148,40 @@ void SdssUgrizAvg(Searchlight *sl) {
 
     // average: we have 5 attributes: u,g,r,i,z
     const char *ugriz_attrs[]{"u", "g", "r", "i", "z"};
+    AdapterPtr adapter = sl->CreateAdapter(std::string("sw"));
     for (int i = 0; i < 5; i++) {
         const double l = avg_low[i];
         const double h = avg_high[i];
-        if (l <= h) {
+        const double ml = min_low[i];
+        const double mh = min_high[i];
+        if (l <= h || ml <= mh) {
             const std::string attr_str = std::string(ugriz_attrs[i]);
             const AttributeID attr = sl->RegisterAttribute(attr_str);
-            AdapterPtr adapter = sl->CreateAdapter(std::string("sw") +
-                    ugriz_attrs[i]);
 
+            // avg
             UDFFunctionCreator avg_fab = sl->GetUDFFunctionCreator("avg");
             std::vector<int64> udf_params(1, int64(attr));
             IntExpr * const avg = solver.RevAlloc(avg_fab(
                     &solver, adapter, all_vars, udf_params));
 
             solver.AddConstraint(solver.MakeBetweenCt(avg, l, h));
+
+            // min
+            UDFFunctionCreator min_fab = sl->GetUDFFunctionCreator("min");
+            IntExpr * const min = solver.RevAlloc(min_fab(
+                    &solver, adapter, all_vars, udf_params));
+
+            solver.AddConstraint(solver.MakeGreaterOrEqual(min, int64(ml)));
+
+            // max
+            UDFFunctionCreator max_fab = sl->GetUDFFunctionCreator("max");
+            IntExpr * const max = solver.RevAlloc(max_fab(
+                    &solver, adapter, all_vars, udf_params));
+
+            solver.AddConstraint(solver.MakeLessOrEqual(max, int64(mh)));
         }
+
+
     }
 
     // create the search phase
