@@ -719,7 +719,7 @@ void SearchlightMessenger::SendSolution(const boost::shared_ptr<Query> &query,
 }
 
 void SearchlightMessenger::ReportIdleSolver(
-        const boost::shared_ptr<Query> &query) const {
+        const boost::shared_ptr<Query> &query, uint64_t solver_id) const {
     // determine the coordinator
     const InstanceID coord_id = query->getCoordinatorID();
     if (coord_id == scidb::COORDINATOR_INSTANCE) {
@@ -736,6 +736,7 @@ void SearchlightMessenger::ReportIdleSolver(
 
     // fill the record
     record->set_type(SearchlightControl::SEARCH_IDLE);
+    record->add_id(solver_id);
 
     // log
     LOG4CXX_DEBUG(logger, "Reporting idle search: qid=" << query->getQueryID());
@@ -785,7 +786,7 @@ void SearchlightMessenger::ReportFinValidator(
 }
 
 void SearchlightMessenger::DispatchHelper(const boost::shared_ptr<Query> &query,
-        InstanceID helper, InstanceID dest) const {
+        uint64_t helper, uint64_t helpee, InstanceID dest) const {
     // prepare the message
     boost::shared_ptr<scidb::MessageDesc> msg =
             PrepareMessage(query->getQueryID(), mtSLBalance);
@@ -794,7 +795,8 @@ void SearchlightMessenger::DispatchHelper(const boost::shared_ptr<Query> &query,
 
     // fill the record
     record->set_type(SearchlightBalance::HELPER_DISPATCH);
-    record->add_instance(helper);
+    record->add_id(helpee);
+    record->add_id(helper);
 
     // log
     LOG4CXX_DEBUG(logger, "Sending a helper: id=" <<
@@ -806,7 +808,7 @@ void SearchlightMessenger::DispatchHelper(const boost::shared_ptr<Query> &query,
 }
 
 void SearchlightMessenger::RejectHelp(const boost::shared_ptr<Query> &query,
-        const std::vector<InstanceID> &ids, bool hard) const {
+        const std::vector<InstanceID> &ids, uint64_t src, bool hard) const {
     // determine the coordinator
     const InstanceID coord_id = query->getCoordinatorID();
     if (coord_id == scidb::COORDINATOR_INSTANCE) {
@@ -823,8 +825,9 @@ void SearchlightMessenger::RejectHelp(const boost::shared_ptr<Query> &query,
     // Fill the record
     record->set_type(hard ? SearchlightBalance::REJECT_HELPER_HARD :
             SearchlightBalance::REJECT_HELPER_SOFT);
+    record->add_id(src);
     for (auto id: ids) {
-        record->add_instance(id);
+        record->add_id(id);
     }
 
     // Log
@@ -837,7 +840,7 @@ void SearchlightMessenger::RejectHelp(const boost::shared_ptr<Query> &query,
 
 void SearchlightMessenger::DispatchWork(const boost::shared_ptr<Query> &query,
         const LiteAssignmentVector &work,
-        InstanceID solver) const {
+        uint64_t solver) const {
     // prepare the message
     boost::shared_ptr<scidb::MessageDesc> msg =
             PrepareMessage(query->getQueryID(), mtSLBalance);
@@ -847,6 +850,7 @@ void SearchlightMessenger::DispatchWork(const boost::shared_ptr<Query> &query,
     // fill the record
     record->set_type(SearchlightBalance::HELP_LOAD);
     FillBalanceMessage(*record, work);
+    record->add_id(solver);
 
     // log
     LOG4CXX_DEBUG(logger, "Sending additional load to helper: qid=" <<
@@ -858,7 +862,7 @@ void SearchlightMessenger::DispatchWork(const boost::shared_ptr<Query> &query,
 }
 
 void SearchlightMessenger::AcceptHelp(const boost::shared_ptr<Query> &query,
-        InstanceID inst) const {
+        uint64_t inst) const {
     // prepare the message
     const InstanceID coord_id = query->getCoordinatorID();
     if (coord_id == scidb::COORDINATOR_INSTANCE) {
@@ -874,7 +878,7 @@ void SearchlightMessenger::AcceptHelp(const boost::shared_ptr<Query> &query,
 
     // Fill the record
     record->set_type(SearchlightBalance::ACCEPT_HELP);
-    record->add_instance(inst);
+    record->add_id(inst);
 
     // log
     LOG4CXX_DEBUG(logger, "Sending help accept: helper=" << inst);
@@ -898,7 +902,7 @@ void SearchlightMessenger::ForwardCandidates(
     // fill the record
     record->set_type(SearchlightBalance::CANDIDATE_FORWARD);
     FillBalanceMessage(*record, cands);
-    record->set_id(forw_id);
+    record->add_id(forw_id);
     {
         std::lock_guard<std::mutex> lock{mtx_};
         GetQueryContext(query->getQueryID(), false)->
@@ -955,7 +959,7 @@ void SearchlightMessenger::SendBalanceResult(
 
     // fill the record
     record->set_type(SearchlightBalance::BALANCE_RESULT);
-    record->set_id(forw_id);
+    record->add_id(forw_id);
     record->set_result(result);
 
     // log

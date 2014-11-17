@@ -174,8 +174,10 @@ public:
      * accept additional load.
      *
      * @param query the current query
+     * @param solver id
      */
-    void ReportIdleSolver(const boost::shared_ptr<Query> &query) const;
+    void ReportIdleSolver(const boost::shared_ptr<Query> &query,
+            uint64_t solver_id) const;
 
     /**
      * Reports the local validator that already finished its local job.
@@ -244,11 +246,12 @@ public:
      * Dispatches a helper to a remote instance.
      *
      * @param query caller's query context
-     * @param helper instance willing to help
+     * @param helper helper solver
+     * @param helpee solver in need of help
      * @param dest instance in need of help
      */
     void DispatchHelper(const boost::shared_ptr<Query> &query,
-            InstanceID helper, InstanceID dest) const;
+            uint64_t helper, uint64_t helpee, InstanceID dest) const;
 
     /**
      * Dispatches work for a remote helper.
@@ -259,17 +262,18 @@ public:
      */
     void DispatchWork(const boost::shared_ptr<Query> &query,
             const LiteAssignmentVector &work,
-            InstanceID solver) const;
+            uint64_t solver) const;
 
     /**
      * Sends a message rejecting help to the coordinator.
      *
      * @param query caller's query context
      * @param ids ids of helpers
+     * @param src solver id
      * @param hard true, if it's a hard reject; false, if soft
      */
     void RejectHelp(const boost::shared_ptr<Query> &query,
-            const std::vector<InstanceID> &ids, bool hard) const;
+            const std::vector<uint64_t> &ids, uint64_t src, bool hard) const;
 
     /**
      * Sends a message accepting help to the coordinator.
@@ -279,7 +283,7 @@ public:
      * @param hard true, if it's a hard reject; false, if soft
      */
     void AcceptHelp(const boost::shared_ptr<Query> &query,
-            InstanceID inst) const;
+            uint64_t inst) const;
 
     /**
      * Forwards a candidate solution to another validator.

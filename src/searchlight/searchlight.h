@@ -44,12 +44,21 @@
 #include <chrono>
 #include <thread>
 #include <mutex>
+#include <condition_variable>
 
 namespace searchlight {
 
 class Validator;
 class SearchlightCollector;
 class SearchlightTask;
+class Searchlight;
+
+/**
+ * Type of the task function (called from the library).
+ *
+ * The second parameter is the id of the solver.
+ */
+typedef void (*SLTaskFunc)(Searchlight *, uint32_t);
 
 /**
  * This class manages supplementary DLL resources required by Searchlight.
@@ -129,16 +138,25 @@ public:
      * Creates a new validator monitor. This monitor looks for complete
      * assignments during the search and passed them along to the validator.
      *
-     * @param validator the validator for checking assignments
+     * Note, we connect the validator later, when it's been set up by
+     * searchlight.
+     *
      * @param vars a vector of decision variables (externally managed)
      * @param solver the main solver
      */
-    ValidatorMonitor(Validator &validator, const IntVarVector &vars,
-            Solver *solver) :
+    ValidatorMonitor(const IntVarVector &vars, Solver *solver) :
         SolutionCollector(solver),
-        validator_(validator),
         vars_(vars) {
         Add(vars);
+    }
+
+    /**
+     * Connects validator to the monitor.
+     *
+     * @param validator to connect
+     */
+    void ConnectValidator(Validator *validator) {
+        validator_ = validator;
     }
 
     /**
@@ -164,7 +182,7 @@ public:
 
 private:
     // The validator to pass the solution to
-    Validator &validator_;
+    Validator *validator_ = nullptr;
 
     // The vector of vars (managed outside)
     const IntVarVector vars_;
@@ -182,109 +200,56 @@ private:
 typedef IntExpr *(* UDFFunctionCreator)(Solver *, AdapterPtr,
         const std::vector<IntVar *> &, const std::vector<int64> &);
 
-/**
- * This class allows the search process to access data both via sampling
- * and real data. This class also provides the tools necessary to make
- * this access as efficient as possible. It provides a number of register
- * API functions via which the user can register search primitives. The rest
- * is handled by the Searchlight itself.
+/*
+ * This class encapsulates a single solver thread-instance. The model,
+ * monitors, heuristics go here. The Searchlight class provides higher
+ * level first-second level interface.
  */
-class Searchlight : private boost::noncopyable {
+class SearchlightSolver : private boost::noncopyable {
 public:
     /**
-     * Status of Searchlight
+     * Status of Searchlight solver.
      */
     enum class Status {
         VOID,      //!< VOID Non-initialized state
         PREPARED,  //!< PREPARED Main solver prepared
         SEARCHING, //!< SEARCHING Main solver is searching (suring Solve())
-        FIN_SEARCH,//!< FIN_SEARCH Main solver finished completely
-        FIN_VALID, //!< FIN_VALID Validator finished local work
-        COMMITTED, //!< COMMITTED SL completed successfully
+        FINISHED,  //!< FINISHED Main solver finished completely
         TERMINATED //!< TERMINATED Abnormal termination on error
     };
 
     /**
-     * Maps UDF names to UDF creators.
-     */
-    typedef std::map<std::string, UDFFunctionCreator> UDFMapper;
-
-    /**
-     * Creates the main searchlight class. An instance of this class
-     * corresponds to a single search process.
+     * Constructs a new solver.
      *
-     * @param task Searchlight task performing the query
-     * @param name the name of the search
-     * @param dll_handler handler for loading/unloading DLLs
+     * @param sl searchlight instance
+     * @param id solver's id (instance + global ordinal)
+     * @param sl_name name of the model (search)
      */
-    Searchlight(SearchlightTask &task,
-            const std::string &name,
-            DLLHandler &dll_handler) :
-        solver_(name),
+    SearchlightSolver(Searchlight &sl, uint64_t id,
+            const std::string &sl_name) :
+        sl_(sl),
+        solver_(sl_name + std::to_string(id)),
         db_(nullptr),
         vars_leaf_(&solver_),
-        validator_(nullptr),
-        validator_thread_(nullptr),
-        array_desc_(nullptr),
-        dl_udf_handle_(dll_handler.LoadDLL("searchlight_udfs")),
-        sl_task_(task),
         status_(Status::VOID),
-        solver_balancing_enabled_(true) {}
+        id_(id) {}
 
     /**
-     * The destructor.
+     * Destructor.
      */
-    ~Searchlight();
+    ~SearchlightSolver();
 
     /**
-     * Returns the solver to use for the search.
+     * The main solve method that starts the search.
      *
-     * @return the solver for the search
-     */
-    Solver &GetSolver() {
-        return solver_;
-    }
-
-    /**
-     * Returns a constant reference to the solver.
-     *
-     * @return constant solver reference
-     */
-    const Solver &GetSolver() const {
-        return solver_;
-    }
-
-    /**
-     * Registers a data array and the corresponding sample for the search.
-     *
-     * We do not check the correspondence of the array and the sample, since
-     * there are probably no means to do that.
-     *
-     * @param data the data array
-     * @param samples samples available for the data array
-     */
-    void RegisterArray(ArrayPtr &data, const ArrayPtrVector &samples) {
-        array_desc_ = new SearchArrayDesc(data, samples);
-    }
-
-    /**
-     * Registers an attribute for the search. All further adapter data
-     * accesses must go through the returned id.
-     *
-     * @param name the attribute's name
-     * @return the access id for the attribute
-     */
-    AttributeID RegisterAttribute(const std::string &name);
-
-    /**
-     * The main solve method that starts the search. It is assumed that the
-     * Searchlight was prepared by calling Prepare() function.
+     * It is assumed that the
+     * solver was prepared by calling Prepare() function.
      */
     void Solve();
 
     /**
-     * Prepares Searchlight for execution. This method does not start the
-     * search. The search itself is started by the engine (via the operator).
+     * Prepares solver for execution. This method does not start the
+     * search. The search itself is started by the engine.
      *
      * This method takes "primary" and "secondary" decision variables.
      * "Primary" variables basically define the location of the object of
@@ -298,69 +263,10 @@ public:
      * @param db the decision builder (search heuristic)
      * @param vars the decision variables
      * @param monitors monitors, if required (can be empty)
-     * @return true, if the search found something; false otherwise
      */
     void Prepare(const IntVarVector &primary_vars,
             const IntVarVector &secondary_vars,
             DecisionBuilder *db, const std::vector<SearchMonitor *> &monitors);
-
-    /**
-     * Returns the creator for the requested UDF.
-     *
-     * @param name the NAME of the UDF
-     * @return pointer to the creator function
-     */
-    UDFFunctionCreator GetUDFFunctionCreator(const std::string &name) {
-        // first, look in the map
-        std::string tag_name = "UDF_" + name;
-        UDFFunctionCreator udf = GetRegisteredUDF(tag_name);
-        if (udf) {
-            return udf;
-        }
-
-        // else, look in the library
-        std::string func_name = "Create" + tag_name;
-        udf = (UDFFunctionCreator)dlsym(dl_udf_handle_,
-                func_name.c_str());
-        // We should check via dlerror, but NULL checking is fine
-        if (!udf) {
-            std::ostringstream err_msg;
-            err_msg << "Cannot find a SL UDF function, name=" << func_name;
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << err_msg.str();
-        }
-        udf_map_[tag_name] = udf;
-        return udf;
-    }
-
-    /**
-     * Returns the creator for the registered UDF.
-     *
-     * @param tag_name the tag name for the UDF
-     * @return the creator if found; NULL otherwise
-     */
-    UDFFunctionCreator GetRegisteredUDF(const std::string &tag_name) const {
-        UDFMapper::const_iterator udf_it = udf_map_.find(tag_name);
-        if (udf_it != udf_map_.end()) {
-            return udf_it->second;
-        } else {
-            return NULL;
-        }
-    }
-
-    /**
-     * Return all UDFs requested from this SL.
-     *
-     * @return a set of UDF names requested from this SL.
-     */
-    StringSet GetAllUsedUDFs() const {
-        StringSet res;
-        for (UDFMapper::const_iterator cit = udf_map_.begin();
-                cit != udf_map_.end(); cit++) {
-            res.insert(cit->first);
-        }
-        return res;
-    }
 
     /**
      * Creates an adapter to access the search array.
@@ -368,9 +274,7 @@ public:
      * @param name the adapater's name
      * @return access adapter
      */
-    AdapterPtr CreateAdapter(const std::string &name) const {
-        return std::make_shared<Adapter>(*array_desc_, name);
-    }
+    AdapterPtr CreateAdapter(const std::string &name);
 
     /**
      * Creates a new defaul SL search heuristic. The caller is responsible
@@ -433,11 +337,348 @@ public:
     }
 
     /**
+     * Checks if any instances are available for help.
+     *
+     * @return true, if help available; false, otherwise
+     */
+    bool HelpAvailable() const {
+        return !helpers_.empty();
+    }
+
+    /**
+     * Handles a new helper for this solver.
+     *
+     * This handler also might reject help is the balancing is disabled (hard)
+     * or if the solver is not prepared or searching (soft). The latter might
+     * happen because of asynchronous messages, even when the solver has
+     * already became idle.
+     *
+     * @param id helper  id
+     */
+    void HandleHelper(uint64_t id);
+
+    /**
+     * Dispatches work to an available helper.
+     *
+     * It is assumed that a helper is available, which can be checked by
+     * the HelpAvailable() function.
+     *
+     * @param work assignments to off-load
+     */
+    void DispatchWork(const LiteAssignmentVector &work);
+
+    /**
+     * Prepares this solver as a helper.
+     *
+     * This function loads remote assignments into the solver.
+     *
+     * @param load remote load
+     */
+    void PrepareHelper(LiteAssignmentVector &load);
+
+    /**
+     * Return primary variables for the search.
+     *
+     * Primary variables are the variables that are used to divide the
+     * search between instances, perform load balancing and make decisions
+     * during the search.
+     *
+     * @return primary variables
+     */
+    const IntVarVector &GetPrimaryVars() const {
+        return primary_vars_;
+    }
+
+    /**
+     * Computes variable names. Should be used with care, since it parses
+     * the entire model.
+     */
+    StringVector ComputeVarNames() const;
+
+    /**
+     * Connects validator to the solver.
+     * @param validator vaidator to connect
+     */
+    void ConnectValidator(Validator *validator);
+
+    /**
+     * Main solver loop
+     */
+    void operator()();
+
+    /**
+     * Handles end-of-search, when all sovers are finished.
+     */
+    void HandleEndOfSearch() {
+        std::lock_guard<std::mutex> lock{mtx_};
+        status_ = Status::FINISHED;
+        wait_cond_.notify_one();
+    }
+
+    /**
+     * Terminates the solver.
+     */
+    void HandleTerminate() {
+        std::lock_guard<std::mutex> lock{mtx_};
+        status_ = Status::TERMINATED;
+        wait_cond_.notify_one();
+    }
+
+    /**
+     * Starts the solver loop.
+     */
+    void Start() {
+        thr_ = std::thread{std::ref(*this)};
+    }
+
+    /**
+     * Return search (CP) solver.
+     *
+     * @return search solver
+     */
+    const Solver &GetSearchSolver() const {
+        return solver_;
+    }
+
+    /**
+     * Return search (CP) solver.
+     *
+     * @return search solver
+     */
+    Solver &GetSearchSolver() {
+        return solver_;
+    }
+
+private:
+    // Reject/release helpers
+    void RejectHelpers(bool hard);
+
+    // Determines the local workload for this solver
+    void DetermineLocalWorkload();
+
+    // Check if need to terminate
+    bool CheckTerminate() const {
+        return status_ == Status::TERMINATED;
+    }
+
+    // Monitors participating in the search
+    struct SearchMonitors {
+        // Validator monitor for the search (owned by the solver -- no delete)
+        ValidatorMonitor *validator_monitor_ = nullptr;
+
+        // User monitors
+        std::vector<SearchMonitor *> user_monitors_;
+
+        // Auxiliary monitors established by SL
+        std::vector<SearchMonitor *> aux_monitors_;
+
+        // Returns a vector of all monitors that we install for search
+        std::vector<SearchMonitor *> GetSearchMonitors() const {
+            std::vector<SearchMonitor *> mons{user_monitors_};
+            mons.insert(mons.end(), aux_monitors_.begin(), aux_monitors_.end());
+            if (validator_monitor_) {
+                mons.push_back(validator_monitor_);
+            }
+            return mons;
+        }
+    };
+
+    // Searchlight
+    Searchlight &sl_;
+
+    // The solver
+    Solver solver_;
+
+    // Search heuristic
+    DecisionBuilder *db_;
+
+    // "Primary" decision variables -- defining the object
+    IntVarVector primary_vars_;
+
+    // "Secondary" decision variables -- conveying additional info
+    IntVarVector secondary_vars_;
+
+    // All variables, for convenience
+    IntVarVector all_vars_;
+
+    // Contains all vars: for prototyping and sending to validator
+    Assignment vars_leaf_;
+
+    // Monitors defined for the search
+    SearchMonitors search_monitors_;
+
+    // Total time spent on solving
+    std::chrono::microseconds total_solve_time_;
+
+    // Searchlight status
+    std::atomic<Status> status_;
+
+    // Helpers currently dispatched for this solver
+    std::list<uint64_t> helpers_;
+
+    // Work given to us by another instance
+    LiteAssignmentVector helper_load_;
+
+    // Local work defined at the beginning
+    LiteAssignmentVector local_load_;
+
+    // Adapters issued by the solver
+    std::vector<AdapterPtr> adapters_;
+
+    // If true, no local/remote assignment will be restored in Solve()
+    bool local_remote_override_ = false;
+
+    // Do we accept help?
+    bool solver_balancing_enabled_ = true;
+
+    // Solver id (top 32b: instance, low 32b: ordinal)
+    uint64_t id_;
+
+    // For loop control
+    std::condition_variable wait_cond_;
+
+    // Concurrency control
+    std::mutex mtx_;
+
+    // Solvers thread
+    std::thread thr_;
+};
+
+/**
+ * This class allows the search process to access data both via sampling
+ * and real data. This class also provides the tools necessary to make
+ * this access as efficient as possible. It provides a number of register
+ * API functions via which the user can register search primitives. The rest
+ * is handled by the Searchlight itself.
+ */
+class Searchlight : private boost::noncopyable {
+public:
+    /**
+     * Status of Searchlight
+     */
+    enum class Status {
+        ACTIVE,    //!< ACTIVE Solvers are active
+        FIN_SEARCH,//!< FIN_SEARCH Solvers finished completely
+        FIN_VALID, //!< FIN_VALID Validator finished local work
+        COMMITTED, //!< COMMITTED SL completed successfully
+        TERMINATED //!< TERMINATED Abnormal termination on error
+    };
+
+    /**
+     * Maps UDF names to UDF creators.
+     */
+    typedef std::map<std::string, UDFFunctionCreator> UDFMapper;
+
+    /**
+     * Creates the main searchlight class. An instance of this class
+     * corresponds to a single search process.
+     *
+     * @param task Searchlight task performing the query
+     * @param dll_handler handler for loading/unloading DLLs
+     */
+    Searchlight(SearchlightTask &task,
+            DLLHandler &dll_handler) :
+        validator_(nullptr),
+        validator_thread_(nullptr),
+        array_desc_(nullptr),
+        dl_udf_handle_(dll_handler.LoadDLL("searchlight_udfs")),
+        sl_task_(task),
+        status_(Status::ACTIVE) {}
+
+    /**
+     * The destructor.
+     */
+    ~Searchlight();
+
+    /**
+     * Registers a data array and the corresponding sample for the search.
+     *
+     * We do not check the correspondence of the array and the sample, since
+     * there are probably no means to do that.
+     *
+     * @param data the data array
+     * @param samples samples available for the data array
+     */
+    void RegisterArray(ArrayPtr &data, const ArrayPtrVector &samples) {
+        array_desc_ = new SearchArrayDesc(data, samples);
+    }
+
+    /**
+     * Registers an attribute for the search. All further adapter data
+     * accesses must go through the returned id.
+     *
+     * @param name the attribute's name
+     * @return the access id for the attribute
+     */
+    AttributeID RegisterAttribute(const std::string &name);
+
+    /**
+     * Returns the creator for the requested UDF.
+     *
+     * @param name the NAME of the UDF
+     * @return pointer to the creator function
+     */
+    UDFFunctionCreator GetUDFFunctionCreator(const std::string &name) {
+        // first, look in the map
+        std::string tag_name = "UDF_" + name;
+        UDFFunctionCreator udf = GetRegisteredUDF(tag_name);
+        if (udf) {
+            return udf;
+        }
+
+        // else, look in the library
+        std::string func_name = "Create" + tag_name;
+        udf = (UDFFunctionCreator)dlsym(dl_udf_handle_,
+                func_name.c_str());
+        // We should check via dlerror, but NULL checking is fine
+        if (!udf) {
+            std::ostringstream err_msg;
+            err_msg << "Cannot find a SL UDF function, name=" << func_name;
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                    << err_msg.str();
+        }
+        udf_map_[tag_name] = udf;
+        return udf;
+    }
+
+    /**
+     * Returns the creator for the registered UDF.
+     *
+     * @param tag_name the tag name for the UDF
+     * @return the creator if found; NULL otherwise
+     */
+    UDFFunctionCreator GetRegisteredUDF(const std::string &tag_name) const {
+        UDFMapper::const_iterator udf_it = udf_map_.find(tag_name);
+        if (udf_it != udf_map_.end()) {
+            return udf_it->second;
+        } else {
+            return NULL;
+        }
+    }
+
+    /**
+     * Return all UDFs requested from this SL.
+     *
+     * @return a set of UDF names requested from this SL.
+     */
+    StringSet GetAllUsedUDFs() const {
+        StringSet res;
+        for (UDFMapper::const_iterator cit = udf_map_.begin();
+                cit != udf_map_.end(); cit++) {
+            res.insert(cit->first);
+        }
+        return res;
+    }
+
+    /**
      * Causes the searchlight search to terminate. Note, it does not terminate
      * immediately, but within a reasonable amount of time.
      */
     void Terminate() {
         status_ = Status::TERMINATED;
+        for (auto s: solvers_) {
+            s->HandleTerminate();
+        }
     }
 
     /**
@@ -499,114 +740,102 @@ public:
     std::string SolutionToString(const std::vector<int64_t> &vals) const;
 
     /**
-     * Checks if any instances are available for help.
-     *
-     * @return true, if help available; false, otherwise
-     */
-    bool HelpAvailable() const {
-        return !helpers_.empty();
-    }
-
-    /**
-     * Handles a new helper for this solver.
-     *
-     * This handler also might reject help is the balancing is disabled (hard)
-     * or if the solver is not prepared or searching (soft). The latter might
-     * happen because of asynchronous messages, even when the solver has
-     * already became idle.
-     *
-     * @param id helper instance id
-     */
-    void HandleHelper(InstanceID id);
-
-    /**
-     * Dispatches work to an available helper.
-     *
-     * It is assumed that a helper is available, which can be checked by
-     * the HelpAvailable() function.
-     *
-     * @param work assignments to off-load
-     */
-    void DispatchWork(const LiteAssignmentVector &work);
-
-    /**
-     * Prepares this solver as a helper.
-     *
-     * This function loads remote assignments into the solver.
-     *
-     * @param load remote load
-     */
-    void PrepareHelper(LiteAssignmentVector &load);
-
-    /**
-     * Return primary variables for the search.
-     *
-     * Primary variables are the variables that are used to divide the
-     * search between instances, perform load balancing and make decisions
-     * during the search.
-     *
-     * @return primary variables
-     */
-    const IntVarVector &GetPrimaryVars() const {
-        return primary_vars_;
-    }
-
-    /**
      * Returns config for the current task.
      *
      * @return task config
      */
     const SearchlightConfig &GetConfig() const;
 
+    /**
+     * Prepares Searchlight for execution.
+     *
+     * This method initiates every solver by using the task function,
+     * starts the validator.
+     *
+     * @param name model name
+     * @param task_fun user-defined task function
+     * @param start_id starting solver id
+     * @param solvers number of solvers to prepare
+     */
+    void Prepare(const std::string &name, SLTaskFunc task_fun,
+            uint64_t start_id, int solvers);
+
+    /**
+     * Starts the solvers.
+     */
+    void StartSolvers() {
+        for (auto s: solvers_) {
+            s->Start();
+        }
+    }
+
+    /**
+     * Handle a new helper for the solver.
+     *
+     * @param id helper id
+     * @param solver local solver id (ordinal)
+     */
+    void HandleHelper(uint64_t id, uint32_t solver) {
+        assert(solver < solvers_.size());
+        solvers_[solver]->HandleHelper(id);
+    }
+
+    /**
+     * Loads the helper-solver.
+     *
+     * @param load remote load
+     * @param solver helper id
+     */
+    void PrepareHelper(LiteAssignmentVector &load, uint32_t solver) {
+        assert(solver < solvers_.size());
+        solvers_[solver]->PrepareHelper(load);
+    }
+
+    /**
+     * Creates an adapter to access the search array.
+     *
+     * @param name the adapater's name
+     * @return access adapter
+     */
+    AdapterPtr CreateAdapter(const std::string &name) {
+        return std::make_shared<Adapter>(*array_desc_, name);
+    }
+
+    /**
+     * Return search (CP) solver for the specified SL solver.
+     *
+     * @return search solver
+     */
+    const Solver &GetSearchSolver(uint32_t id) const {
+        assert(id < solvers_.size());
+        return solvers_[id]->GetSearchSolver();
+    }
+
+    /**
+     * Return Searchligh solver with the given local id.
+     *
+     * primarily used to establish the model.
+     *
+     * @param id SL solver id
+     * @return SL solver with the specified id
+     */
+    SearchlightSolver &GetSLSolver(uint32_t id) {
+        assert(id < solvers_.size());
+        return *solvers_[id];
+    }
+
 private:
+
+    friend class SearchlightSolver;
+
     // Signals validator to end, waits and then destroys it
     void EndAndDestroyValidator();
 
-    // Reject/release helpers
-    void RejectHelpers(bool hard);
+    // Solvers on this instance
+    std::vector<SearchlightSolver *> solvers_;
 
-    // Determines the local workload for this solver
-    void DetermineLocalWorkload();
-
-    // Monitors participating in the search
-    struct SearchMonitors {
-        // Validator monitor for the search (owned by the solver -- no delete)
-        ValidatorMonitor *validator_monitor_ = nullptr;
-
-        // User monitors
-        std::vector<SearchMonitor *> user_monitors_;
-
-        // Auxiliary monitors established by SL
-        std::vector<SearchMonitor *> aux_monitors_;
-
-        // Returns a vector of all monitors that we install for search
-        std::vector<SearchMonitor *> GetSearchMonitors() const {
-            std::vector<SearchMonitor *> mons{user_monitors_};
-            mons.insert(mons.end(), aux_monitors_.begin(), aux_monitors_.end());
-            if (validator_monitor_) {
-                mons.push_back(validator_monitor_);
-            }
-            return mons;
-        }
-    };
-
-    // The solver
-    Solver solver_;
-
-    // Search heuristic
-    DecisionBuilder *db_;
-
-    // "Primary" decision variables -- defining the object
-    IntVarVector primary_vars_;
-
-    // "Secondary" decision variables -- conveying additional info
-    IntVarVector secondary_vars_;
-
-    // Contains all vars: for prototyping and sending to validator
-    Assignment vars_leaf_;
-
-    // Monitors defined for the search
-    SearchMonitors search_monitors_;
+    // Var names
+    StringVector var_names_;
 
     // Validator for the search and its thread
     Validator *validator_;
@@ -621,32 +850,11 @@ private:
     // Maps requested UDF names to corresponding creators
     UDFMapper udf_map_;
 
-    // Total time spent on solving
-    std::chrono::microseconds total_solve_time_;
-
     // Searchlight task
     SearchlightTask &sl_task_;
 
     // Searchlight status
     std::atomic<Status> status_;
-
-    // Helpers currently dispatched for this solver
-    std::list<InstanceID> helpers_;
-
-    // Work given to us by another instance
-    LiteAssignmentVector helper_load_;
-
-    // Local work defined at the beginning
-    LiteAssignmentVector local_load_;
-
-    // If true, no local/remote assignment will be restored in Solve()
-    bool local_remote_override_ = false;
-
-    // Do we accept help?
-    bool solver_balancing_enabled_;
-
-    // Total number of candidates met
-    uint64_t candidates_ = 0;
 
     // For concurrency control
     std::mutex mtx_;

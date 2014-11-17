@@ -27,7 +27,7 @@ message SearchlightControl {
     }
 
     required Type type      = 1; // Control message type
-    repeated int32 instance = 2 [packed=true]; // Instance related to the message
+    repeated int64 id = 2 [packed=true]; // Ids related to the message
 }
 
 message SearchlightBalance {
@@ -44,9 +44,8 @@ message SearchlightBalance {
 
     required Type type          = 1; // Type of the message
     repeated VarAssignment load = 2; // Load for the helper or validator
-    optional int32 id           = 3; // Balancing id (for candidate or solver)
-    repeated int32 instance     = 4 [packed=true]; // helper instance id
-    optional bool result        = 5; // Result of the request (e.g., true if the validation succedeed)
+    repeated int64 id     = 3 [packed=true]; // ids (solvers, forwards)
+    optional bool result        = 4; // Result of the request (e.g., true if the validation succedeed)
 }
 
 message SearchlightMeta {

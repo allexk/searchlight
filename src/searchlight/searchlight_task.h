@@ -72,12 +72,6 @@ public:
             const boost::shared_ptr<Query> &query);
 
     /**
-     * Operator for running the task. Basically, just calls the function from
-     * the DLL.
-     */
-    void operator()();
-
-    /**
      * Returns the next solution if any. Note, it might block for a
      * considrable period of time waiting for a solution.
      *
@@ -95,8 +89,23 @@ public:
     void Terminate() {
         if (searchlight_.GetStatus() != Searchlight::Status::COMMITTED) {
             searchlight_.Terminate();
-            sl_cond_.notify_one();
         }
+    }
+
+    /**
+     * Handle error in one of the Searchlight components.
+     *
+     * Basically, that causes propagation of the error to other
+     * components via the standard Terminate mechanism and termination
+     * of the task itself.
+     *
+     * @param error error causing termination
+     */
+    void HandleSearchlightError(const scidb::Exception::Pointer &error) {
+        std::lock_guard<std::mutex> lock{mtx_};
+        sl_error_ = error;
+        Terminate();
+        queue_cond_.notify_one();
     }
 
     /**
@@ -130,8 +139,10 @@ public:
      *
      * If the solver is local to the coordinator, the coordinator will
      * handle it locally, no messages involved.
+     *
+     * @param id solver id
      */
-    void ReportIdleSolver();
+    void ReportIdleSolver(uint64_t solver_id);
 
     /**
      * Reports locally finished validator.
@@ -145,9 +156,11 @@ public:
      * Rejects help from other solvers, returning helpers to the coordinator.
      *
      * @param helpers helpers to reject
+     * @param solver_id id of the solver rejecting help
      * @param hard true, if hard reject; false, if soft
      */
-    void RejectHelp(const std::vector<InstanceID> &helpers, bool hard);
+    void RejectHelp(const std::vector<uint64_t> &helpers, uint64_t solver_id,
+            bool hard);
 
     /**
      * Dispatches work to another solver.
@@ -159,10 +172,10 @@ public:
      * has been accepted.
      *
      * @param work assignments to send
-     * @param solver id of the solver to send the work to
+     * @param dest_solver id of the solver to send the work to
      */
     void DispatchWork(const LiteAssignmentVector &work,
-            InstanceID solver);
+            uint64_t dest_solver);
 
     /**
      * Forwards candidates to another validator.
@@ -214,17 +227,6 @@ public:
     }
 
     /**
-     * Returns a list of instances containing active solvers.
-     *
-     * Active solvers are specified in the configuration file.
-     *
-     * @return list of active solver instances
-     */
-    const std::vector<InstanceID> &GetActiveSolvers() const {
-        return active_solvers_;
-    }
-
-    /**
      * Returns a list of instances containing active validators.
      *
      * Active validators are specified in the configuration file.
@@ -236,14 +238,31 @@ public:
     }
 
     /**
+     * Return number of solvers at the instance.
+     *
+     * @param id instance id
+     * @return number of solvers at the instance
+     */
+    int GetSolverNum(InstanceID id) const {
+        auto it = std::find(active_solver_instances_.begin(),
+                        active_solver_instances_.end(), id);
+        if (it != active_solver_instances_.end()) {
+            return active_solver_num_[it - active_solver_instances_.begin()];
+        } else {
+            return 0;
+        }
+    }
+
+    /**
      * Checks if the solver is active at the instance.
      *
      * @param id instance to check
      * @return true, if the solver is active; false, otherwise
      */
     bool SolverActive(InstanceID id) const {
-        return std::find(active_solvers_.begin(),
-                active_solvers_.end(), id) != active_solvers_.end();
+        return std::find(active_solver_instances_.begin(),
+                active_solver_instances_.end(), id) !=
+                        active_solver_instances_.end();
     }
 
     /**
@@ -255,11 +274,59 @@ public:
      * @return true, if the instance is active; false, otherwise
      */
     bool InstanceActive(InstanceID id) const {
-        const bool solver_active = std::find(active_solvers_.begin(),
-                active_solvers_.end(), id) != active_solvers_.end();
+        const bool solver_active = SolverActive(id);
         const bool validator_active = std::find(active_validators_.begin(),
                 active_validators_.end(), id) != active_validators_.end();
         return solver_active || validator_active;
+    }
+
+    /**
+     * Returns total solvers number.
+     * @return
+     */
+    size_t GetTotalSolversNum() const {
+        size_t total = 0;
+        for (auto s: active_solver_num_) {
+            total += s;
+        }
+        return total;
+    }
+
+    /**
+     * Return global orinal solver number.
+     *
+     * @param id solver's id
+     * @return global ordinal id for the solver
+     */
+    size_t GetGlobalOrdinalSolverId(uint64_t id) const {
+        // Instance ordinal: high 32 bits
+        const InstanceID inst = id >> 32;
+        const auto iter = std::find(active_solver_instances_.begin(),
+                active_solver_instances_.end(), inst);
+        assert(iter != active_solver_instances_.end());
+        const int inst_ord = iter - active_solver_instances_.begin();
+
+        // Global solver ordinal
+        size_t res = 0;
+        for (int i = 0; i < inst_ord; i++) {
+            res += active_solver_num_[i];
+        }
+        res += uint32_t(id); // local ordinal: low 32 bits
+
+        return res;
+    }
+
+    /**
+     * Start the search process.
+     *
+     * We start search only if we have active solvers at this instance. If
+     * there is an active validator, it has already been started by the
+     * prepare function in Searchlight.
+     */
+    void StartSearch() {
+        if (SolverActive(my_instance_id_)) {
+            searchlight_.StartSolvers();
+        }
     }
 
 private:
@@ -269,21 +336,21 @@ private:
     // Contains information about the state of distributed search.
     struct DistributedSearchInfo {
         // Currently busy solvers
-        std::unordered_set<InstanceID> busy_solvers_;
+        std::unordered_set<uint64_t> busy_solvers_;
 
         // Currently idle solvers
-        std::unordered_set<InstanceID> idle_solvers_;
+        std::unordered_set<uint64_t> idle_solvers_;
 
         // Solvers needing help
         struct {
             // LRU queue of solvers that need help
-            std::list<InstanceID> help_reqs_;
+            std::list<uint64_t> help_reqs_;
 
             // Index to quickly find and remove instances from the list
-            std::unordered_map<InstanceID, std::list<InstanceID>::iterator> index_;
+            std::unordered_map<uint64_t, std::list<uint64_t>::iterator> index_;
 
-            // Erases instance id from helpees
-            void Erase(InstanceID id) {
+            // Erases solver id from helpees
+            void Erase(uint64_t id) {
                 const auto iter = index_.find(id);
                 if (iter != index_.end()) {
                     help_reqs_.erase(iter->second);
@@ -291,8 +358,8 @@ private:
                 }
             }
 
-            // Add instance id to helpees
-            void Add(InstanceID id) {
+            // Add solver id to helpees
+            void Add(uint64_t id) {
                 // Might be already here if accept ack came too late.
                 // In this case we might've been added by another helpee...
                 if (index_.find(id) == index_.end()) {
@@ -309,14 +376,14 @@ private:
     // Info about distributed search (non-NULL only at the coordinator)
     std::unique_ptr<DistributedSearchInfo> distr_search_info_;
 
-    // Returns the next instance that requires help
-    InstanceID GetHelpee();
+    // Returns the next solver that requires help
+    uint64_t GetHelpee();
 
     // Resolves the task in the DLL
     void ResolveTask(const std::string &lib_name, const std::string &task_name);
 
     // Handles an idle solver and possible dispatches it to another solver
-    void HandleIdleSolver(InstanceID id);
+    void HandleIdleSolver(uint64_t id);
 
     // Handles a locally finished validator
     void HandleFinValidator(InstanceID id);
@@ -346,14 +413,14 @@ private:
             const google::protobuf::Message *msg);
 
     // Handles remote workload for the solver (helper)
-    void HandleRemoteLoad(const SearchlightBalance &msg);
+    void HandleRemoteLoad(const SearchlightBalance &msg, uint64_t helper);
 
     // Handles forwarded candidates
     void HandleForwards(const SearchlightBalance &msg, InstanceID src);
 
     // Handles rejected help
-    void HandleRejectHelp(InstanceID src,
-            const std::vector<InstanceID> &helpers, bool hard);
+    void HandleRejectHelp(uint64_t src,
+            const std::vector<uint64_t> &helpers, bool hard);
 
     // Broadcasts control message to finish the main search
     void BroadcastFinishSearch();
@@ -364,20 +431,17 @@ private:
     // Checks if somebody needs help and dispatches a helper
     void CheckForHelpees();
 
-    // Dispatches helper to another node
-    void DispatchHelper(InstanceID helper, InstanceID dest);
+    // Dispatches helper to another solver
+    void DispatchHelper(uint64_t helper, uint64_t dest);
 
     // Handles accept help message
-    void HandleAcceptHelper(InstanceID helper);
+    void HandleAcceptHelper(uint64_t helper);
 
     // Handles a new helper (note: it will be rejected/accepted later)
-    void HandleHelper(InstanceID helper);
+    void HandleHelper(uint64_t helper, uint64_t helpee);
 
     // Reads config from the specified file. Only JSON is supported for now.
     void ReadConfig(const std::string &file_name);
-
-    // Type of the task function (called from the library)
-    typedef void (*SLTaskFunc)(Searchlight *);
 
     // The main DLL Handler (we need it to be destroyed last!)
     DLLHandler dll_handler_;
@@ -394,8 +458,14 @@ private:
     // Task config
     SearchlightConfig config_;
 
-    // Active solvers and validators
-    std::vector<InstanceID> active_solvers_;
+    /*
+     * Active solver instances, solvers per instance and validators.
+     *
+     * Note, there might be multiple sovers per instance, but only a
+     * single validator.
+     */
+    std::vector<InstanceID> active_solver_instances_;
+    std::vector<int> active_solver_num_;
     std::vector<InstanceID> active_validators_;
 
     // The task function
@@ -409,9 +479,6 @@ private:
 
     // Condition to facilitate waiting for solutions
     std::condition_variable queue_cond_;
-
-    // Condition to for the solver to wait for work
-    std::condition_variable sl_cond_;
 
     // Error in the searchlight thread, if any
     scidb::Exception::Pointer sl_error_;
@@ -453,8 +520,7 @@ public:
         StreamArray(desc, false),
         sl_task_(sl_task),
         desc_(desc),
-        res_count_(0),
-        sl_thread_(std::ref(*sl_task_)) {
+        res_count_(0) {
 
         // we need the context to create the array
         assert(query);

@@ -353,14 +353,11 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
         sl_(sl),
         sl_task_(sl_task),
         solver_("validator solver"),
-        adapter_(sl.CreateAdapter("validator")), // INTERVAL mode by default!
+        adapter_(sl.CreateAdapter("validator")), // DUMB mode by default!
         search_vars_prototype_(&solver_) {
 
-    // Start adapter in the dumb mode, since we don't need estimations
-    adapter_->SetAdapterMode(Adapter::DUMB);
-
-    // First, clone the solver
-    if (!CloneModel(sl_, sl_.GetSolver(), solver_, adapter_)) {
+    // First, clone the solver (solver 0 is always available)
+    if (!CloneModel(sl_, sl_.GetSearchSolver(0), solver_, adapter_)) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << "Cannot create the validator solver!";
     }

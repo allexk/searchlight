@@ -71,9 +71,11 @@ IntVar *MakeIntVarWithName(Solver &solver, int32 start, int32 end,
 }
 
 extern "C"
-void SemWindowsAvg(Searchlight *sl) {
-    // get the solver
-    Solver &solver = sl->GetSolver();
+void SemWindowsAvg(Searchlight *sl, uint32_t id) {
+    // SL Solver
+    SearchlightSolver &sl_solver = sl->GetSLSolver(id);
+    // CP solver
+    Solver &solver = sl_solver.GetSearchSolver();
 
     // or-tools is deterministic by default
     solver.ReSeed(ACMRandom::HostnamePidTimeSeed());
@@ -221,20 +223,20 @@ void SemWindowsAvg(Searchlight *sl) {
         const double low_thr = config.get("balance.general_low", 0.1);
         const double high_thr = config.get("balance.general_high", 0.5);
         if (balance) {
-            mons.push_back(sl->CreateBalancingMonitor(all_vars, low_thr,
+            mons.push_back(sl_solver.CreateBalancingMonitor(all_vars, low_thr,
                     high_thr));
         }
     } else if (search_heuristic == "sl") {
         if (time_limit != 0) {
             mons.push_back(MakeCumulativeTimeLimit(solver, time_limit * 1000));
         }
-        db = sl->CreateDefaultHeuristic(coords, lens);
+        db = sl_solver.CreateDefaultHeuristic(coords, lens);
     } else {
         db = solver.MakePhase(all_vars, Solver::CHOOSE_FIRST_UNBOUND,
             Solver::ASSIGN_MIN_VALUE);
     }
 
     // solve!
-    sl->Prepare(coords, lens, db, mons);
+    sl_solver.Prepare(coords, lens, db, mons);
 }
 } /* namespace searchlight */

@@ -48,28 +48,65 @@
 #pragma GCC diagnostic pop
 #endif
 
+#include <boost/lexical_cast.hpp>
+
 namespace {
 /*
- * Read and parses a JSON array of InstanceIDs at the specified path.
- * If the path doesn't exist, it returns an array of
- * [0, ..., default_fill - 1].
+ * Read and parses a JSON array of T at the specified path.
  */
-std::vector<scidb::InstanceID> ReadJSONArray(
+template<typename T>
+std::vector<T> ReadJSONArray(
         searchlight::SearchlightConfig &sl_config,
-        const std::string &path, size_t default_fill) {
-    std::vector<scidb::InstanceID> res;
+        const std::string &path) {
+    std::vector<T> res;
     try {
         for (const auto &node: sl_config.get_child(path)) {
-            const int val = node.second.get_value<scidb::InstanceID>();
+            const T val = node.second.get_value<T>();
             res.push_back(val);
         }
     } catch (const boost::property_tree::ptree_bad_path &) {
-        // Assume all instances are active
-        for (size_t i = 0; i < default_fill; i++) {
-            res.push_back(i);
-        }
+        // ignore errors
     }
     return res;
+}
+
+/*
+ * Read and parses a JSON map at the specified path.
+ */
+template<typename K, typename V>
+std::map<K, V> ReadJSONMap(
+        searchlight::SearchlightConfig &sl_config,
+        const std::string &path) {
+    std::map<K, V> res;
+    try {
+        for (const auto &node: sl_config.get_child(path)) {
+            const K key = boost::lexical_cast<K>(node.first);
+            const V val = boost::lexical_cast<V>(node.second.data());
+            res[key] = val;
+        }
+    } catch (const boost::property_tree::ptree_bad_path &) {
+        // ignore errors
+    }
+    return res;
+}
+
+/*
+ * Solver id that is not equivalent to any valid id.
+ */
+const uint64_t INVALID_SOLVER_ID = ~uint64_t(0);
+
+inline scidb::InstanceID GetInstanceFromSolverID(uint64_t id) {
+    // Just ignore low 32 bits
+    return id >> 32;
+}
+
+inline uint32_t GetLocalIDFromSolverID(uint64_t id) {
+    // Just ignore high 32 bits
+    return uint32_t(id);
+}
+
+inline uint64_t CreateSolverID(scidb::InstanceID inst, uint32_t ord) {
+    return (uint64_t(inst) << 32) + ord;
 }
 
 } /* namespace <anonymous> */
@@ -90,7 +127,7 @@ SearchlightTask::SearchlightTask(const std::string &library_name,
         const boost::shared_ptr<Query> &query) :
             query_instance_count_(query->getInstancesCount()),
             my_instance_id_(query->getInstanceID()),
-            searchlight_(*this, task_name, dll_handler_),
+            searchlight_(*this, dll_handler_),
             query_(query) {
 
     // Read the config
@@ -99,20 +136,27 @@ SearchlightTask::SearchlightTask(const std::string &library_name,
     // Fill in distributed search info
     if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
         distr_search_info_.reset(new DistributedSearchInfo);
-        for (auto inst: active_solvers_) {
-            distr_search_info_->helpees_.Add(inst);
-            distr_search_info_->busy_solvers_.insert(inst);
+        for (size_t i = 0; i < active_solver_instances_.size(); i++) {
+            // Each instance might contain several solvers
+            const int solv_count = active_solver_num_[i];
+            uint64_t solv_id = CreateSolverID(active_solver_instances_[i], 0);
+            for (int s = 0; s < solv_count; s++, solv_id++) {
+                distr_search_info_->helpees_.Add(solv_id);
+                distr_search_info_->busy_solvers_.insert(solv_id);
+            }
         }
 
         /*
          *  We need the list of active instances here. An instance is active if
          *  it contains an active solver or validator. What's important is that
          *  these instances will contain a validator (active or just
-         *  a forwarder), and we need to count all of them. We use set here
-         *  for de-duplication.
+         *  a forwarder), and we need to count all of them.
+         *
+         *  We use set here for de-duplication.
          */
-        std::unordered_set<InstanceID> active_instances{active_solvers_.begin(),
-            active_solvers_.end()};
+        std::unordered_set<InstanceID> active_instances{
+            active_solver_instances_.begin(),
+            active_solver_instances_.end()};
         active_instances.insert(active_validators_.begin(),
                 active_validators_.end());
         distr_search_info_->busy_validators_count_ = active_instances.size();
@@ -143,7 +187,13 @@ SearchlightTask::SearchlightTask(const std::string &library_name,
             std::bind(&SearchlightTask::HandleBalanceMessage, this, _1, _2));
 
     // Tasks just prepare Searchlight, solver is still idle, no threads
-    task_(&searchlight_);
+    int solver_count = GetSolverNum(my_instance_id_);
+    if (solver_count == 0) {
+        // Create a dummy solver to contain the model (simpler implementation)
+        solver_count = 1;
+    }
+    searchlight_.Prepare(task_name, task_, CreateSolverID(my_instance_id_, 0),
+            solver_count);
 }
 
 void SearchlightTask::ReadConfig(const std::string &file_name) {
@@ -161,84 +211,39 @@ void SearchlightTask::ReadConfig(const std::string &file_name) {
         logger->debug(deb.str(), LOG4CXX_LOCATION);
     }
 
-    // Read solvers and validators
-    active_solvers_ = ReadJSONArray(config_, "setup.solvers",
-            query_instance_count_);
-    active_validators_ = ReadJSONArray(config_, "setup.validators",
-            query_instance_count_);
-}
-
-void SearchlightTask::operator()() {
-    try {
-        // Solver has some work to do if it's active (by the user config)
-        bool work_expected = SolverActive(my_instance_id_);
-        while (work_expected) {
-            // Wait until something interesting happens
-            Searchlight::Status sl_status;
-            {
-                std::unique_lock<std::mutex> lock(mtx_);
-                sl_status = searchlight_.GetStatus();
-                while (sl_status == Searchlight::Status::VOID) {
-                    sl_cond_.wait(lock);
-                    sl_status = searchlight_.GetStatus();
-                }
-            }
-
-            // Either solve or exit
-            switch (sl_status) {
-                case Searchlight::Status::PREPARED:
-                    searchlight_.Solve();
-                    sl_status = searchlight_.GetStatus();
-                    if (sl_status == Searchlight::Status::TERMINATED) {
-                        LOG4CXX_DEBUG(logger, "Solver was terminated!");
-                        work_expected = false;
-                    }
-                    break;
-                case Searchlight::Status::FIN_SEARCH:
-                case Searchlight::Status::FIN_VALID:
-                case Searchlight::Status::TERMINATED:
-                case Searchlight::Status::COMMITTED:
-                    work_expected = false;
-                    break;
-                default:
-                    assert(false);
-                    throw SYSTEM_EXCEPTION(
-                            SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                            << "Unexpected status in the SL loop!";
-                    break;
-            }
+    // Active solvers
+    auto solvers_setup = ReadJSONMap<InstanceID, int>(config_,
+            "setup.solvers");
+    if (solvers_setup.empty()) {
+        for (int i = 0; i < query_instance_count_; i++) {
+            solvers_setup[i] = 1;
         }
-    } catch (const scidb::Exception &ex) {
-        /*
-         * std::thread would call std::terminate(), so
-         *  we have to take care of proper error reporting
-         */
-        sl_error_ = ex.copy();
-        searchlight_.Terminate();
-        queue_cond_.notify_one();
-    } catch (const std::exception &e) {
-        // Catch other C++ and library exceptions and translate them
-        sl_error_ = (SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
-                SCIDB_LE_ILLEGAL_OPERATION) << e.what()).copy();
-        searchlight_.Terminate();
-        queue_cond_.notify_one();
-    } catch (...) {
-        sl_error_ = (SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
-                SCIDB_LE_ILLEGAL_OPERATION) <<
-                "Unknown exception in SL!").copy();
-        searchlight_.Terminate();
-        queue_cond_.notify_one();
+    }
+    active_solver_instances_.reserve(solvers_setup.size());
+    active_solver_num_.reserve(solvers_setup.size());
+    for (auto it = solvers_setup.begin(); it != solvers_setup.end(); ++it) {
+        active_solver_instances_.push_back(it->first);
+        active_solver_num_.push_back(it->second);
+    }
+
+    // Active validators
+    active_validators_ = ReadJSONArray<InstanceID>(config_, "setup.validators");
+    if (active_validators_.empty()) {
+        active_validators_.resize(query_instance_count_);
+        for (int i = 0; i < query_instance_count_; i++) {
+            active_validators_[i] = i;
+        }
     }
 }
 
-void SearchlightTask::ReportIdleSolver() {
+void SearchlightTask::ReportIdleSolver(uint64_t solver_id) {
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
         // We are at the coordinator -- handle the solver
-        HandleIdleSolver(my_instance_id_);
+        HandleIdleSolver(solver_id);
     } else {
         // We are at a common instance -- send the message to the coordinator
-        SearchlightMessenger::getInstance()->ReportIdleSolver(query);
+        SearchlightMessenger::getInstance()->ReportIdleSolver(query, solver_id);
     }
 }
 
@@ -253,13 +258,13 @@ void SearchlightTask::ReportFinValidator() {
     }
 }
 
-InstanceID SearchlightTask::GetHelpee() {
+uint64_t SearchlightTask::GetHelpee() {
     /*
      * We have a queue of instances needing help. So, we just take the first
      * one. Then, we reinsert it in the back, so that we are able to send more
      * helpers there later.
      */
-    InstanceID res = scidb::INVALID_INSTANCE;
+    uint64_t res = INVALID_SOLVER_ID;
     if (!distr_search_info_->helpees_.help_reqs_.empty()) {
         res = distr_search_info_->helpees_.help_reqs_.front();
         distr_search_info_->helpees_.Erase(res);
@@ -268,7 +273,7 @@ InstanceID SearchlightTask::GetHelpee() {
     return res;
 }
 
-void SearchlightTask::HandleIdleSolver(InstanceID id) {
+void SearchlightTask::HandleIdleSolver(uint64_t id) {
     std::unique_lock<std::mutex> lock(mtx_);
     assert(distr_search_info_->busy_solvers_.count(id));
 
@@ -288,7 +293,7 @@ void SearchlightTask::HandleIdleSolver(InstanceID id) {
 void SearchlightTask::CheckForHelpees() {
     while (!distr_search_info_->idle_solvers_.empty()) {
         const InstanceID helpee = GetHelpee();
-        if (helpee != scidb::INVALID_INSTANCE) {
+        if (helpee != INVALID_SOLVER_ID) {
             auto helper_iter = distr_search_info_->idle_solvers_.begin();
             const InstanceID helper = *helper_iter;
             distr_search_info_->idle_solvers_.erase(helper_iter);
@@ -300,23 +305,24 @@ void SearchlightTask::CheckForHelpees() {
     }
 }
 
-void SearchlightTask::DispatchHelper(InstanceID helper, InstanceID dest) {
+void SearchlightTask::DispatchHelper(uint64_t helper, uint64_t dest) {
     LOG4CXX_DEBUG(logger, "Dispatching help, dest=" << dest
             << ", helper=" << helper);
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
-    if (query->getCoordinatorID() == dest) {
-        HandleHelper(helper);
+    const InstanceID dest_inst = GetInstanceFromSolverID(dest);
+    if (query->getCoordinatorID() == dest_inst) {
+        HandleHelper(helper, dest);
     } else {
         SearchlightMessenger::getInstance()->DispatchHelper(
-                query, helper, dest);
+                query, helper, dest, dest_inst);
     }
 }
 
-void SearchlightTask::HandleHelper(InstanceID helper) {
-    searchlight_.HandleHelper(helper);
+void SearchlightTask::HandleHelper(uint64_t helper, uint64_t helpee) {
+    searchlight_.HandleHelper(helper, GetLocalIDFromSolverID(helpee));
 }
 
-void SearchlightTask::HandleAcceptHelper(InstanceID helper) {
+void SearchlightTask::HandleAcceptHelper(uint64_t helper) {
     std::lock_guard<std::mutex> lock(mtx_);
     // Check if the message came too late; solver could report idleness already
     if (distr_search_info_->busy_solvers_.find(helper) !=
@@ -328,7 +334,6 @@ void SearchlightTask::HandleAcceptHelper(InstanceID helper) {
 
 void SearchlightTask::HandleEndOfSearch() {
     searchlight_.HandleEndOfSearch();
-    sl_cond_.notify_one();
 }
 
 void SearchlightTask::HandleCommit() {
@@ -411,8 +416,9 @@ void SearchlightTask::HandleControlMessage(InstanceID inst,
 
     switch (control_msg->type()) {
         case SearchlightControl::SEARCH_IDLE:
-            LOG4CXX_DEBUG(logger, "Search is idle: id=" << inst);
-            HandleIdleSolver(inst);
+            LOG4CXX_DEBUG(logger, "Search is idle: id=0x" << std::hex
+                    << control_msg->id(0));
+            HandleIdleSolver(control_msg->id(0));
             break;
         case SearchlightControl::VALIDATOR_LOCAL_FIN:
             LOG4CXX_DEBUG(logger, "Validator finished: id=" << inst);
@@ -442,26 +448,30 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
 
     switch (balance_msg->type()) {
         case SearchlightBalance::HELP_LOAD:
-            LOG4CXX_DEBUG(logger, "Got a remote load for the solver...");
-            HandleRemoteLoad(*balance_msg);
+            assert(balance_msg->id_size());
+            LOG4CXX_DEBUG(logger, "Got a remote load for the solver, id="
+                    << std::hex << balance_msg->id(0));
+            HandleRemoteLoad(*balance_msg, balance_msg->id(0));
             break;
         case SearchlightBalance::REJECT_HELPER_HARD:
         case SearchlightBalance::REJECT_HELPER_SOFT:
         {
-            const int inst_count = balance_msg->instance_size();
-            assert(inst_count);
-            std::vector<InstanceID> instances(inst_count);
-            for (int i = 0; i < inst_count; i++) {
-                instances[i] = balance_msg->instance(i);
+            // First id is the sender-solver
+            const int solv_count = balance_msg->id_size() - 1;
+            assert(solv_count);
+            std::vector<uint64_t> ids(solv_count);
+            for (int i = 0; i < solv_count; i++) {
+                ids[i] = balance_msg->id(i + 1);
             }
-            HandleRejectHelp(inst, instances,
+            HandleRejectHelp(balance_msg->id(0), ids,
                  balance_msg->type() == SearchlightBalance::REJECT_HELPER_HARD);
             break;
         }
         case SearchlightBalance::HELPER_DISPATCH:
-            assert(balance_msg->instance_size());
-            for (int i = 0; i < balance_msg->instance_size(); i++) {
-                HandleHelper(balance_msg->instance(i));
+            assert(balance_msg->id_size() >= 2);
+            // First id is helpee, the rest are helpers
+            for (int i = 0; i < balance_msg->id_size() - 1; i++) {
+                HandleHelper(balance_msg->id(i + 1), balance_msg->id(0));
             }
             break;
         case SearchlightBalance::CANDIDATE_FORWARD:
@@ -471,20 +481,21 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
             break;
         case SearchlightBalance::BALANCE_RESULT:
             searchlight_.GetValidator().HandleForwardResult(
-                    balance_msg->id(), balance_msg->result());
+                    balance_msg->id(0), balance_msg->result());
             break;
         case SearchlightBalance::ACCEPT_HELP:
-            assert(balance_msg->instance_size());
-            for (int i = 0; i < balance_msg->instance_size(); i++) {
+            assert(balance_msg->id_size());
+            for (int i = 0; i < balance_msg->id_size(); i++) {
                 LOG4CXX_DEBUG(logger, "Helper was accepted: helper="
-                        << balance_msg->instance(i) << ", helpee=" << inst);
-                HandleAcceptHelper(balance_msg->instance(i));
+                        << std::hex << balance_msg->id(i));
+                HandleAcceptHelper(balance_msg->id(i));
             }
             break;
     }
 }
 
-void SearchlightTask::HandleRemoteLoad(const SearchlightBalance &msg) {
+void SearchlightTask::HandleRemoteLoad(const SearchlightBalance &msg,
+        uint64_t helper) {
     // Prepare the load
     LiteAssignmentVector load(msg.load_size());
     for (int i = 0; i < msg.load_size(); i++) {
@@ -492,9 +503,7 @@ void SearchlightTask::HandleRemoteLoad(const SearchlightBalance &msg) {
     }
 
     // Put the load into the solver
-    std::lock_guard<std::mutex> lock(mtx_);
-    searchlight_.PrepareHelper(load);
-    sl_cond_.notify_one();
+    searchlight_.PrepareHelper(load, GetLocalIDFromSolverID(helper));
 }
 
 void SearchlightTask::HandleForwards(const SearchlightBalance &msg,
@@ -505,16 +514,16 @@ void SearchlightTask::HandleForwards(const SearchlightBalance &msg,
         SearchlightMessenger::UnpackAssignment(msg.load(i), load[i]);
     }
 
-    searchlight_.GetValidator().AddRemoteCandidates(load, src, msg.id());
+    searchlight_.GetValidator().AddRemoteCandidates(load, src, msg.id(0));
 }
 
 
-void SearchlightTask::HandleRejectHelp(InstanceID src,
-        const std::vector<InstanceID> &helpers, bool hard) {
+void SearchlightTask::HandleRejectHelp(uint64_t src,
+        const std::vector<uint64_t> &helpers, bool hard) {
     // logging
     if (logger->isDebugEnabled()) {
         std::ostringstream deb_str;
-        deb_str << "Help was rejected: helpee=" << src << ", hard="
+        deb_str << "Help was rejected: helpee=" << std::hex << src << ", hard="
                 << hard << ", helpers={";
         std::copy(helpers.begin(), helpers.end(),
                 std::ostream_iterator<InstanceID>(deb_str, ", "));
@@ -534,14 +543,15 @@ void SearchlightTask::HandleRejectHelp(InstanceID src,
     }
 }
 
-void SearchlightTask::RejectHelp(const std::vector<InstanceID> &helpers,
-        bool hard) {
+void SearchlightTask::RejectHelp(const std::vector<uint64_t> &helpers,
+        uint64_t solver_id, bool hard) {
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
         HandleRejectHelp(my_instance_id_, helpers, hard);
     } else {
         // We are at a common instance -- send helpers back to the coordinator
-        SearchlightMessenger::getInstance()->RejectHelp(query, helpers, hard);
+        SearchlightMessenger::getInstance()->RejectHelp(query, helpers,
+                solver_id, hard);
     }
 }
 
@@ -587,16 +597,24 @@ std::string SearchlightTask::GetNextSolution() {
 }
 
 void SearchlightTask::DispatchWork(const LiteAssignmentVector &work,
-        InstanceID solver) {
-    // For now a helper is always a remote instance.
+        uint64_t dest_solver) {
+    // First, dispatch work
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
-    SearchlightMessenger::getInstance()->DispatchWork(query, work, solver);
+    const InstanceID dest_inst = GetInstanceFromSolverID(dest_solver);
+    if (query->getCoordinatorID() == dest_inst) {
+        LiteAssignmentVector work_copy{work};
+        searchlight_.PrepareHelper(work_copy,
+                GetLocalIDFromSolverID(dest_solver));
+    } else {
+        SearchlightMessenger::getInstance()->DispatchWork(query, work,
+                dest_solver);
+    }
 
     // Next, we notify the coordinator about acceptance
     if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
-        HandleAcceptHelper(solver);
+        HandleAcceptHelper(dest_solver);
     } else {
-        SearchlightMessenger::getInstance()->AcceptHelp(query, solver);
+        SearchlightMessenger::getInstance()->AcceptHelp(query, dest_solver);
     }
 }
 

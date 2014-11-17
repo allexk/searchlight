@@ -87,9 +87,11 @@ std::vector<double> ReadJSONArray(
 }
 
 extern "C"
-void SdssUgrizAvg(Searchlight *sl) {
-    // get the solver
-    Solver &solver = sl->GetSolver();
+void SdssUgrizAvg(Searchlight *sl, uint32_t id) {
+    // SL Solver
+    SearchlightSolver &sl_solver = sl->GetSLSolver(id);
+    // CP solver
+    Solver &solver = sl_solver.GetSearchSolver();
 
     // or-tools is deterministic by default
     solver.ReSeed(ACMRandom::HostnamePidTimeSeed());
@@ -180,8 +182,6 @@ void SdssUgrizAvg(Searchlight *sl) {
 
             solver.AddConstraint(solver.MakeLessOrEqual(max, int64(mh)));
         }
-
-
     }
 
     // create the search phase
@@ -204,13 +204,13 @@ void SdssUgrizAvg(Searchlight *sl) {
         if (time_limit != 0) {
             mons.push_back(MakeCumulativeTimeLimit(solver, time_limit * 1000));
         }
-        db = sl->CreateDefaultHeuristic(coords, lens);
+        db = sl_solver.CreateDefaultHeuristic(coords, lens);
     } else {
         db = solver.MakePhase(all_vars, Solver::CHOOSE_FIRST_UNBOUND,
             Solver::ASSIGN_MIN_VALUE);
     }
 
-    // solve!
-    sl->Prepare(coords, lens, db, mons);
+    // prepare
+    sl_solver.Prepare(coords, lens, db, mons);
 }
 } /* namespace searchlight */

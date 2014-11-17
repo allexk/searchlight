@@ -157,7 +157,7 @@ public:
      */
     Adapter(const SearchArrayDesc &array, const std::string &name) :
         array_desc_(array),
-        mode_(Mode::INTERVAL),
+        mode_(Mode::DUMB),
         name_(name),
         stats_enabled_(false) {}
 

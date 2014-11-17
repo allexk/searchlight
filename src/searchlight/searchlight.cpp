@@ -40,12 +40,31 @@ static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.searchlight"));
 
 Searchlight::~Searchlight() {
+    // Destroy solvers
+    for (auto s: solvers_) {
+        delete s;
+    }
+
+    // First destroy validator (SL still has all its structures intact)
+    EndAndDestroyValidator();
+
+    // Destroy the rest
+    delete array_desc_;
+}
+
+SearchlightSolver::~SearchlightSolver() {
+    // Join the thread
+    if (thr_.joinable()) {
+        thr_.join();
+    }
+
     // Time stats
     const auto secs = std::chrono::duration_cast<std::chrono::seconds>(
             total_solve_time_).count();
     const auto usecs = std::chrono::duration_cast<std::chrono::milliseconds>(
             total_solve_time_).count();
-    LOG4CXX_INFO(logger, "Solver total time: " << secs << '.' <<
+    LOG4CXX_INFO(logger, "Solver (0x" << std::hex << id_ << std::dec <<
+            ") total time: " << secs << '.' <<
             usecs << 's');
 
     /*
@@ -66,15 +85,9 @@ Searchlight::~Searchlight() {
                 ", candidates=" << total_candidates);
     }
 
-    if (status_ != Status::COMMITTED) {
+    if (status_ != Status::FINISHED) {
         LOG4CXX_INFO(logger, "Solver was terminated unexpectedly!");
     }
-
-    // First destroy validator (SL still has all its structures intact)
-    EndAndDestroyValidator();
-
-    // Destroy the rest
-    delete array_desc_;
 }
 
 AttributeID Searchlight::RegisterAttribute(const std::string &name) {
@@ -90,37 +103,14 @@ const SearchlightConfig &Searchlight::GetConfig() const {
     return sl_task_.GetConfig();
 }
 
-void Searchlight::Prepare(const IntVarVector &primary_vars,
-        const IntVarVector &secondary_vars,
-        DecisionBuilder *db, const std::vector<SearchMonitor *> &monitors) {
-    /*
-     * Perform initialization
-     */
-    primary_vars_ = primary_vars;
-    secondary_vars_ = secondary_vars;
-    db_ = db;
-
-    // All vars, for convenience
-    IntVarVector vars{primary_vars};
-    vars.insert(vars.end(), secondary_vars.begin(), secondary_vars.end());
-    vars_leaf_.Add(vars);
-    vars_leaf_.Store();
-
-    // First, we need to find all names
-    StringVector var_names(vars.size());
-    int i = 0;
-    for (IntVarVector::const_iterator cit = vars.begin(); cit != vars.end();
-            cit++) {
-        const IntVar * const var = *cit;
-        std::string var_name;
-        if (var->HasName()) {
-            var_name = var->name();
-        } else {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
-                    SCIDB_LE_ILLEGAL_OPERATION)
-                    << "Every decision variable must have a name!";
-        }
-        var_names[i++] = var_name;
+void Searchlight::Prepare(const std::string &name, SLTaskFunc task_fun,
+        uint64_t start_id, int solvers) {
+    // Create solvers
+    for (int i = 0; i < solvers; i++) {
+        const uint64_t solver_id = start_id + i;
+        solvers_.push_back(new SearchlightSolver(*this, solver_id, name));
+        task_fun(this, i);
+        // Note: task will call solver's prepare()
     }
 
     /*
@@ -133,38 +123,73 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
      * broadcasted to be handled by everybody). Such a validator doesn't
      * consume any resources and pretty cheap to construct.
      */
+    var_names_ = solvers_[0]->ComputeVarNames();
     LOG4CXX_INFO(logger, "Initiating the validator");
-    validator_ = new Validator(*this, sl_task_, var_names);
+    validator_ = new Validator(*this, sl_task_, var_names_);
     if (sl_task_.InstanceActive(sl_task_.GetInstanceID())) {
         LOG4CXX_INFO(logger, "Starting the validator thread");
         validator_thread_ = new std::thread(std::ref(*validator_));
     }
 
-    if (sl_task_.SolverActive(sl_task_.GetInstanceID())) {
+    // Connect validator to solvers
+    for (auto solver: solvers_) {
+        solver->ConnectValidator(validator_);
+    }
+}
+
+void SearchlightSolver::Prepare(const IntVarVector &primary_vars,
+        const IntVarVector &secondary_vars,
+        DecisionBuilder *db, const std::vector<SearchMonitor *> &monitors) {
+    /*
+     * Perform initialization
+     */
+    primary_vars_ = primary_vars;
+    secondary_vars_ = secondary_vars;
+    db_ = db;
+
+    // All vars, for convenience
+    all_vars_ = primary_vars_;
+    all_vars_.insert(all_vars_.end(), secondary_vars_.begin(),
+            secondary_vars_.end());
+
+
+    // Store initial values to reset for future workloads
+    vars_leaf_.Add(all_vars_);
+    vars_leaf_.Store();
+
+    if (sl_.sl_task_.SolverActive(sl_.sl_task_.GetInstanceID())) {
         LOG4CXX_INFO(logger, "Solver is active at this instance...");
         // Establish monitors: validator (to transfer leaves) and terminator
         search_monitors_.user_monitors_ = monitors;
         SearchLimit *terminator = solver_.MakeCustomLimit(
-                NewPermanentCallback(this, &Searchlight::CheckTerminate));
+                NewPermanentCallback(this, &SearchlightSolver::CheckTerminate));
         search_monitors_.aux_monitors_.push_back(terminator);
+
         search_monitors_.validator_monitor_ = solver_.RevAlloc(
-                new ValidatorMonitor{*validator_, vars, &solver_});
+                new ValidatorMonitor{all_vars_, &solver_});
 
         // Determine the worload; it will be assigned at Solve()
         DetermineLocalWorkload();
 
-        // logging
+        // Switch adapters to interval mode
+        for (auto &ad: adapters_) {
+            ad->SetAdapterMode(Adapter::INTERVAL);
+        }
+
+        // logging model (only once)
         if (logger->isDebugEnabled()) {
             /*
              *  Unfortunately, it will dump it into std::cerr, which is
              *  redirected by SciDb to a file.
              */
+            std::cerr << "Logging model for solver, id=0x" <<
+                    std::hex << id_ << std::dec << "...\n";
             ModelVisitor *pmv = solver_.MakePrintModelVisitor();
             solver_.Accept(pmv);
         }
 
         // Decide if the balancing is enabled
-        solver_balancing_enabled_ = sl_task_.GetConfig().get(
+        solver_balancing_enabled_ = sl_.GetConfig().get(
                 "balance.solver_balance", 1);
         status_ = Status::PREPARED;
     } else {
@@ -172,7 +197,88 @@ void Searchlight::Prepare(const IntVarVector &primary_vars,
     }
 }
 
-void Searchlight::PrepareHelper(LiteAssignmentVector &load) {
+void SearchlightSolver::operator()() {
+    try {
+        // Solver always has some work to do if it's started
+        bool work_expected = true;
+        while (work_expected) {
+            // Wait until something interesting happens
+            {
+                std::unique_lock<std::mutex> lock(mtx_);
+                while (status_ == Status::VOID) {
+                    wait_cond_.wait(lock);
+                }
+            }
+
+            // Either solve or exit
+            switch (status_) {
+                case Status::PREPARED:
+                    Solve();
+                    if (status_ == Status::TERMINATED) {
+                        LOG4CXX_DEBUG(logger, "Solver was terminated!");
+                        work_expected = false;
+                    }
+                    break;
+                case Status::FINISHED:
+                case Status::TERMINATED:
+                    work_expected = false;
+                    break;
+                default:
+                    assert(false);
+                    throw SYSTEM_EXCEPTION(
+                            SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                            << "Unexpected status in the solver loop!";
+                    break;
+            }
+        }
+    } catch (const scidb::Exception &ex) {
+        /*
+         * std::thread would call std::terminate(), so
+         *  we have to take care of proper error reporting
+         */
+        sl_.sl_task_.HandleSearchlightError(ex.copy());
+    } catch (const std::exception &e) {
+        // Catch other C++ and library exceptions and translate them
+        sl_.sl_task_.HandleSearchlightError((SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                SCIDB_LE_ILLEGAL_OPERATION) << e.what()).copy());
+    } catch (...) {
+        sl_.sl_task_.HandleSearchlightError((SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                SCIDB_LE_ILLEGAL_OPERATION) <<
+                "Unknown exception in SL!").copy());
+    }
+}
+
+void SearchlightSolver::ConnectValidator(Validator *validator) {
+    ValidatorMonitor *val_mon = search_monitors_.validator_monitor_;
+    if (val_mon) {
+        val_mon->ConnectValidator(validator);
+    }
+}
+
+StringVector SearchlightSolver::ComputeVarNames() const {
+    // All vars, for convenience
+    StringVector var_names(all_vars_.size());
+    int i = 0;
+    for (IntVarVector::const_iterator cit = all_vars_.begin();
+            cit != all_vars_.end(); cit++) {
+        const IntVar * const var = *cit;
+        std::string var_name;
+        if (var->HasName()) {
+            var_name = var->name();
+        } else {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                    SCIDB_LE_ILLEGAL_OPERATION)
+                    << "Every decision variable must have a name!";
+        }
+        var_names[i++] = var_name;
+    }
+
+    return var_names;
+}
+
+void SearchlightSolver::PrepareHelper(LiteAssignmentVector &load) {
+    std::lock_guard<std::mutex> lock{mtx_};
+
     assert(status_ == Status::VOID);
     assert(helper_load_.empty());
 
@@ -181,11 +287,13 @@ void Searchlight::PrepareHelper(LiteAssignmentVector &load) {
 
     // Decide if the balancing is enabled
     solver_balancing_enabled_ =
-            sl_task_.GetConfig().get("balance.solver_balance", 1);
+            sl_.sl_task_.GetConfig().get("balance.solver_balance", 1);
     status_ = Status::PREPARED;
+
+    wait_cond_.notify_one();
 }
 
-void Searchlight::DetermineLocalWorkload() {
+void SearchlightSolver::DetermineLocalWorkload() {
     /*
      * Determine our partition. First, determine the variable with the
      * largest domain and the assume equivalent stripes along its domain.
@@ -207,14 +315,11 @@ void Searchlight::DetermineLocalWorkload() {
     /*
      * Then, determine intervals.
      */
-    const auto &active_solvers = sl_task_.GetActiveSolvers();
-    const size_t active_solvers_num = active_solvers.size();
-    const auto iter = std::find(active_solvers.begin(),
-            active_solvers.end(), sl_task_.GetInstanceID());
-    assert(iter != active_solvers.end());
-    const int solver_id = iter - active_solvers.begin();
+    const size_t active_solvers_num = sl_.sl_task_.GetTotalSolversNum();
+    const uint32_t solver_id = sl_.sl_task_.GetGlobalOrdinalSolverId(id_);
 
-    int slices_number = sl_task_.GetConfig().get("balance.slices_number", 0);
+    int slices_number =
+            sl_.sl_task_.GetConfig().get("balance.slices_number", 0);
     if (slices_number < active_solvers_num || active_solvers_num == 1) {
         slices_number = active_solvers_num;
     } else if (slices_number > split_var->Size()) {
@@ -223,7 +328,8 @@ void Searchlight::DetermineLocalWorkload() {
     const uint64_t slice_len = ceil(double(max_size) / slices_number);
     LOG4CXX_INFO(logger, "The number of slices is " << slices_number
             << " and the slice length is " << slice_len);
-    const bool load_slices = sl_task_.GetConfig().get("balance.load_slices", 1);
+    const bool load_slices =
+            sl_.sl_task_.GetConfig().get("balance.load_slices", 1);
     if (load_slices) {
         // See comment in Solve() about NewSearch()
         solver_.NewSearch(db_, search_monitors_.GetSearchMonitors());
@@ -262,7 +368,7 @@ void Searchlight::DetermineLocalWorkload() {
     }
 }
 
-void Searchlight::Solve() {
+void SearchlightSolver::Solve() {
     // Enter the search
     status_ = Status::SEARCHING;
 
@@ -328,7 +434,7 @@ void Searchlight::Solve() {
         status_ = Status::VOID;
 
         // Report idleness
-        sl_task_.ReportIdleSolver();
+        sl_.sl_task_.ReportIdleSolver(id_);
 
         // Then get rid of remaining helpers
         RejectHelpers(false);
@@ -376,7 +482,7 @@ bool ValidatorMonitor::AtSolution() {
     assert(complete);
     if (complete) {
         candidates_++;
-        validator_.AddSolution(*asgn);
+        validator_->AddSolution(*asgn);
     }
 
     return true;
@@ -389,6 +495,13 @@ void Searchlight::ReportFinValidator() {
 
 void Searchlight::HandleEndOfSearch() {
     status_ = Status::FIN_SEARCH;
+
+    // Solvers
+    for (auto s: solvers_) {
+        s->HandleEndOfSearch();
+    }
+
+    // Validator
     assert(validator_);
     validator_->WakeupIfIdle();
 }
@@ -399,7 +512,7 @@ void Searchlight::HandleCommit() {
     validator_->WakeupIfIdle();
 }
 
-void Searchlight::HandleHelper(InstanceID id) {
+void SearchlightSolver::HandleHelper(uint64_t id) {
     {
         std::lock_guard<std::mutex> lock(mtx_);
         helpers_.push_back(id);
@@ -413,18 +526,19 @@ void Searchlight::HandleHelper(InstanceID id) {
     }
 }
 
-void Searchlight::RejectHelpers(bool hard) {
+void SearchlightSolver::RejectHelpers(bool hard) {
     std::unique_lock<std::mutex> lock(mtx_);
-    std::vector<InstanceID> inst(helpers_.begin(), helpers_.end());
+    std::vector<uint64_t> inst(helpers_.begin(), helpers_.end());
     helpers_.clear();
     lock.unlock();
 
     if (!inst.empty()) {
-        sl_task_.RejectHelp(inst, hard);
+        sl_.sl_task_.RejectHelp(inst, id_, hard);
     }
 }
 
-void Searchlight::DispatchWork(const LiteAssignmentVector &work) {
+void SearchlightSolver::DispatchWork(
+        const LiteAssignmentVector &work) {
     assert(HelpAvailable());
     InstanceID helper;
     {
@@ -432,39 +546,42 @@ void Searchlight::DispatchWork(const LiteAssignmentVector &work) {
         helper = helpers_.front();
         helpers_.pop_front();
     }
-    sl_task_.DispatchWork(work, helper);
+    sl_.sl_task_.DispatchWork(work, helper);
 }
 
 std::string Searchlight::SolutionToString(
         const std::vector<int64_t> &vals) const {
-    // we can reuse the same prototype and do not have to store the values
-    const auto &var_elems = vars_leaf_.IntVarContainer().elements();
-
     // stringify the solution
     std::ostringstream sol_string;
-    for (size_t i = 0; i < var_elems.size(); i++) {
-        const IntVar *v = var_elems[i].Var();
-        sol_string << v->name() << "=" << vals[i];
-        if (i != var_elems.size() - 1) {
+    for (size_t i = 0; i < var_names_.size(); i++) {
+        sol_string << var_names_[i] << "=" << vals[i];
+        if (i != var_names_.size() - 1) {
             sol_string << ", ";
         }
     }
     return sol_string.str();
 }
 
-DecisionBuilder *Searchlight::CreateDefaultHeuristic(
+DecisionBuilder *SearchlightSolver::CreateDefaultHeuristic(
         const IntVarVector &primary_vars,
         const IntVarVector &secondary_vars) {
     return solver_.RevAlloc(
-            new SLSearch(*this, solver_, primary_vars, secondary_vars));
+            new SLSearch(sl_, *this, primary_vars, secondary_vars));
 }
 
-SearchMonitor *Searchlight::CreateBalancingMonitor(const IntVarVector &vars,
+SearchMonitor *SearchlightSolver::CreateBalancingMonitor(
+        const IntVarVector &vars,
         double low, double high) {
     LOG4CXX_INFO(logger, "Creating general balancer with interval ["
             << low << ", " << high << "]");
     return solver_.RevAlloc(
-            new BalancingMonitor(solver_, *this, vars, low, high));
+            new BalancingMonitor(*this, sl_, vars, low, high));
+}
+
+AdapterPtr SearchlightSolver::CreateAdapter(const std::string &name) {
+    auto res = sl_.CreateAdapter(name);
+    adapters_.push_back(res);
+    return res;
 }
 
 SearchMonitor *MakeCumulativeTimeLimit(Solver &s, int64 time_ms) {

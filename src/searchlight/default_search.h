@@ -51,13 +51,13 @@ public:
      * Constructs a new instance if the default searchlight search.
      *
      * @param sl the searchlight instance
-     * @param solver the main solver
+     * @param sl_solver searchlight solver
      * @param primary_vars primary decision variables used for intervals
      * @param secondary_vars secondary decision variables used in the search
      * @param search_time_limit time limit in seconds; negative -- no limit
      */
     SLSearch(Searchlight &sl,
-            Solver &solver,
+            SearchlightSolver &sl_solver,
             const IntVarVector &primary_vars,
             const IntVarVector &secondary_vars);
 
@@ -313,6 +313,9 @@ private:
     // The searchlight instance
     Searchlight &sl_;
 
+    // Searchlight solver
+    SearchlightSolver &sl_solver_;
+
     // The main solver
     Solver &solver_;
 
@@ -349,21 +352,22 @@ public:
     /**
      * Creates a new balancing monitor.
      *
-     * @param s solver to monitor
+     * @param sl_solver searchlight solver to monitor
      * @param sl searchlight instance
      * @param all_vars all search variables
      * @param low_thr low threshold for candidate sub-tree
      * @param high_thr high threshold for candidate sub-tree
      */
-    BalancingMonitor(Solver &s, Searchlight &sl,
+    BalancingMonitor(SearchlightSolver &sl_solver, Searchlight &sl,
             const std::vector<IntVar *> &all_vars,
             double low_thr, double high_thr) :
-                SearchMonitor{&s},
+                SearchMonitor{&sl_solver.GetSearchSolver()},
                 low_thr_{low_thr},
                 high_thr_{high_thr},
                 all_vars_{all_vars},
                 sl_(sl),
-                snapshot_asgn_{&s} {
+                sl_solver_(sl_solver),
+                snapshot_asgn_(&sl_solver.GetSearchSolver()) {
 
         snapshot_asgn_.Add(all_vars_);
     }
@@ -409,6 +413,9 @@ private:
 
     // Searchlight instance
     Searchlight &sl_;
+
+    // SearchlightSolver
+    SearchlightSolver &sl_solver_;
 
     // Assignment for taking snapshots
     Assignment snapshot_asgn_;

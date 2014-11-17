@@ -394,15 +394,16 @@ private:
 };
 
 SLSearch::SLSearch(Searchlight &sl,
-        Solver &solver,
+        SearchlightSolver &sl_solver,
         const IntVarVector &primary_vars,
         const IntVarVector &secondary_vars) :
     primary_vars_(primary_vars),
     secondary_vars_(secondary_vars),
     intervals_explored_(false),
     sl_(sl),
-    solver_(solver),
-    dummy_monitor_(&solver),
+    sl_solver_(sl_solver),
+    solver_(sl_solver.GetSearchSolver()),
+    dummy_monitor_(&solver_),
     search_config_(sl.GetConfig()) {
 
     // Init impacts
@@ -485,7 +486,7 @@ Decision* SLSearch::Next(Solver* const s) {
      *
      *  For now, we just send out a single region.
      */
-    if (s->SearchLeftDepth() > 0 && sl_.HelpAvailable()) {
+    if (s->SearchLeftDepth() > 0 && sl_solver_.HelpAvailable()) {
         // Take a snapshot of vars
         AssignmentPtr asgn{new Assignment(s)};
         asgn->Add(all_vars_);
@@ -497,7 +498,7 @@ Decision* SLSearch::Next(Solver* const s) {
 
         LiteAssignmentVector work(1);
         FullAssignmentToLite(*asgn, work.back());
-        sl_.DispatchWork(work);
+        sl_solver_.DispatchWork(work);
 
         return s->MakeFailDecision();
     }
@@ -510,11 +511,11 @@ Decision* SLSearch::Next(Solver* const s) {
             Solver::CHOOSE_RANDOM, Solver::ASSIGN_RANDOM_VALUE);
 
     // set the time limit if needed
-    std::vector<SearchMonitor *> monitors(sl_.GetAuxMonitors());
-    const auto &user_monitors = sl_.GetUserMonitors();
+    std::vector<SearchMonitor *> monitors(sl_solver_.GetAuxMonitors());
+    const auto &user_monitors = sl_solver_.GetUserMonitors();
     monitors.insert(monitors.end(), user_monitors.begin(),
             user_monitors.end());
-    monitors.push_back(sl_.GetValidatorMonitor());
+    monitors.push_back(sl_solver_.GetValidatorMonitor());
 
     if (search_config_.time_strategy_ == SLConfig::CONST) {
         monitors.push_back(s->MakeTimeLimit(
@@ -577,9 +578,9 @@ Decision* SLSearch::Next(Solver* const s) {
 
 void SLSearch::InitIntervals(Solver * const s) {
     LOG4CXX_INFO(logger, "Exploring interval impacts");
-    std::vector<SearchMonitor *> nested_monitors(sl_.GetAuxMonitors());
+    std::vector<SearchMonitor *> nested_monitors(sl_solver_.GetAuxMonitors());
     if (search_config_.submit_probes_) {
-        nested_monitors.push_back(sl_.GetValidatorMonitor());
+        nested_monitors.push_back(sl_solver_.GetValidatorMonitor());
     }
 
     for (auto &var_impact: var_impacts_) {
@@ -758,7 +759,7 @@ void BalancingMonitor::BeginNextDecision(DecisionBuilder* const b) {
         paused_ = false;
     }
 
-    if (!paused_ && sl_.HelpAvailable()) {
+    if (!paused_ && sl_solver_.HelpAvailable()) {
         const auto ss_size = CurrentSearchSpaceSize();
         const double ss_part = double(ss_size) / initial_ss_size_;
         if (ss_part >= low_thr_ && ss_part <= high_thr_ && CanDetachSubTree()) {
@@ -772,7 +773,7 @@ void BalancingMonitor::BeginNextDecision(DecisionBuilder* const b) {
 
             LiteAssignmentVector work(1);
             FullAssignmentToLite(snapshot_asgn_, work.back());
-            sl_.DispatchWork(work);
+            sl_solver_.DispatchWork(work);
 
             // Fail will "detach" the tree from the current solver
             solver()->Fail();
