@@ -298,23 +298,7 @@ public:
      * @param id solver's id
      * @return global ordinal id for the solver
      */
-    size_t GetGlobalOrdinalSolverId(uint64_t id) const {
-        // Instance ordinal: high 32 bits
-        const InstanceID inst = id >> 32;
-        const auto iter = std::find(active_solver_instances_.begin(),
-                active_solver_instances_.end(), inst);
-        assert(iter != active_solver_instances_.end());
-        const int inst_ord = iter - active_solver_instances_.begin();
-
-        // Global solver ordinal
-        size_t res = 0;
-        for (int i = 0; i < inst_ord; i++) {
-            res += active_solver_num_[i];
-        }
-        res += uint32_t(id); // local ordinal: low 32 bits
-
-        return res;
-    }
+    size_t GetGlobalOrdinalSolverId(uint64_t id) const;
 
     /**
      * Start the search process.
@@ -532,7 +516,6 @@ public:
      */
     virtual ~SearchlightResultsArray() {
         sl_task_->Terminate();
-        sl_thread_.join();
     }
 
     /**
@@ -558,9 +541,6 @@ private:
 
     // Current results count
     uint64_t res_count_;
-
-    // The main sl thread
-    std::thread sl_thread_;
 };
 
 } /* namespace searchlight */

@@ -259,10 +259,12 @@ public:
      * @param caller's query
      * @param work assignments to send
      * @param solver id of the helper solver
+     * @param dest destination instance
      */
     void DispatchWork(const boost::shared_ptr<Query> &query,
             const LiteAssignmentVector &work,
-            uint64_t solver) const;
+            uint64_t solver,
+            InstanceID dest) const;
 
     /**
      * Sends a message rejecting help to the coordinator.
@@ -280,7 +282,6 @@ public:
      *
      * @param query caller's query context
      * @param inst helper accepted
-     * @param hard true, if it's a hard reject; false, if soft
      */
     void AcceptHelp(const boost::shared_ptr<Query> &query,
             uint64_t inst) const;

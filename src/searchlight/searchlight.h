@@ -228,7 +228,7 @@ public:
     SearchlightSolver(Searchlight &sl, uint64_t id,
             const std::string &sl_name) :
         sl_(sl),
-        solver_(sl_name + std::to_string(id)),
+        solver_(sl_name + "_" + std::to_string(id)),
         db_(nullptr),
         vars_leaf_(&solver_),
         status_(Status::VOID),
@@ -413,6 +413,7 @@ public:
         std::lock_guard<std::mutex> lock{mtx_};
         status_ = Status::FINISHED;
         wait_cond_.notify_one();
+        // We could join the thread here, but let's just postpone it to dtor
     }
 
     /**
@@ -600,7 +601,7 @@ public:
      * @param samples samples available for the data array
      */
     void RegisterArray(ArrayPtr &data, const ArrayPtrVector &samples) {
-        array_desc_ = new SearchArrayDesc(data, samples);
+        array_desc_.reset(new SearchArrayDesc(data, samples));
     }
 
     /**
@@ -676,7 +677,7 @@ public:
      */
     void Terminate() {
         status_ = Status::TERMINATED;
-        for (auto s: solvers_) {
+        for (auto &s: solvers_) {
             s->HandleTerminate();
         }
     }
@@ -764,7 +765,7 @@ public:
      * Starts the solvers.
      */
     void StartSolvers() {
-        for (auto s: solvers_) {
+        for (auto &s: solvers_) {
             s->Start();
         }
     }
@@ -832,7 +833,7 @@ private:
     void EndAndDestroyValidator();
 
     // Solvers on this instance
-    std::vector<SearchlightSolver *> solvers_;
+    std::vector<std::unique_ptr<SearchlightSolver>> solvers_;
 
     // Var names
     StringVector var_names_;
@@ -842,7 +843,7 @@ private:
     std::thread *validator_thread_;
 
     // The array descriptor
-    SearchArrayDesc *array_desc_;
+    std::unique_ptr<SearchArrayDesc> array_desc_;
 
     // The udfs library
     void *dl_udf_handle_;

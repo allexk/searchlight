@@ -671,9 +671,6 @@ Validator::ValidatorHelper::ValidatorHelper(int id, Validator &parent,
                         "validator helper_" + std::to_string(id))},
                 prototype_{&solver_},
                 id_{id} {
-    // Start adapter in the dumb mode, since we don't need estimations
-    adapter_->SetAdapterMode(Adapter::DUMB);
-
     // First, clone the solver
     if (!CloneModel(parent_.sl_, parent_.solver_, solver_, adapter_)) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)

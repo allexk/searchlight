@@ -840,7 +840,7 @@ void SearchlightMessenger::RejectHelp(const boost::shared_ptr<Query> &query,
 
 void SearchlightMessenger::DispatchWork(const boost::shared_ptr<Query> &query,
         const LiteAssignmentVector &work,
-        uint64_t solver) const {
+        uint64_t solver, InstanceID dest) const {
     // prepare the message
     boost::shared_ptr<scidb::MessageDesc> msg =
             PrepareMessage(query->getQueryID(), mtSLBalance);
@@ -858,7 +858,7 @@ void SearchlightMessenger::DispatchWork(const boost::shared_ptr<Query> &query,
 
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
-    network_manager->send(solver, msg);
+    network_manager->send(dest, msg);
 }
 
 void SearchlightMessenger::AcceptHelp(const boost::shared_ptr<Query> &query,

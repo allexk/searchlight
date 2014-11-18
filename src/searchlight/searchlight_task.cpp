@@ -186,14 +186,35 @@ SearchlightTask::SearchlightTask(const std::string &library_name,
             SearchlightMessenger::mtSLBalance,
             std::bind(&SearchlightTask::HandleBalanceMessage, this, _1, _2));
 
-    // Tasks just prepare Searchlight, solver is still idle, no threads
-    int solver_count = GetSolverNum(my_instance_id_);
-    if (solver_count == 0) {
-        // Create a dummy solver to contain the model (simpler implementation)
-        solver_count = 1;
+    // Prepare and start Searchlight
+    if (InstanceActive(my_instance_id_)) {
+        int solver_count = GetSolverNum(my_instance_id_);
+        if (solver_count == 0) {
+            // Create a dummy solver to hold the model (needed by validator)
+            solver_count = 1;
+        }
+        searchlight_.Prepare(task_name, task_,
+                CreateSolverID(my_instance_id_, 0), solver_count);
+        searchlight_.StartSolvers();
     }
-    searchlight_.Prepare(task_name, task_, CreateSolverID(my_instance_id_, 0),
-            solver_count);
+}
+
+size_t SearchlightTask::GetGlobalOrdinalSolverId(uint64_t id) const {
+    // Instance ordinal: high 32 bits
+    const InstanceID inst = GetInstanceFromSolverID(id);
+    const auto iter = std::find(active_solver_instances_.begin(),
+            active_solver_instances_.end(), inst);
+    assert(iter != active_solver_instances_.end());
+    const int inst_ord = iter - active_solver_instances_.begin();
+
+    // Global solver ordinal
+    size_t res = 0;
+    for (int i = 0; i < inst_ord; i++) {
+        res += active_solver_num_[i];
+    }
+    res += GetLocalIDFromSolverID(id);
+
+    return res;
 }
 
 void SearchlightTask::ReadConfig(const std::string &file_name) {
@@ -310,7 +331,7 @@ void SearchlightTask::DispatchHelper(uint64_t helper, uint64_t dest) {
             << ", helper=" << helper);
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     const InstanceID dest_inst = GetInstanceFromSolverID(dest);
-    if (query->getCoordinatorID() == dest_inst) {
+    if (my_instance_id_ == dest_inst) {
         HandleHelper(helper, dest);
     } else {
         SearchlightMessenger::getInstance()->DispatchHelper(
@@ -333,11 +354,15 @@ void SearchlightTask::HandleAcceptHelper(uint64_t helper) {
 }
 
 void SearchlightTask::HandleEndOfSearch() {
-    searchlight_.HandleEndOfSearch();
+    if (InstanceActive(my_instance_id_)) {
+        searchlight_.HandleEndOfSearch();
+    }
 }
 
 void SearchlightTask::HandleCommit() {
-    searchlight_.HandleCommit();
+    if (InstanceActive(my_instance_id_)) {
+        searchlight_.HandleCommit();
+    }
     queue_cond_.notify_one();
 }
 
@@ -601,13 +626,14 @@ void SearchlightTask::DispatchWork(const LiteAssignmentVector &work,
     // First, dispatch work
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     const InstanceID dest_inst = GetInstanceFromSolverID(dest_solver);
-    if (query->getCoordinatorID() == dest_inst) {
+    if (my_instance_id_ == dest_inst) {
+        // helper is a local solver
         LiteAssignmentVector work_copy{work};
         searchlight_.PrepareHelper(work_copy,
                 GetLocalIDFromSolverID(dest_solver));
     } else {
         SearchlightMessenger::getInstance()->DispatchWork(query, work,
-                dest_solver);
+                dest_solver, dest_inst);
     }
 
     // Next, we notify the coordinator about acceptance

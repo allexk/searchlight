@@ -40,16 +40,8 @@ static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.searchlight"));
 
 Searchlight::~Searchlight() {
-    // Destroy solvers
-    for (auto s: solvers_) {
-        delete s;
-    }
-
     // First destroy validator (SL still has all its structures intact)
     EndAndDestroyValidator();
-
-    // Destroy the rest
-    delete array_desc_;
 }
 
 SearchlightSolver::~SearchlightSolver() {
@@ -108,7 +100,7 @@ void Searchlight::Prepare(const std::string &name, SLTaskFunc task_fun,
     // Create solvers
     for (int i = 0; i < solvers; i++) {
         const uint64_t solver_id = start_id + i;
-        solvers_.push_back(new SearchlightSolver(*this, solver_id, name));
+        solvers_.emplace_back(new SearchlightSolver(*this, solver_id, name));
         task_fun(this, i);
         // Note: task will call solver's prepare()
     }
@@ -132,7 +124,7 @@ void Searchlight::Prepare(const std::string &name, SLTaskFunc task_fun,
     }
 
     // Connect validator to solvers
-    for (auto solver: solvers_) {
+    for (auto &solver: solvers_) {
         solver->ConnectValidator(validator_);
     }
 }
@@ -151,7 +143,6 @@ void SearchlightSolver::Prepare(const IntVarVector &primary_vars,
     all_vars_ = primary_vars_;
     all_vars_.insert(all_vars_.end(), secondary_vars_.begin(),
             secondary_vars_.end());
-
 
     // Store initial values to reset for future workloads
     vars_leaf_.Add(all_vars_);
@@ -497,7 +488,7 @@ void Searchlight::HandleEndOfSearch() {
     status_ = Status::FIN_SEARCH;
 
     // Solvers
-    for (auto s: solvers_) {
+    for (auto &s: solvers_) {
         s->HandleEndOfSearch();
     }
 
