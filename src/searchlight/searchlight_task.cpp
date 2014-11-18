@@ -243,8 +243,10 @@ void SearchlightTask::ReadConfig(const std::string &file_name) {
     active_solver_instances_.reserve(solvers_setup.size());
     active_solver_num_.reserve(solvers_setup.size());
     for (auto it = solvers_setup.begin(); it != solvers_setup.end(); ++it) {
-        active_solver_instances_.push_back(it->first);
-        active_solver_num_.push_back(it->second);
+        if (it->second > 0) {
+            active_solver_instances_.push_back(it->first);
+            active_solver_num_.push_back(it->second);
+        }
     }
 
     // Active validators
