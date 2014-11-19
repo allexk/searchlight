@@ -573,7 +573,7 @@ void SearchlightTask::RejectHelp(const std::vector<uint64_t> &helpers,
         uint64_t solver_id, bool hard) {
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
-        HandleRejectHelp(my_instance_id_, helpers, hard);
+        HandleRejectHelp(solver_id, helpers, hard);
     } else {
         // We are at a common instance -- send helpers back to the coordinator
         SearchlightMessenger::getInstance()->RejectHelp(query, helpers,
