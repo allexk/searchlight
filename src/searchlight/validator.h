@@ -120,7 +120,7 @@ public:
      * terminate properly.
      */
     void WakeupIfIdle() const {
-        validate_cond_.notify_one();
+        validate_cond_.notify_all();
     }
 
 private:

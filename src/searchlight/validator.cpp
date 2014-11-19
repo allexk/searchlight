@@ -451,7 +451,7 @@ void Validator::AddSolution(const Assignment &sol) {
     }
 
     // Notify the validator in case it is blocked and unlock
-    validate_cond_.notify_one();
+    validate_cond_.notify_all();
 }
 
 void Validator::PushCandidate(CandidateAssignment &&asgn) {
@@ -473,7 +473,7 @@ void Validator::AddRemoteCandidates(LiteAssignmentVector &cands,
         cands.pop_back();
         remote_candidates_.emplace(cand_id, std::make_pair(src, forw_id++));
     }
-    validate_cond_.notify_one();
+    validate_cond_.notify_all();
 }
 
 void Validator::HandleForwardResult(int id, bool result) {
@@ -484,7 +484,7 @@ void Validator::HandleForwardResult(int id, bool result) {
     }
     forwarded_candidates_.erase(id);
     if (forwarded_candidates_.empty()) {
-        validate_cond_.notify_one();
+        validate_cond_.notify_all();
     }
 }
 
@@ -595,7 +595,7 @@ Validator::CandidateVector *Validator::GetNextAssignments() {
             LOG4CXX_INFO(logger, "Terminating validator by force");
             // Notify the main solver about catching up, if needed
             to_validate_.clear();
-            validate_cond_.notify_one();
+            validate_cond_.notify_all();
             return nullptr;
         } else if (sl_status == Searchlight::Status::COMMITTED) {
             assert(FinishedLocally());
@@ -641,7 +641,7 @@ Validator::CandidateVector *Validator::GetNextAssignments() {
     to_validate_total_ -= res->size();
 
     // Flow control: notify the main solver about catching up
-    validate_cond_.notify_one();
+    validate_cond_.notify_all();
 
     return res;
 }
@@ -716,7 +716,7 @@ void Validator::ValidatorHelper::operator()() {
 
     std::lock_guard<std::mutex> lock{parent_.to_validate_mtx_};
     parent_.free_validator_helpers_.push_back(id_);
-    parent_.validate_cond_.notify_one();
+    parent_.validate_cond_.notify_all();
 }
 
 void Validator::ValidatorHelper::RunWorkload(CandidateVector &&workload) {
