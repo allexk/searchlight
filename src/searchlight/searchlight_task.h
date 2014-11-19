@@ -87,7 +87,8 @@ public:
      * the status, and they will pick it up from there.
      */
     void Terminate() {
-        if (searchlight_.GetStatus() != Searchlight::Status::COMMITTED) {
+        if (InstanceActive(my_instance_id_) &&
+                searchlight_.GetStatus() != Searchlight::Status::COMMITTED) {
             searchlight_.Terminate();
         }
     }
