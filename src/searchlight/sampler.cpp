@@ -498,8 +498,13 @@ Sampler::Sampler(const ArrayPtr &array, const ArrayDesc &data_desc) :
     // The start of the sample corresponds to the start of the data array
     for (size_t i = 0; i < data_desc.getDimensions().size(); i++) {
         const DimensionDesc &dim = data_desc.getDimensions()[i];
-        sample_origin_[i] = dim.getCurrStart();
-        sample_end_[i] = dim.getCurrEnd();
+        sample_origin_[i] = dim.getStartMin();
+        sample_end_[i] = dim.getEndMax();
+        if (sample_origin_[i] == scidb::MIN_COORDINATE ||
+                sample_end_[i] == scidb::MAX_COORDINATE) {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                    << "Unbounded arrays are not supported by the sampler!";
+        }
         chunk_nums_[i] = (sample_end_[i] - sample_origin_[i]) /
                 chunk_sizes_[i] + 1;
     }
