@@ -114,6 +114,11 @@ void Searchlight::Prepare(const std::string &name, SLTaskFunc task_fun,
      * simplifies message passing and maintenance (some messages are
      * broadcasted to be handled by everybody). Such a validator doesn't
      * consume any resources and pretty cheap to construct.
+     *
+     * TODO: We create the validator here, before the solver's Prepare()
+     *  to catch the original model submitted by the user. There might be
+     *  a better way to do this: export the model in a buffer and use the
+     *  buffer for all subsequent model clones.
      */
     var_names_ = solvers_[0]->ComputeVarNames();
     LOG4CXX_INFO(logger, "Initiating the validator");
@@ -121,15 +126,18 @@ void Searchlight::Prepare(const std::string &name, SLTaskFunc task_fun,
     if (sl_task_.InstanceActive(sl_task_.GetInstanceID())) {
         LOG4CXX_INFO(logger, "Starting the validator thread");
         validator_thread_ = new std::thread(std::ref(*validator_));
-    }
 
-    // Connect validator to solvers
-    for (auto &solver: solvers_) {
-        solver->ConnectValidator(validator_);
+        // Prepare solvers
+        for (auto &solver: solvers_) {
+            solver->Prepare(*validator_);
+        }
+    } else {
+        LOG4CXX_INFO(logger, "This instance is not active...");
+        status_ = Status::COMMITTED;
     }
 }
 
-void SearchlightSolver::Prepare(const IntVarVector &primary_vars,
+void SearchlightSolver::SetTask(const IntVarVector &primary_vars,
         const IntVarVector &secondary_vars,
         DecisionBuilder *db, const std::vector<SearchMonitor *> &monitors) {
     /*
@@ -148,16 +156,20 @@ void SearchlightSolver::Prepare(const IntVarVector &primary_vars,
     vars_leaf_.Add(all_vars_);
     vars_leaf_.Store();
 
+    // Save user monitors (the solver doesn't own them)
+    search_monitors_.user_monitors_ = monitors;
+}
+
+void SearchlightSolver::Prepare(Validator &validator) {
     if (sl_.sl_task_.SolverActive(sl_.sl_task_.GetInstanceID())) {
         LOG4CXX_INFO(logger, "Solver is active at this instance...");
         // Establish monitors: validator (to transfer leaves) and terminator
-        search_monitors_.user_monitors_ = monitors;
         SearchLimit *terminator = solver_.MakeCustomLimit(
                 NewPermanentCallback(this, &SearchlightSolver::CheckTerminate));
         search_monitors_.aux_monitors_.push_back(terminator);
 
         search_monitors_.validator_monitor_ = solver_.RevAlloc(
-                new ValidatorMonitor{all_vars_, &solver_});
+                new ValidatorMonitor{all_vars_, &solver_, validator});
 
         // Determine the worload; it will be assigned at Solve()
         DetermineLocalWorkload();
@@ -185,6 +197,7 @@ void SearchlightSolver::Prepare(const IntVarVector &primary_vars,
         status_ = Status::PREPARED;
     } else {
         LOG4CXX_INFO(logger, "Solver is not configured at this instance...");
+        status_ = Status::FINISHED;
     }
 }
 
@@ -236,13 +249,6 @@ void SearchlightSolver::operator()() {
         sl_.sl_task_.HandleSearchlightError((SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
                 SCIDB_LE_ILLEGAL_OPERATION) <<
                 "Unknown exception in SL!").copy());
-    }
-}
-
-void SearchlightSolver::ConnectValidator(Validator *validator) {
-    ValidatorMonitor *val_mon = search_monitors_.validator_monitor_;
-    if (val_mon) {
-        val_mon->ConnectValidator(validator);
     }
 }
 
@@ -473,7 +479,7 @@ bool ValidatorMonitor::AtSolution() {
     assert(complete);
     if (complete) {
         candidates_++;
-        validator_->AddSolution(*asgn);
+        validator_.AddSolution(*asgn);
     }
 
     return true;

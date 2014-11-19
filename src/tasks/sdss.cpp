@@ -150,7 +150,7 @@ void SdssUgrizAvg(Searchlight *sl, uint32_t id) {
 
     // average: we have 5 attributes: u,g,r,i,z
     const char *ugriz_attrs[]{"u", "g", "r", "i", "z"};
-    AdapterPtr adapter = sl->CreateAdapter(std::string("sw"));
+    AdapterPtr adapter = sl_solver.CreateAdapter(std::string("sw"));
     for (int i = 0; i < 5; i++) {
         const double l = avg_low[i];
         const double h = avg_high[i];
@@ -210,7 +210,7 @@ void SdssUgrizAvg(Searchlight *sl, uint32_t id) {
             Solver::ASSIGN_MIN_VALUE);
     }
 
-    // prepare
-    sl_solver.Prepare(coords, lens, db, mons);
+    // set task
+    sl_solver.SetTask(coords, lens, db, mons);
 }
 } /* namespace searchlight */

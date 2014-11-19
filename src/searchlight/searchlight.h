@@ -138,25 +138,16 @@ public:
      * Creates a new validator monitor. This monitor looks for complete
      * assignments during the search and passed them along to the validator.
      *
-     * Note, we connect the validator later, when it's been set up by
-     * searchlight.
-     *
      * @param vars a vector of decision variables (externally managed)
      * @param solver the main solver
+     * @param validator validator to connect
      */
-    ValidatorMonitor(const IntVarVector &vars, Solver *solver) :
+    ValidatorMonitor(const IntVarVector &vars, Solver *solver,
+            Validator &validator) :
         SolutionCollector(solver),
+        validator_(validator),
         vars_(vars) {
         Add(vars);
-    }
-
-    /**
-     * Connects validator to the monitor.
-     *
-     * @param validator to connect
-     */
-    void ConnectValidator(Validator *validator) {
-        validator_ = validator;
     }
 
     /**
@@ -182,7 +173,7 @@ public:
 
 private:
     // The validator to pass the solution to
-    Validator *validator_ = nullptr;
+    Validator &validator_;
 
     // The vector of vars (managed outside)
     const IntVarVector vars_;
@@ -248,7 +239,7 @@ public:
     void Solve();
 
     /**
-     * Prepares solver for execution. This method does not start the
+     * Set the task for execution. This method does not start the
      * search. The search itself is started by the engine.
      *
      * This method takes "primary" and "secondary" decision variables.
@@ -264,9 +255,19 @@ public:
      * @param vars the decision variables
      * @param monitors monitors, if required (can be empty)
      */
-    void Prepare(const IntVarVector &primary_vars,
+    void SetTask(const IntVarVector &primary_vars,
             const IntVarVector &secondary_vars,
             DecisionBuilder *db, const std::vector<SearchMonitor *> &monitors);
+
+    /**
+     * Prepare the solver before the call to Solve().
+     *
+     * Prepare involves setting the solver-validator connection, determining
+     * local load (i.e., slices).
+     *
+     * @param validator validator to connect to
+     */
+    void Prepare(Validator &validator);
 
     /**
      * Creates an adapter to access the search array.

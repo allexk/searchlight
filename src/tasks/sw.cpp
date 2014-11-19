@@ -130,7 +130,7 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
 
     // average
     AttributeID attr = sl->RegisterAttribute("val");
-    AdapterPtr adapter = sl->CreateAdapter("sw");
+    AdapterPtr adapter = sl_solver.CreateAdapter("sw");
     UDFFunctionCreator avg_fab = sl->GetUDFFunctionCreator("avg");
 
     std::vector<int64> udf_params(1, int64(attr));
@@ -236,7 +236,7 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
             Solver::ASSIGN_MIN_VALUE);
     }
 
-    // solve!
-    sl_solver.Prepare(coords, lens, db, mons);
+    // set task
+    sl_solver.SetTask(coords, lens, db, mons);
 }
 } /* namespace searchlight */
