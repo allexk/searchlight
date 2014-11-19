@@ -304,8 +304,19 @@ void SearchlightTask::HandleIdleSolver(uint64_t id) {
     distr_search_info_->idle_solvers_.insert(id);
     distr_search_info_->helpees_.Erase(id);
 
-    // Check if the search is completely finished (not validation, though)
-    if (distr_search_info_->busy_solvers_.empty()) {
+    /*
+     * Check if the search is completely finished. Validator might be
+     * still going.
+     *
+     * Here, we try to unlock the mutex ASAP. This is not only a performance
+     * consideration. There might be a call path: sl -> sl_task -> sl that
+     * leads to double locking. Since such paths are rare, we don't use
+     * a recursive mutex due to the cost.
+     */
+    const bool search_finished = distr_search_info_->busy_solvers_.empty();
+    lock.unlock();
+
+    if (search_finished) {
         BroadcastFinishSearch();
     } else {
         CheckForHelpees();
@@ -313,6 +324,7 @@ void SearchlightTask::HandleIdleSolver(uint64_t id) {
 }
 
 void SearchlightTask::CheckForHelpees() {
+    std::unique_lock<std::mutex> lock(mtx_);
     while (!distr_search_info_->idle_solvers_.empty()) {
         const InstanceID helpee = GetHelpee();
         if (helpee != INVALID_SOLVER_ID) {
@@ -320,7 +332,18 @@ void SearchlightTask::CheckForHelpees() {
             const InstanceID helper = *helper_iter;
             distr_search_info_->idle_solvers_.erase(helper_iter);
             distr_search_info_->busy_solvers_.insert(helper);
+
+            /*
+             * Unlock here, since the call might return to the task via SL.
+             * For example, the helper goes to the same instance and is
+             * immediately rejected. Reject requires another mutex lock
+             * in the same thread.
+             *
+             * See also the comment in HandleIdleSolver().
+             */
+            lock.unlock();
             DispatchHelper(helper, helpee);
+            lock.lock();
         } else {
             break;
         }
@@ -345,11 +368,12 @@ void SearchlightTask::HandleHelper(uint64_t helper, uint64_t helpee) {
 }
 
 void SearchlightTask::HandleAcceptHelper(uint64_t helper) {
-    std::lock_guard<std::mutex> lock(mtx_);
+    std::unique_lock<std::mutex> lock(mtx_);
     // Check if the message came too late; solver could report idleness already
     if (distr_search_info_->busy_solvers_.find(helper) !=
             distr_search_info_->busy_solvers_.end()) {
         distr_search_info_->helpees_.Add(helper);
+        lock.unlock();
         CheckForHelpees();
     }
 }
@@ -376,6 +400,7 @@ void SearchlightTask::HandleFinValidator(InstanceID id) {
     distr_search_info_->busy_validators_count_--;
 
     if (distr_search_info_->busy_validators_count_ == 0) {
+        lock.unlock();
         BroadcastCommit();
     }
 }
