@@ -351,8 +351,8 @@ void SearchlightTask::CheckForHelpees() {
 }
 
 void SearchlightTask::DispatchHelper(uint64_t helper, uint64_t dest) {
-    LOG4CXX_DEBUG(logger, "Dispatching help, dest=" << dest
-            << ", helper=" << helper);
+    LOG4CXX_DEBUG(logger, "Dispatching help, dest=0x" << std::hex << dest
+            << ", helper=0x" << helper);
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     const InstanceID dest_inst = GetInstanceFromSolverID(dest);
     if (my_instance_id_ == dest_inst) {
@@ -500,7 +500,7 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
     switch (balance_msg->type()) {
         case SearchlightBalance::HELP_LOAD:
             assert(balance_msg->id_size());
-            LOG4CXX_DEBUG(logger, "Got a remote load for the solver, id="
+            LOG4CXX_DEBUG(logger, "Got a remote load for the solver, id=0x"
                     << std::hex << balance_msg->id(0));
             HandleRemoteLoad(*balance_msg, balance_msg->id(0));
             break;
@@ -537,7 +537,7 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
         case SearchlightBalance::ACCEPT_HELP:
             assert(balance_msg->id_size());
             for (int i = 0; i < balance_msg->id_size(); i++) {
-                LOG4CXX_DEBUG(logger, "Helper was accepted: helper="
+                LOG4CXX_DEBUG(logger, "Helper was accepted: helper=0x"
                         << std::hex << balance_msg->id(i));
                 HandleAcceptHelper(balance_msg->id(i));
             }
@@ -574,10 +574,10 @@ void SearchlightTask::HandleRejectHelp(uint64_t src,
     // logging
     if (logger->isDebugEnabled()) {
         std::ostringstream deb_str;
-        deb_str << "Help was rejected: helpee=" << std::hex << src << ", hard="
-                << hard << ", helpers={";
+        deb_str << "Help was rejected: helpee=0x" << std::hex << src
+                << ", hard=" << hard << ", helpers={0x";
         std::copy(helpers.begin(), helpers.end(),
-                std::ostream_iterator<InstanceID>(deb_str, ", "));
+                std::ostream_iterator<InstanceID>(deb_str, ", 0x"));
         deb_str << "}";
         logger->debug(deb_str.str(), LOG4CXX_LOCATION);
     }
