@@ -315,9 +315,6 @@ public:
     }
 
 private:
-    // Make it a friend to modify the queue
-    friend class SearchlightSolutionCollector;
-
     // Contains information about the state of distributed search.
     struct DistributedSearchInfo {
         // Currently busy solvers
@@ -506,6 +503,9 @@ public:
         sl_task_(sl_task),
         desc_(desc),
         res_count_(0) {
+
+        // Start search
+        sl_task_->StartSearch();
 
         // we need the context to create the array
         assert(query);

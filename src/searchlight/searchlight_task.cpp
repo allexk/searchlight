@@ -186,7 +186,7 @@ SearchlightTask::SearchlightTask(const std::string &library_name,
             SearchlightMessenger::mtSLBalance,
             std::bind(&SearchlightTask::HandleBalanceMessage, this, _1, _2));
 
-    // Prepare and start Searchlight
+    // Prepare Searchlight
     if (InstanceActive(my_instance_id_)) {
         int solver_count = GetSolverNum(my_instance_id_);
         if (solver_count == 0) {
@@ -195,7 +195,6 @@ SearchlightTask::SearchlightTask(const std::string &library_name,
         }
         searchlight_.Prepare(task_name, task_,
                 CreateSolverID(my_instance_id_, 0), solver_count);
-        searchlight_.StartSolvers();
     }
 }
 
