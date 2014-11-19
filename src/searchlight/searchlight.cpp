@@ -576,7 +576,7 @@ SearchMonitor *SearchlightSolver::CreateBalancingMonitor(
 }
 
 AdapterPtr SearchlightSolver::CreateAdapter(const std::string &name) {
-    auto res = sl_.CreateAdapter(name);
+    auto res = sl_.CreateAdapter(name + "_" + std::to_string(id_));
     adapters_.push_back(res);
     return res;
 }
