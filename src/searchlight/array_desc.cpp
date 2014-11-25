@@ -63,14 +63,7 @@ AttributeID SearchArrayDesc::RegisterAttribute(const std::string &attr_name,
     attr_to_id_[attr_name] = search_id;
 
     // load the sample
-    sampler_.LoadSampleForAttribute(orig_id, search_id);
-    if (load_aux_samples) {
-        LOG4CXX_INFO(logger, "Loading auxiliary samples in memory...");
-        for (Sampler &s: aux_samplers_) {
-            s.LoadSampleForAttribute(orig_id, search_id);
-        }
-    }
-
+    sampler_.LoadSampleForAttribute(attr_name, search_id);
     LOG4CXX_DEBUG(logger, "Registered attribute, name=" << attr_name <<
             ", orig_id=" << orig_id << ", internal_id=" << search_id);
     return search_id;

@@ -37,6 +37,10 @@
 
 namespace searchlight {
 
+// The logger
+static log4cxx::LoggerPtr logger(
+        log4cxx::Logger::getLogger("searchlight.adapter"));
+
 /*
  * TODO: approximate values are now computed... incorrectly. They might be
  * plausible, but a better way would be to compute the probability and
@@ -49,16 +53,16 @@ public:
         return new AverageSampleAggregate;
     }
 
-    virtual void AccumulateChunk(uint64_t chunk_size, uint64_t part_size,
-            const Sampler::Chunk &chunk) {
+    virtual void AccumulateChunk(uint64_t cell_size, uint64_t part_size,
+            const Sampler::Cell &cell) {
         // chunk info
-        const double sum = chunk.sum_;
-        const uint64_t count = chunk.count_;
-        const double min = chunk.min_;
-        const double max = chunk.max_;
+        const double sum = cell.sum_;
+        const uint64_t count = cell.count_;
+        const double min = cell.min_;
+        const double max = cell.max_;
 
         // is it a full chunk? guaranteed to be non-empty
-        if (part_size == chunk_size) {
+        if (part_size == cell_size) {
             not_null_ = true;
             sum_ += sum;
             approx_sum_ += sum;
@@ -68,8 +72,8 @@ public:
         }
 
         // a part of a chunk; guaranteed non-empty
-        const size_t chunk_num = chunk_min_count_.size();
-        const uint64_t empty_count = chunk_size - count;
+        const size_t cell_num = cell_min_count_.size();
+        const uint64_t empty_count = cell_size - count;
 
         // compute counts
         const uint64_t min_count = part_size >= empty_count ?
@@ -78,8 +82,8 @@ public:
         if (min_count > 0) {
             not_null_ = true;
         }
-        chunk_min_count_.push_back(min_count);
-        chunk_max_count_.push_back(max_count);
+        cell_min_count_.push_back(min_count);
+        cell_max_count_.push_back(max_count);
 
         /*
          * For the approximate computation we make the uniformity assumption,
@@ -87,7 +91,7 @@ public:
          * it is probably less probable -- empty elements tend to stick
          * together. But without any additional knowledge we cannot do better.
          */
-        const double part_ratio = double(part_size) / chunk_size;
+        const double part_ratio = double(part_size) / cell_size;
         approx_sum_ += sum * part_ratio;
         approx_count_ += round(part_ratio * count);
 
@@ -99,33 +103,33 @@ public:
             // upper boundary efforts
             uint64_t count_left = count;
             const uint64_t max_num = floor((sum - count * min) / (max - min));
-            chunk_efforts_upper_.push_back(Effort(max, max_num, chunk_num));
+            cell_efforts_upper_.push_back(Effort(max, max_num, cell_num));
             count_left -= max_num;
             const double deltau = sum - max_num * max -
                     (count_left - 1) * min;
-            chunk_efforts_upper_.push_back(Effort(deltau, 1, chunk_num));
+            cell_efforts_upper_.push_back(Effort(deltau, 1, cell_num));
             count_left--;
             if (count_left > 0) {
-                chunk_efforts_upper_.push_back(Effort(min, count_left,
-                        chunk_num));
+                cell_efforts_upper_.push_back(Effort(min, count_left,
+                        cell_num));
             }
 
             // lower boundary efforts
             count_left = count;
             const uint64_t min_num = floor((count * max - sum) / (max - min));
-            chunk_efforts_lower_.push_back(Effort(min, min_num, chunk_num));
+            cell_efforts_lower_.push_back(Effort(min, min_num, cell_num));
             count_left -= min_num;
             const double deltal = sum - min_num * min -
                     (count_left - 1) * max;
-            chunk_efforts_lower_.push_back(Effort(deltal, 1, chunk_num));
+            cell_efforts_lower_.push_back(Effort(deltal, 1, cell_num));
             count_left--;
             if (count_left > 0) {
-                chunk_efforts_lower_.push_back(Effort(max, count_left,
-                        chunk_num));
+                cell_efforts_lower_.push_back(Effort(max, count_left,
+                        cell_num));
             }
         } else {
-            chunk_efforts_upper_.push_back(Effort(max, count, chunk_num));
-            chunk_efforts_lower_.push_back(Effort(min, count, chunk_num));
+            cell_efforts_upper_.push_back(Effort(max, count, cell_num));
+            cell_efforts_lower_.push_back(Effort(min, count, cell_num));
         }
     }
 
@@ -133,7 +137,7 @@ public:
         if (not_null_) {
             res.state_ = IntervalValue::NON_NULL;
         } else {
-            if (!chunk_min_count_.empty()) {
+            if (!cell_min_count_.empty()) {
                 // got possible non-empty parts
                 res.state_ = IntervalValue::MAY_NULL;
             } else {
@@ -143,13 +147,13 @@ public:
         }
 
         // we have to make copies of counts to reuse them for the lower bound
-        std::vector<uint64_t> chunk_min_count_copy(chunk_min_count_);
-        std::vector<uint64_t> chunk_max_count_copy(chunk_max_count_);
+        std::vector<uint64_t> chunk_min_count_copy(cell_min_count_);
+        std::vector<uint64_t> chunk_max_count_copy(cell_max_count_);
 
         // sort the efforts by the value
-        std::sort(chunk_efforts_upper_.begin(), chunk_efforts_upper_.end(),
+        std::sort(cell_efforts_upper_.begin(), cell_efforts_upper_.end(),
                 Effort::GreaterOrder()); // descending
-        std::sort(chunk_efforts_lower_.begin(), chunk_efforts_lower_.end());
+        std::sort(cell_efforts_lower_.begin(), cell_efforts_lower_.end());
 
         /*
          * Compute the upper bound: raise the average while you can, and then
@@ -157,10 +161,10 @@ public:
          */
         double current_sum = sum_;
         double current_count = count_;
-        for (size_t i = 0; i < chunk_efforts_upper_.size(); i++) {
-            const Effort &eff = chunk_efforts_upper_[i];
-            uint64_t &min_count_chunk = chunk_min_count_[eff.chunk_];
-            uint64_t &max_count_chunk = chunk_max_count_[eff.chunk_];
+        for (size_t i = 0; i < cell_efforts_upper_.size(); i++) {
+            const Effort &eff = cell_efforts_upper_[i];
+            uint64_t &min_count_chunk = cell_min_count_[eff.cell_];
+            uint64_t &max_count_chunk = cell_max_count_[eff.cell_];
             if (current_count == 0) {
                 FitNumAndSubtractChunkCounts(min_count_chunk,
                     max_count_chunk, eff.number_, current_sum,
@@ -189,10 +193,10 @@ public:
          */
         current_sum = sum_;
         current_count = count_;
-        for (size_t i = 0; i < chunk_efforts_lower_.size(); i++) {
-            const Effort &eff = chunk_efforts_lower_[i];
-            uint64_t &min_count_chunk = chunk_min_count_copy[eff.chunk_];
-            uint64_t &max_count_chunk = chunk_max_count_copy[eff.chunk_];
+        for (size_t i = 0; i < cell_efforts_lower_.size(); i++) {
+            const Effort &eff = cell_efforts_lower_[i];
+            uint64_t &min_count_chunk = chunk_min_count_copy[eff.cell_];
+            uint64_t &max_count_chunk = chunk_max_count_copy[eff.cell_];
             if (current_count == 0) {
                 FitNumAndSubtractChunkCounts(min_count_chunk,
                     max_count_chunk, eff.number_, current_sum,
@@ -251,18 +255,18 @@ private:
     }
 
     /*
-     *  An effort describes the chunk's best effort to bring up/down the avg.
+     *  An effort describes the cell's best effort to bring up/down the avg.
      *  For example, to increase the avg. maximally we would add the value_
      *  the number_ times to the set of values composing the upper bound.
-     *  Chunk_ references the chunk number for this effort.
+     *  Cell_ references the cell number for this effort.
      */
     struct Effort {
         double value_;
         uint64_t number_;
-        size_t chunk_;
+        size_t cell_;
 
-        Effort(double value, uint64_t number, size_t chunk) :
-            value_(value), number_(number), chunk_(chunk) {}
+        Effort(double value, uint64_t number, size_t cell) :
+            value_(value), number_(number), cell_(cell) {}
 
         bool operator<(const Effort &other) const {
             return value_ < other.value_;
@@ -276,12 +280,12 @@ private:
     };
 
     // Best efforts for the upper and lower bounds
-    std::vector<Effort> chunk_efforts_upper_, chunk_efforts_lower_;
+    std::vector<Effort> cell_efforts_upper_, cell_efforts_lower_;
 
     /*
-     * The minimum and maximum number of elements for each chunk.
+     * The minimum and maximum number of elements for each cell.
      */
-    std::vector<uint64_t> chunk_min_count_, chunk_max_count_;
+    std::vector<uint64_t> cell_min_count_, cell_max_count_;
 
     // Is it definitely not null?
     bool not_null_;
@@ -301,19 +305,19 @@ public:
         return new SumSampleAggregate;
     }
 
-    virtual void AccumulateChunk(uint64_t chunk_size,
-            uint64_t part_size, const Sampler::Chunk &chunk) {
-        // chunk info
-        const double sum = chunk.sum_;
-        const uint64_t count = chunk.count_;
-        const double min = chunk.min_;
-        const double max = chunk.max_;
+    virtual void AccumulateChunk(uint64_t cell_size,
+            uint64_t part_size, const Sampler::Cell &cell) {
+        // cell info
+        const double sum = cell.sum_;
+        const uint64_t count = cell.count_;
+        const double min = cell.min_;
+        const double max = cell.max_;
 
-        // it cannot be null, since chunks are non-empty here
+        // it cannot be null, since cells are non-empty here
         null_ = false;
 
-        // is it a full chunk? guaranteed to be non-empty
-        if (part_size == chunk_size) {
+        // is it a full cell? guaranteed to be non-empty
+        if (part_size == cell_size) {
             not_null_ = true;
             min_sum_ += sum;
             max_sum_ += sum;
@@ -322,7 +326,7 @@ public:
         }
 
         // compute counts
-        const uint64_t empty_count = chunk_size - count;
+        const uint64_t empty_count = cell_size - count;
         const uint64_t min_count = part_size >= empty_count ?
                 part_size - empty_count : 0;
         const uint64_t max_count = part_size >= count ? count : part_size;
@@ -344,7 +348,7 @@ public:
          * it is probably less probable -- empty elements tend to stick
          * together. But without any additional knowledge we cannot do better.
          */
-        const double part_ratio = double(part_size) / chunk_size;
+        const double part_ratio = double(part_size) / cell_size;
         approx_sum_ += sum * part_ratio;
     }
 
@@ -388,17 +392,17 @@ public:
         return new MinMaxSampleAggregate(false);
     }
 
-    virtual void AccumulateChunk(uint64_t chunk_size,
-            uint64_t part_size, const Sampler::Chunk &chunk) {
-        // chunk info
-        const double min = chunk.min_;
-        const double max = chunk.max_;
+    virtual void AccumulateChunk(uint64_t cell_size,
+            uint64_t part_size, const Sampler::Cell &cell) {
+        // cell info
+        const double min = cell.min_;
+        const double max = cell.max_;
 
-        // it cannot be null, since chunks are non-empty here
+        // it cannot be null, since cells are non-empty here
         null_ = false;
 
-        // is it a full chunk? guaranteed to be non-empty
-        if (part_size == chunk_size) {
+        // is it a full cell? guaranteed to be non-empty
+        if (part_size == cell_size) {
             not_null_ = true;
             // here we know the exact min and max
             if (is_min_) {
@@ -412,7 +416,7 @@ public:
         }
 
         // compute counts
-        const uint64_t empty_count = chunk_size - chunk.count_;
+        const uint64_t empty_count = cell_size - cell.count_;
         const uint64_t min_count = part_size >= empty_count ?
                 part_size - empty_count : 0;
         if (min_count > 0) {
@@ -472,48 +476,35 @@ private:
     bool not_null_, null_;
 };
 
-Sampler::Sampler(const ArrayPtr &array, const ArrayDesc &data_desc) :
-        sample_array_(array),
-        chunk_sizes_(data_desc.getDimensions().size()),
-        sample_origin_(data_desc.getDimensions().size()),
-        sample_end_(data_desc.getDimensions().size()),
-        chunk_nums_(data_desc.getDimensions().size()) {
-    const ArrayDesc &sample_desc = array->getArrayDesc();
+Sampler::Synopsis::Synopsis(const ArrayPtr &array) : synopsis_array_(array) {
+    // Array descriptor
+    const ArrayDesc &synopsis_desc = array->getArrayDesc();
+    const size_t dims_num = synopsis_desc.getDimensions().size();
 
-    // by convenience we store sizes in the comment :)
-    const std::string &sample_config =
-            ArrayDesc::makeUnversionedName(sample_desc.getName());
-    const size_t undersc_pos = sample_config.find_last_of('_');
-    if (undersc_pos == std::string::npos || sample_config.size() < 3 ||
-            undersc_pos > sample_config.size() - 2) {
-        std::ostringstream err_msg;
-        err_msg << "Incorrect sample array name (must have an underscore "
-                "followed by ?x? size parameters: name="
-                << sample_desc.getName();
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << err_msg.str();
-    }
-    SetChunkSizes(sample_config.substr(undersc_pos + 1));
+    // By convenience we store sizes in the name after the last '_'
+    const std::string &synopsis_config =
+            ArrayDesc::makeUnversionedName(synopsis_desc.getName());
+    cell_size_.resize(dims_num);
+    ParseChunkSizes(ParseArrayParamsFromName(synopsis_config).back());
 
-    // The start of the sample corresponds to the start of the data array
-    for (size_t i = 0; i < data_desc.getDimensions().size(); i++) {
-        const DimensionDesc &dim = data_desc.getDimensions()[i];
-        sample_origin_[i] = dim.getStartMin();
-        sample_end_[i] = dim.getEndMax();
-        if (sample_origin_[i] == scidb::MIN_COORDINATE ||
-                sample_end_[i] == scidb::MAX_COORDINATE) {
+    // Compute sample boundaries (in original coordinates)
+    for (size_t i = 0; i < dims_num; i++) {
+        const DimensionDesc &dim = synopsis_desc.getDimensions()[i];
+        if (dim.getStartMin() == scidb::MIN_COORDINATE ||
+                dim.getEndMax() == scidb::MAX_COORDINATE) {
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                     << "Unbounded arrays are not supported by the sampler!";
         }
-        chunk_nums_[i] = (sample_end_[i] - sample_origin_[i]) /
-                chunk_sizes_[i] + 1;
+        synopsis_origin_[i] = dim.getStartMin() * cell_size_[i];
+        synopsis_end_[i] = dim.getEndMax() * cell_size_[i] + cell_size_[i] - 1;
+        cell_nums_[i] = (synopsis_end_[i] - synopsis_origin_[i]) /
+                cell_size_[i] + 1;
     }
 
-    // number of elements in a chunk
-    shape_chunk_size_ = ComputeShapeChunkSize();
-
-    // find min/max ids (not necessary, unless the array has the empty bitmap)
-    const Attributes &attrs = sample_desc.getAttributes(true);
+    /*
+     * Find min/max/sum/count ids.
+     */
+    const Attributes &attrs = synopsis_desc.getAttributes(true);
     if (!SearchArrayDesc::FindAttributeId(attrs, std::string("min"), min_id_) ||
         !SearchArrayDesc::FindAttributeId(attrs, std::string("max"), max_id_) ||
         !SearchArrayDesc::FindAttributeId(attrs,
@@ -521,19 +512,134 @@ Sampler::Sampler(const ArrayPtr &array, const ArrayDesc &data_desc) :
         !SearchArrayDesc::FindAttributeId(attrs, std::string("sum"), sum_id_)) {
         std::ostringstream err_msg;
         err_msg << "Cannot find min/max attribute in the sample: sample="
-                << sample_desc.getName();
+                << synopsis_desc.getName();
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << err_msg.str();
+    }
+}
+
+void Sampler::Synopsis::SetCacheMode(bool mode) {
+    cache_cells_ = mode;
+    if (mode) {
+        /*
+         * Create the entire cell cache right now to simplify concurrency
+         * later. The cells are invalid and will be loaded from the synopsis
+         * later in lazy fashion.
+         */
+        size_t total_cell_count = 1;
+        for (auto cn: cell_nums_) {
+            total_cell_count *= cn;
+        }
+        cells_.clear();
+        cells_.resize(total_cell_count);
+    } else {
+        cells_.clear();
+        cells_.shrink_to_fit();
+    }
+}
+
+
+void Sampler::Synopsis::InitIterators() {
+    /*
+     * One thing to consider here. Creating item iterator results in
+     * fetching the first array chunk, which might create a small performance
+     * penalty. Another solution is to use array iterators and create
+     * chunk iterators when fetching a synopsis cell (see commented code
+     * for the FillCell... function).
+     */
+    min_it_ = synopsis_array_->getItemIterator(min_id_);
+    max_it_ = synopsis_array_->getItemIterator(max_id_);
+    sum_it_ = synopsis_array_->getItemIterator(sum_id_);
+    count_it_ = synopsis_array_->getItemIterator(count_id_);
+}
+
+void Sampler::Synopsis::FillCellFromArray(
+        const Coordinates &pos, Sampler::Cell &cell) {
+    /*
+     * Need to lock here.
+     *  -- For cached synopses, to avoid contention for loading cells
+     *  -- For all synopses, since we move iterators
+     *
+     * TODO: Think about the valid_ check. For now it has to be locked,
+     * since there is no way to prevent contention: may somebody is
+     * loading the cell right now? Now, the only way to deal with that is
+     * to preload the sample at the beginning.
+     */
+    std::lock_guard<std::mutex> lock{mtx_};
+    if (cell.valid_) {
+        // Caching synopses: somebody just loaded the cell
+        assert(cache_cells_);
+        return;
     }
 
-    if (sample_desc.getDimensions()[0].getStartMin() != 0) {
+    if (!count_it_) {
+        InitIterators();
+    }
+
+    if (!count_it_->setPosition(pos) || count_it_->isEmpty()) {
+        // No chunk in the array -- assume the cell is empty
+        cell = Cell();
+        cell.valid_ = true;
+        return;
+    }
+
+    // should be a non-empty chunk for sure
+    if (!min_it_->setPosition(pos) ||
+        !max_it_->setPosition(pos) ||
+        !sum_it_->setPosition(pos)) {
+
         std::ostringstream err_msg;
-        err_msg << "Chunk coordinate should start from 0: sample="
-                << sample_desc.getName();
+        err_msg << "Cannot get info from synopsis, pos=(";
+        std::copy(pos.begin(), pos.end(),
+                std::ostream_iterator<Coordinate>(err_msg, ", "));
+        err_msg << ")";
+
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
+    }
+
+    cell.valid_ = true;
+    cell.count_ = count_it_->getItem().getUint64();
+    cell.min_ = min_it_->getItem().getDouble();
+    cell.max_ = max_it_->getItem().getDouble();
+    cell.sum_ = sum_it_->getItem().getDouble();
+}
+
+void Sampler::Synopsis::ParseChunkSizes(const std::string &size_param) {
+    typedef boost::tokenizer<boost::char_separator<char> > tokenizer_t;
+    boost::char_separator<char> sep("xX"); // size_1xsize_2x...xsize_n
+    tokenizer_t tokenizer(size_param, sep);
+
+    shape_cell_size_ = 1;
+    int i = 0;
+    for (tokenizer_t::const_iterator cit = tokenizer.begin();
+            cit != tokenizer.end(); cit++) {
+        cell_size_[i++] = boost::lexical_cast<Coordinate>(cit->c_str());
+        shape_cell_size_ *= cell_size_[i];
+    }
+
+    if (i != cell_size_.size()) {
+        std::ostringstream err_msg;
+        err_msg << "Could not retrieve all cell sizes: conf=" <<
+                size_param << ", needed sizes=" << cell_size_.size();
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << err_msg.str();
     }
-    chunks_num_ = sample_desc.getDimensions()[0].getEndMax() + 1;
+}
+
+
+
+Sampler::Sampler(const std::vector<ArrayPtr> &synopsis_arrays) {
+    // Create catalog of describing synopses
+    for (const auto &array: synopsis_arrays) {
+        const std::string &array_name =
+                ArrayDesc::makeUnversionedName(array->getName());
+        const auto &params = ParseArrayParamsFromName(array_name);
+
+        // Attribute name is the second to last component of the name
+        const std::string &attr_name = *(params.end() - 2);
+        array_synopses_[attr_name].push_back(array);
+    }
 
     // Register default aggregates
     aggrs_["avg"] = AverageSampleAggregate::Create;
@@ -542,92 +648,145 @@ Sampler::Sampler(const ArrayPtr &array, const ArrayDesc &data_desc) :
     aggrs_["max"] = MinMaxSampleAggregate::CreateMax;
 }
 
-Sampler::Chunk Sampler::GetChunkFromArray(
-        const ConstItemIteratorPtr &min_iterator,
-        const ConstItemIteratorPtr &max_iterator,
-        const ConstItemIteratorPtr &sum_iterator,
-        const ConstItemIteratorPtr &count_iterator,
-        const Coordinates &pos) const {
+//
+// Code for using a pair of array/chunk iterators instead of item iterators.
+//
+//void Sampler::Synopsis::FillCellFromArray(
+//        const Coordinates &pos, Sampler::Cell &cell) {
+//    if (!count_it_->setPosition(pos)) {
+//        // No chunk in the array -- assume the cell is empty
+//        cell = Cell();
+//        cell.valid_ = true;
+//        return;
+//    }
+//
+//    // should be a non-empty chunk for sure
+//    if (!min_it_->setPosition(pos) ||
+//        !max_it_->setPosition(pos) ||
+//        !sum_it_->setPosition(pos)) {
+//
+//        std::ostringstream err_msg;
+//        err_msg << "Cannot get info from synopsis, pos=(";
+//        std::copy(pos.begin(), pos.end(),
+//                std::ostream_iterator<std::string>(err_msg, ", "));
+//        err_msg << ")";
+//
+//        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+//                SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
+//    }
+//
+//    // now, fetch the chunks
+//    const auto &count_chunk_it = count_it_->getChunk().getConstIterator(
+//            ConstChunkIterator::IGNORE_EMPTY_CELLS ||
+//            ConstChunkIterator::IGNORE_OVERLAPS);
+//    if (!count_chunk_it->setPosition(pos) || count_chunk_it->isEmpty()) {
+//        // No element in the chunk -- assume empty synopsis cell
+//        cell = Cell();
+//        cell.valid_ = true;
+//        return;
+//    }
+//
+//    // Fetch remaining chunks
+//    const auto &min_chunk_it = min_it_->getChunk().getConstIterator(
+//            ConstChunkIterator::IGNORE_EMPTY_CELLS ||
+//            ConstChunkIterator::IGNORE_OVERLAPS);
+//    const auto &max_chunk_it = max_it_->getChunk().getConstIterator(
+//            ConstChunkIterator::IGNORE_EMPTY_CELLS ||
+//            ConstChunkIterator::IGNORE_OVERLAPS);
+//    const auto &sum_chunk_it = sum_it_->getChunk().getConstIterator(
+//            ConstChunkIterator::IGNORE_EMPTY_CELLS ||
+//            ConstChunkIterator::IGNORE_OVERLAPS);
+//    if (!min_chunk_it->setPosition(pos) ||
+//        !max_chunk_it->setPosition(pos) ||
+//        !sum_chunk_it->setPosition(pos)) {
+//
+//        std::ostringstream err_msg;
+//        err_msg << "Cannot get info from synopsis, pos=(";
+//        std::copy(pos.begin(), pos.end(),
+//                std::ostream_iterator<std::string>(err_msg, ", "));
+//        err_msg << ")";
+//
+//        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+//                SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
+//    }
+//
+//    cell.valid_ = true;
+//    cell.count_ = count_chunk_it->getItem().getUint64();
+//    cell.min_ = min_chunk_it->getItem().getDouble();
+//    cell.max_ = max_chunk_it->getItem().getDouble();
+//    cell.sum_ = sum_chunk_it->getItem().getDouble();
+//}
 
-    if (count_iterator->setPosition(pos) && !count_iterator->isEmpty()) {
-        const uint64_t count = count_iterator->getItem().getUint64();
-        if (count == 0) {
-            // empty chunk (old case, when we have all chunks in the array)
-            return Chunk();
-        } else {
-            // should be a non-empty chunk for sure
-            if (!min_iterator->setPosition(pos) ||
-                !max_iterator->setPosition(pos) ||
-                !sum_iterator->setPosition(pos)) {
+StringVector Sampler::ParseArrayParamsFromName(
+        const std::string &array_name) {
+    StringVector res;
 
-                std::ostringstream err_msg;
-                err_msg << "Cannot get info from sample, chunk=" <<
-                        pos[0] << ", attr=" << pos[1];
-                throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
-                        SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
-            }
+    typedef boost::tokenizer<boost::char_separator<char>> tokenizer_t;
+    boost::char_separator<char> sep{"_"}; // parts are separated by '_'
+    tokenizer_t tokenizer{array_name, sep};
 
-            const double minv = min_iterator->getItem().getDouble();
-            const double maxv = max_iterator->getItem().getDouble();
-            const double sumv = sum_iterator->getItem().getDouble();
-            return Chunk(minv, maxv, sumv, count);
-        }
-    } else {
-        // empty chunk (new case, where empty array areas == empty chunks)
-        return Chunk();
-    }
-}
-
-void Sampler::LoadSampleForAttribute(AttributeID attr_orig_id,
-        AttributeID attr_search_id) {
-
-    ConstItemIteratorPtr min_iterator = sample_array_->getItemIterator(min_id_);
-    ConstItemIteratorPtr max_iterator = sample_array_->getItemIterator(max_id_);
-    ConstItemIteratorPtr count_iterator =
-            sample_array_->getItemIterator(count_id_);
-    ConstItemIteratorPtr sum_iterator =
-            sample_array_->getItemIterator(sum_id_);
-
-    // Sample: first dimension -- region, second -- the original attribute
-    if (sample_chunks_.size() != attr_search_id) {
-        std::ostringstream err_msg;
-        err_msg << "Sampler and descriptor inconsistency: sample aid="
-                << sample_chunks_.size() << ", desc id=" << attr_search_id;
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << err_msg.str();
-    }
-    sample_chunks_.push_back(ChunkVector());
-    ChunkVector &chunks = sample_chunks_.back();
-    chunks.reserve(chunks_num_);
-    Coordinates pos(2);
-    pos[1] = attr_orig_id;
-    for (pos[0] = 0; pos[0] < chunks_num_; pos[0]++) {
-        chunks.push_back(GetChunkFromArray(min_iterator, max_iterator,
-                sum_iterator, count_iterator, pos));
-    }
-}
-
-void Sampler::SetChunkSizes(const std::string &size_param) {
-    typedef boost::tokenizer<boost::char_separator<char> > tokenizer_t;
-    boost::char_separator<char> sep("xX"); // size_1xsize_2x...xsize_n
-    tokenizer_t tokenizer(size_param, sep);
-
-    int i = 0;
     for (tokenizer_t::const_iterator cit = tokenizer.begin();
             cit != tokenizer.end(); cit++) {
-        chunk_sizes_[i++] = boost::lexical_cast<Coordinate>(cit->c_str());
+        res.push_back(*cit);
     }
 
-    if (i != chunk_sizes_.size()) {
+    if (res.size() < 3) {
         std::ostringstream err_msg;
-        err_msg << "Could not retrieve all chunk sizes: conf=" <<
-                size_param << ", needed sizes=" << chunk_sizes_.size();
+        err_msg << "Incorrect name for sample array. "
+                "Must be name_attr_NxNx...: name=" << array_name;
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << err_msg.str();
     }
+    return res;
 }
 
-void Sampler::CheckAndCorrectBounds(Coordinates &low, Coordinates &high) const {
+void Sampler::LoadSampleForAttribute(const std::string &attr_name,
+        AttributeID attr_search_id) {
+    // Add a new vector of synopses if needed
+    if (attr_search_id + 1 > synopses_.size()) {
+        synopses_.resize(attr_search_id + 1);
+    }
+
+    // If we have loaded something for the attribute, ignore
+    auto &loaded_synopses = synopses_[attr_search_id];
+    if (!loaded_synopses.empty()) {
+        return;
+    }
+
+    // See what we have for the attribute
+    const auto &synops = array_synopses_[attr_name];
+    for (const auto &syn: synops) {
+        loaded_synopses.emplace_back(new Synopsis{syn});
+    }
+
+    if (!loaded_synopses.empty()) {
+        /*
+         *  Sort the vector of synopses by the cell size, preserving user's
+         *  ordering for synopses of the same cell size.
+         */
+        std::stable_sort(loaded_synopses.begin(), loaded_synopses.end(),
+                [](const SynopsisPtr &s1, const SynopsisPtr &s2) {
+            return s1->GetCellSize() > s2->GetCellSize();
+        });
+
+        // Enable caching for the primary synopsis
+        loaded_synopses.front()->SetCacheMode(true);
+
+        // Debug printing
+        if (logger->isDebugEnabled()) {
+            std::ostringstream msg{"Synopses loaded for attribute "};
+            msg << attr_name << '(' << attr_search_id << "): ";
+            for (const auto &syn: loaded_synopses) {
+                msg << syn->GetName() << ", ";
+            }
+            msg << '\n';
+            logger->debug(msg.str());
+        }
+    }
+}
+
+void Sampler::Synopsis::CheckAndCorrectBounds(
+        Coordinates &low, Coordinates &high) const {
     if (low.size() != high.size()) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << "Specified region has inconsistent dimensions!";
@@ -638,23 +797,23 @@ void Sampler::CheckAndCorrectBounds(Coordinates &low, Coordinates &high) const {
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                     << "Specified region has low > high coordinates!";
         }
-        if (low[i] < sample_origin_[i]) {
-            low[i] = sample_origin_[i];
+        if (low[i] < synopsis_origin_[i]) {
+            low[i] = synopsis_origin_[i];
         }
-        if (high[i] > sample_end_[i]) {
-            high[i] = sample_end_[i];
+        if (high[i] > synopsis_end_[i]) {
+            high[i] = synopsis_end_[i];
         }
     }
 }
 
-bool Sampler::CheckBounds(const Coordinates &point) const {
-    if (point.size() != sample_origin_.size()) {
+bool Sampler::Synopsis::CheckBounds(const Coordinates &point) const {
+    if (point.size() != synopsis_origin_.size()) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << "Specified point has inconsistent dimensions!";
     }
 
-    for (size_t i = 0; i < sample_origin_.size(); i++) {
-        if (point[i] < sample_origin_[i] || point[i] > sample_end_[i]) {
+    for (size_t i = 0; i < synopsis_origin_.size(); i++) {
+        if (point[i] < synopsis_origin_[i] || point[i] > synopsis_end_[i]) {
             return false;
         }
     }
@@ -662,24 +821,24 @@ bool Sampler::CheckBounds(const Coordinates &point) const {
     return true;
 }
 
-uint64_t Sampler::ComputeShapeChunkSize() const {
-    uint64_t res = 1;
-    for (size_t i = 0; i < chunk_sizes_.size(); i++) {
-        res *= chunk_sizes_[i];
-    }
-    return res;
-}
-
-bool Sampler::RegionValidForSample(const Coordinates &low,
+bool Sampler::Synopsis::RegionValidForSample(const Coordinates &low,
         const Coordinates &high) const {
     // copy to check correctness and align
     Coordinates inlow(low), inhigh(high);
     CheckAndCorrectBounds(inlow, inhigh);
 
+    /*
+     * The synopsis can handle the region if:
+     *   1) Its corner (low) is aligned with a synopsis cell.
+     *   2) Each side length is divisible by the cell size.
+     *
+     * That means the region contains only full synopsis cells, no partial
+     * intersections.
+     */
     for (size_t i = 0; i < inlow.size(); i++) {
-        const Coordinate cs = chunk_sizes_[i];
+        const Coordinate cs = cell_size_[i];
         const Coordinate len = inhigh[i] - inlow[i] + 1;
-        const Coordinate low_off = inlow[i] - sample_origin_[i];
+        const Coordinate low_off = inlow[i] - synopsis_origin_[i];
         if (low_off % cs != 0 || len % cs != 0) {
             return false;
         }
@@ -687,57 +846,105 @@ bool Sampler::RegionValidForSample(const Coordinates &low,
     return true;
 }
 
-void Sampler::ComputeAggregateCache(RegionIterator &region_iter,
-        SampleAggregatePtrVector &aggs, AttributeID s_aid) const {
-
-    const ChunkVector &chunks = sample_chunks_[s_aid];
-    assert(!chunks.empty());
-    while (!region_iter.end()) {
-        const Chunk &chunk = chunks[region_iter.GetChunk()];
-        const uint64_t part_size = region_iter.GetPartSize();
-        for (size_t i = 0; i < aggs.size(); i++) {
-            if (chunk.count_ > 0) {
-                aggs[i].get()->AccumulateChunk(shape_chunk_size_,
-                        part_size, chunk);
-            }
-        }
-        ++region_iter;
+Sampler::Cell *Sampler::Synopsis::GetCurrentCell(
+        const RegionIterator &iter, Cell *nc_cell) {
+    Cell *cell = nc_cell;
+    if (cache_cells_) {
+        const size_t cell_num = iter.GetCell();
+        cell = &cells_[cell_num];
     }
+
+    // Load cell if needed (cannot check validity here -- concurrency issues)
+    FillCellFromArray(iter.GetCurrentPosition(), *cell);
+
+    return cell;
 }
 
-void Sampler::ComputeAggregateDisk(RegionIterator &region_iter,
-        SampleAggregatePtrVector &aggs, AttributeID o_aid) const {
-
-    // Create necessary iterators
-    ConstItemIteratorPtr min_iterator = sample_array_->getItemIterator(min_id_);
-    ConstItemIteratorPtr max_iterator = sample_array_->getItemIterator(max_id_);
-    ConstItemIteratorPtr count_iterator =
-            sample_array_->getItemIterator(count_id_);
-    ConstItemIteratorPtr sum_iterator =
-            sample_array_->getItemIterator(sum_id_);
-    Coordinates pos{-1, o_aid};
-
-    while (!region_iter.end()) {
-        pos[0] = region_iter.GetChunk();
-        const Chunk chunk = GetChunkFromArray(min_iterator, max_iterator,
-                sum_iterator, count_iterator, pos);
-        const uint64_t part_size = region_iter.GetPartSize();
-        for (size_t i = 0; i < aggs.size(); i++) {
-            if (chunk.count_ > 0) {
-                aggs[i].get()->AccumulateChunk(shape_chunk_size_,
-                        part_size, chunk);
-            }
-        }
-        ++region_iter;
-    }
-}
-
-IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
-        const Coordinates &high, AttributeID o_attr, AttributeID s_attr,
-        const StringVector &aggr_names) const {
+IntervalValueVector Sampler::Synopsis::ComputeAggregate(const Coordinates &low,
+        const Coordinates &high, const SampleAggregatePtrVector &aggs) {
     // copy to check correctness and align
     Coordinates inlow(low), inhigh(high);
     CheckAndCorrectBounds(inlow, inhigh);
+
+    // go through the chunks
+    RegionIterator iter(*this, inlow, inhigh);
+    Cell tmp_cell; // for non-caching synopsis
+    while (!iter.end()) {
+        const Cell *cell = GetCurrentCell(iter, &tmp_cell);
+        assert(cell->valid_);
+
+        const uint64_t part_size = iter.GetPartSize();
+        for (size_t i = 0; i < aggs.size(); i++) {
+            if (cell->count_ > 0) {
+                aggs[i].get()->AccumulateChunk(shape_cell_size_,
+                        part_size, *cell);
+            }
+        }
+
+        ++iter;
+        tmp_cell.valid_ = false;
+    }
+
+    // finalize the result
+    IntervalValueVector res(aggs.size());
+    for (size_t i = 0; i < aggs.size(); i++) {
+        aggs[i].get()->Finalize(res[i]);
+    }
+
+    return res;
+}
+
+IntervalValue Sampler::Synopsis::GetElement(const Coordinates &point) {
+    IntervalValue res;
+    if (!CheckBounds(point)) {
+        return res; // out of bounds -- NULL
+    }
+
+    RegionIterator iter(*this, point, point);
+    Cell tmp_cell; // for non-caching synopsis
+    const Cell *cell = GetCurrentCell(iter, &tmp_cell);
+    assert(cell->valid_);
+
+    if (cell->count_ == 0) {
+        return res; // in an empty chunk -- definitely NULL
+    } else if (cell->count_ == shape_cell_size_) {
+        res.state_ = IntervalValue::NON_NULL; // full chunk -- no empty elems
+    } else {
+        res.state_ = IntervalValue::MAY_NULL;
+    }
+
+    res.max_ = cell->max_;
+    res.min_ = cell->min_;
+    res.val_ = cell->sum_ / cell->count_; // uniformity assumption
+
+    return res;
+}
+
+IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
+        const Coordinates &high, AttributeID s_attr,
+        const StringVector &aggr_names, bool exact) const {
+    assert(s_attr < synopses_.size());
+
+    Synopsis *syn = nullptr;
+    if (exact) {
+        for (const auto &s: synopses_[s_attr]) {
+            if (s->RegionValidForSample(low, high)) {
+                syn = s.get();
+                break;
+            }
+        }
+        /*
+         * If we cannot find a suitable synopsis, that means the exact
+         * computation cannot be performed by the sampler.
+         */
+        if (!syn) {
+            return IntervalValueVector();
+        }
+    } else {
+        // For non-exact computation alway use the primary synopsis
+        assert(!synopses_[s_attr].empty());
+        syn = synopses_[s_attr][0].get();
+    }
 
     // resolve aggregates
     SampleAggregatePtrVector aggs(aggr_names.size());
@@ -753,45 +960,14 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
         aggs[i].reset(it->second());
     }
 
-    // go through the chunks
-    RegionIterator iter(*this, inlow, inhigh);
-    if (sample_chunks_.size() < s_attr + 1  || sample_chunks_[s_attr].empty()) {
-        ComputeAggregateDisk(iter, aggs, o_attr);
-    } else {
-        ComputeAggregateCache(iter, aggs, s_attr);
-    }
-
-    // finalize the result
-    IntervalValueVector res(aggs.size());
-    for (size_t i = 0; i < aggs.size(); i++) {
-        aggs[i].get()->Finalize(res[i]);
-    }
-
-    return res;
+    return syn->ComputeAggregate(low, high, aggs);
 }
 
 IntervalValue Sampler::GetElement(const Coordinates &point,
         AttributeID attr) const {
-    IntervalValue res;
-    if (!CheckBounds(point)) {
-        return res; // out of bounds -- NULL
-    }
-
-    RegionIterator iter(*this, point, point);
-    const Chunk &chunk = sample_chunks_[attr][iter.GetChunk()];
-
-    if (chunk.empty()) {
-        return res; // in an empty chunk -- definitely NULL
-    } else if (chunk.count_ == shape_chunk_size_) {
-        res.state_ = IntervalValue::NON_NULL; // full chunk -- no empty elems
-    } else {
-        res.state_ = IntervalValue::MAY_NULL;
-    }
-
-    res.max_ = chunk.max_;
-    res.min_ = chunk.min_;
-    res.val_ = chunk.sum_ / chunk.count_; // uniformity assumption
-
-    return res;
+    // We always estimate element via the primary sample
+    assert(!synopses_[attr].empty());
+    const auto &syn = synopses_[attr][0];
+    return syn->GetElement(point);
 }
 } /* namespace searchlight */

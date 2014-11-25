@@ -79,39 +79,19 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
         UpdateStatsWithRegion(low, high);
     }
 
-    // The original attribute
-    const AttributeID o_attr = array_desc_.GetArrayAttrributeID(attr);
-
     // starting the timer
     const auto req_start_time = std::chrono::steady_clock::now();
 
     IntervalValueVector res(aggr_names.size()); // NULLs by default
     if (mode_ == EXACT) {
-        // First, we want to check the samplers
-        const Sampler *sampler = &array_desc_.GetSampler();
-        if (!sampler->RegionValidForSample(low, high)) {
-            // Check auxiliary samples
-            sampler = nullptr;
-            const std::vector<Sampler> &aux_samplers =
-                    array_desc_.GetAuxSamplers();
-            for (const Sampler &s: aux_samplers) {
-                if (s.RegionValidForSample(low, high)) {
-                    sampler = &s;
-                    break;
-                }
-            }
-        }
-
-        // Can we use sample?
-        if (sampler) {
-            LOG4CXX_TRACE(logger, "Switching to a sample in the exact mode");
-            res = sampler->ComputeAggregate(low, high, o_attr, attr,
-                    aggr_names);
-        } else {
+        // First, try to use a synopsis
+        const Sampler &sampler = array_desc_.GetSampler();
+        res = sampler.ComputeAggregate(low, high, attr, aggr_names, true);
+        if (res.empty()) {
             // Compute
             const ArrayAccess &array = array_desc_.GetAccessor();
             TypedValueVector value_res = array.ComputeAggreagate(low, high,
-                    o_attr, aggr_names);
+                    attr, aggr_names);
 
             // Convert to the interval format
             for (size_t i = 0; i < value_res.size(); i++) {
@@ -124,10 +104,12 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
                            val_type.first);
                 }
             }
+        } else {
+            LOG4CXX_TRACE(logger, "Computed from synopsis in the exact mode");
         }
     } else if (mode_ == APPROX || mode_ == INTERVAL) {
         const Sampler &sampler = array_desc_.GetSampler();
-        res = sampler.ComputeAggregate(low, high, o_attr, attr, aggr_names);
+        res = sampler.ComputeAggregate(low, high, attr, aggr_names, false);
         if (mode_ == APPROX) {
             for (IntervalValueVector::iterator it = res.begin();
                     it != res.end(); it++) {

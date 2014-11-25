@@ -60,16 +60,8 @@ public:
      */
     SearchArrayDesc(const ArrayPtr &array, const ArrayPtrVector &samples) :
         array_(array),
-        sampler_(samples[0], array->getArrayDesc()),
-        data_accessor_(array) {
-
-        if (samples.size() > 1) {
-            aux_samplers_.reserve(samples.size() - 1);
-            for (size_t i = 1; i < samples.size(); i++) {
-                aux_samplers_.emplace_back(samples[i], array->getArrayDesc());
-            }
-        }
-    }
+        sampler_(samples),
+        data_accessor_(array) {}
 
     /**
      * Registers a search attribute with the descriptor. The sample for this
@@ -146,15 +138,6 @@ public:
     }
 
     /**
-     * Return a vector of auxiliary samplers.
-     *
-     * @return auxiliary samples in a vector
-     */
-    const std::vector<Sampler> &GetAuxSamplers() const {
-        return aux_samplers_;
-    }
-
-    /**
      * Fills in chunk distribution info for a set of chunks.
      *
      * Chunk distribution is information about which instance has which
@@ -198,9 +181,6 @@ private:
 
     // The sampler
     Sampler sampler_;
-
-    // Auxiliary samplers
-    std::vector<Sampler> aux_samplers_;
 
     // The data accessor
     ArrayAccess data_accessor_;
