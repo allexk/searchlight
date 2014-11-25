@@ -488,6 +488,9 @@ Sampler::Synopsis::Synopsis(const ArrayPtr &array) : synopsis_array_(array) {
     ParseChunkSizes(ParseArrayParamsFromName(synopsis_config).back());
 
     // Compute sample boundaries (in original coordinates)
+    synopsis_origin_.resize(dims_num);
+    synopsis_end_.resize(dims_num);
+    cell_nums_.resize(dims_num);
     for (size_t i = 0; i < dims_num; i++) {
         const DimensionDesc &dim = synopsis_desc.getDimensions()[i];
         if (dim.getStartMin() == scidb::MIN_COORDINATE ||
