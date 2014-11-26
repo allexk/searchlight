@@ -82,18 +82,20 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
     // starting the timer
     const auto req_start_time = std::chrono::steady_clock::now();
 
-    IntervalValueVector res(aggr_names.size()); // NULLs by default
+    IntervalValueVector res; // NULLs by default
     if (mode_ == EXACT) {
         // First, try to use a synopsis
         const Sampler &sampler = array_desc_.GetSampler();
         res = sampler.ComputeAggregate(low, high, attr, aggr_names, true);
         if (res.empty()) {
-            // Compute
+            // Compute from real data
             const ArrayAccess &array = array_desc_.GetAccessor();
             TypedValueVector value_res = array.ComputeAggreagate(low, high,
                     attr, aggr_names);
 
             // Convert to the interval format
+            res.resize(aggr_names.size()); // NULLs by default
+            assert(value_res.size() == res.size());
             for (size_t i = 0; i < value_res.size(); i++) {
                 const TypedValue &val_type = value_res[i];
                 if (!val_type.first.isNull()) {
@@ -110,6 +112,7 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
     } else if (mode_ == APPROX || mode_ == INTERVAL) {
         const Sampler &sampler = array_desc_.GetSampler();
         res = sampler.ComputeAggregate(low, high, attr, aggr_names, false);
+        assert(!res.empty());
         if (mode_ == APPROX) {
             for (IntervalValueVector::iterator it = res.begin();
                     it != res.end(); it++) {
@@ -121,6 +124,7 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
         }
     } else if (mode_ == DUMB) {
         // We are being dumb: (-inf; +inf) and it may be NULL
+        res.resize(aggr_names.size()); // NULLs by default
         for (auto &int_val: res) {
             int_val.min_ = std::numeric_limits<double>::lowest();
             int_val.max_ = std::numeric_limits<double>::max();
