@@ -39,7 +39,7 @@ namespace searchlight {
 
 // The logger
 static log4cxx::LoggerPtr logger(
-        log4cxx::Logger::getLogger("searchlight.adapter"));
+        log4cxx::Logger::getLogger("searchlight.sampler"));
 
 /*
  * TODO: approximate values are now computed... incorrectly. They might be
