@@ -630,8 +630,9 @@ void Sampler::Synopsis::ParseChunkSizes(const std::string &size_param) {
     int i = 0;
     for (tokenizer_t::const_iterator cit = tokenizer.begin();
             cit != tokenizer.end(); cit++) {
-        cell_size_[i++] = boost::lexical_cast<Coordinate>(cit->c_str());
+        cell_size_[i] = boost::lexical_cast<Coordinate>(cit->c_str());
         shape_cell_size_ *= cell_size_[i];
+        i++;
     }
 
     if (i != cell_size_.size()) {
