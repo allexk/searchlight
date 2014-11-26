@@ -77,9 +77,11 @@ public:
      * the cell size. Attributes of the array are: min, max, sum, count. The
      * order is not important.
      *
+     * @param data_desc data array descriptor
      * @param synopsis_arrays synopsis arrays
      */
-    Sampler(const std::vector<ArrayPtr> &synopsis_arrays);
+    Sampler(const ArrayDesc &data_desc,
+            const std::vector<ArrayPtr> &synopsis_arrays);
 
     /**
      * Loads synopses for the particular attribute.
@@ -211,9 +213,10 @@ private:
          *
          * No cells are loaded at this point. Only meta-data is initialized.
          *
+         * @param data_desc data array descriptor
          * @param array synopsis array
          */
-        Synopsis(const ArrayPtr &array);
+        Synopsis(const ArrayDesc &data_desc, const ArrayPtr &array);
 
         /**
          * Enable or disable caching of cells.
@@ -466,15 +469,29 @@ private:
             return res;
         }
 
+        /**
+         * Return current position in synopsis coordinates.
+         *
+         * Synopsis coordinates means the position is scaled down by
+         * using the cell size. These coordinates are suitable to
+         * directly access the synopsis array.
+         *
+         * @return current position in synopsis coordinates
+         */
+        Coordinates GetCurrentSynopsisPosition() const {
+            Coordinates res{pos_};
+            for (size_t i = 0; i < res.size(); i++) {
+                res[i] = (res[i] - synopsis_.synopsis_origin_[i]) /
+                        synopsis_.cell_size_[i];
+            }
+            return res;
+        }
+
     private:
         // Returns the linear cell number for the current position
         uint64_t GetCellPos() const {
-            Coordinates cell_coord(pos_);
-            for (size_t i = 0; i < cell_coord.size(); i++) {
-                cell_coord[i] =
-                        (cell_coord[i] - synopsis_.synopsis_origin_[i]) /
-                        synopsis_.cell_size_[i];
-            }
+            // Linear position is computed in synopsis coordinates
+            Coordinates cell_coord{GetCurrentSynopsisPosition()};
 
             // TODO: single out one-/two-dimensional cases?
             uint64_t pos = 0;
@@ -536,6 +553,9 @@ private:
      * size in decreasing order.
      */
     std::vector<std::vector<SynopsisPtr>> synopses_;
+
+    // Descriptor of the data array we store synopses for
+    const ArrayDesc data_desc_;
 
     // Aggregate map to resolve aggregates
     typedef std::map<const std::string, SampleAggregateFactory> AggrMap;

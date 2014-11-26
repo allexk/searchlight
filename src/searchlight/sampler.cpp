@@ -476,7 +476,8 @@ private:
     bool not_null_, null_;
 };
 
-Sampler::Synopsis::Synopsis(const ArrayPtr &array) : synopsis_array_(array) {
+Sampler::Synopsis::Synopsis(const ArrayDesc &data_desc,
+        const ArrayPtr &array) : synopsis_array_(array) {
     // Array descriptor
     const ArrayDesc &synopsis_desc = array->getArrayDesc();
     const size_t dims_num = synopsis_desc.getDimensions().size();
@@ -492,16 +493,28 @@ Sampler::Synopsis::Synopsis(const ArrayPtr &array) : synopsis_array_(array) {
     synopsis_end_.resize(dims_num);
     cell_nums_.resize(dims_num);
     for (size_t i = 0; i < dims_num; i++) {
-        const DimensionDesc &dim = synopsis_desc.getDimensions()[i];
-        if (dim.getStartMin() == scidb::MIN_COORDINATE ||
-                dim.getEndMax() == scidb::MAX_COORDINATE) {
+        // Metadata is filled from the data descriptor
+        const DimensionDesc &data_dim = data_desc.getDimensions()[i];
+        if (data_dim.getStartMin() == scidb::MIN_COORDINATE ||
+                data_dim.getEndMax() == scidb::MAX_COORDINATE) {
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                     << "Unbounded arrays are not supported by the sampler!";
         }
-        synopsis_origin_[i] = dim.getStartMin() * cell_size_[i];
-        synopsis_end_[i] = dim.getEndMax() * cell_size_[i] + cell_size_[i] - 1;
-        cell_nums_[i] = (synopsis_end_[i] - synopsis_origin_[i]) /
-                cell_size_[i] + 1;
+        synopsis_origin_[i] = data_dim.getStartMin();
+        synopsis_end_[i] = data_dim.getEndMax();
+        cell_nums_[i] = (data_dim.getLength() - 1) / cell_size_[i] + 1;
+
+        // Synopsis correctness checking
+        const DimensionDesc &dim = synopsis_desc.getDimensions()[i];
+        if (dim.getStartMin() != 0) {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                    << "Synopsis coordinates must start from 0";
+        }
+        if (dim.getLength() != cell_nums_[i]) {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                    << "Synopsis must have " << cell_nums_[i] << "cells"
+                    << " in the dimension " << dim.getBaseName();
+        }
     }
 
     /*
@@ -632,7 +645,9 @@ void Sampler::Synopsis::ParseChunkSizes(const std::string &size_param) {
 
 
 
-Sampler::Sampler(const std::vector<ArrayPtr> &synopsis_arrays) {
+Sampler::Sampler(const ArrayDesc &data_desc,
+        const std::vector<ArrayPtr> &synopsis_arrays) :
+            data_desc_{data_desc} {
     // Create catalog of describing synopses
     for (const auto &array: synopsis_arrays) {
         const std::string &array_name =
@@ -759,7 +774,7 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
     // See what we have for the attribute
     const auto &synops = array_synopses_[attr_name];
     for (const auto &syn: synops) {
-        loaded_synopses.emplace_back(new Synopsis{syn});
+        loaded_synopses.emplace_back(new Synopsis{data_desc_, syn});
     }
 
     if (!loaded_synopses.empty()) {
@@ -858,7 +873,7 @@ Sampler::Cell *Sampler::Synopsis::GetCurrentCell(
     }
 
     // Load cell if needed (cannot check validity here -- concurrency issues)
-    FillCellFromArray(iter.GetCurrentPosition(), *cell);
+    FillCellFromArray(iter.GetCurrentSynopsisPosition(), *cell);
 
     return cell;
 }

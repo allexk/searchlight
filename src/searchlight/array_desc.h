@@ -60,7 +60,7 @@ public:
      */
     SearchArrayDesc(const ArrayPtr &array, const ArrayPtrVector &samples) :
         array_(array),
-        sampler_(samples),
+        sampler_(array->getArrayDesc(), samples),
         data_accessor_(array) {}
 
     /**
