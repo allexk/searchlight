@@ -792,12 +792,12 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
 
         // Debug printing
         if (logger->isDebugEnabled()) {
-            std::ostringstream msg{"Synopses loaded for attribute "};
-            msg << attr_name << '(' << attr_search_id << "): ";
+            std::ostringstream msg;
+            msg << "Synopses loaded for attribute " << attr_name
+                    << '(' << attr_search_id << "): ";
             for (const auto &syn: loaded_synopses) {
                 msg << syn->GetName() << ", ";
             }
-            msg << '\n';
             logger->debug(msg.str());
         }
     }
