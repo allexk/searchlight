@@ -171,7 +171,7 @@ public:
         /**
          * Cell has been loaded.
          */
-        bool valid_ = false;
+        std::atomic<bool> valid_{false};
 
         /**
          * Constructs a new cell.
@@ -183,6 +183,18 @@ public:
          */
         Cell(double min, double max, double sum, uint64_t count) :
             min_(min), max_(max), sum_(sum), count_(count), valid_{true} {}
+
+        /**
+         * Copy constructor.
+         *
+         * Needed because of the atomic and usage of this class in a vector.
+         *
+         * @param cell cell to copy from
+         */
+        Cell(const Cell &cell) :
+            min_(cell.min_), max_(cell.max_), sum_(cell.sum_),
+            count_(cell.count_),
+            valid_(cell.valid_.load(std::memory_order_relaxed)) {}
 
         /**
          * Constructs an invalid (default) cell.

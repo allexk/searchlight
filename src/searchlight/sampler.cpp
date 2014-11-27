@@ -572,53 +572,51 @@ void Sampler::Synopsis::InitIterators() {
 void Sampler::Synopsis::FillCellFromArray(
         const Coordinates &pos, Sampler::Cell &cell) {
     /*
-     * Need to lock here.
-     *  -- For cached synopses, to avoid contention for loading cells
-     *  -- For all synopses, since we move iterators
+     * Need a lock here. For efficiency reasons this has been
+     * implemented as a double-checked locking with fences and atomics.
      *
-     * TODO: Think about the valid_ check. For now it has to be locked,
-     * since there is no way to prevent contention: may somebody is
-     * loading the cell right now? Now, the only way to deal with that is
-     * to preload the sample at the beginning.
+     * TODO: Possibly introduce preloaded synopses and avoid such checks
+     * all together for then, since there won't be any concurrency during
+     * the execution.
      */
-    std::lock_guard<std::mutex> lock{mtx_};
-    if (cell.valid_) {
-        // Caching synopses: somebody just loaded the cell
-        assert(cache_cells_);
-        return;
+    bool valid = cell.valid_.load(std::memory_order_acquire);
+    if (!valid) {
+        std::lock_guard<std::mutex> lock{mtx_};
+        valid = cell.valid_.load(std::memory_order_relaxed);
+        if (!valid) {
+            if (!count_it_) {
+                InitIterators();
+            }
+
+            if (!count_it_->setPosition(pos) || count_it_->isEmpty()) {
+                // No chunk in the array -- assume the cell is empty
+                cell.count_ = 0;
+                cell.valid_.store(true, std::memory_order_release);
+                return;
+            }
+
+            // should be a non-empty chunk for sure
+            if (!min_it_->setPosition(pos) ||
+                !max_it_->setPosition(pos) ||
+                !sum_it_->setPosition(pos)) {
+
+                std::ostringstream err_msg;
+                err_msg << "Cannot get info from synopsis, pos=(";
+                std::copy(pos.begin(), pos.end(),
+                        std::ostream_iterator<Coordinate>(err_msg, ", "));
+                err_msg << ")";
+
+                throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                        SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
+            }
+
+            cell.count_ = count_it_->getItem().getUint64();
+            cell.min_ = min_it_->getItem().getDouble();
+            cell.max_ = max_it_->getItem().getDouble();
+            cell.sum_ = sum_it_->getItem().getDouble();
+            cell.valid_.store(true, std::memory_order_release);
+        }
     }
-
-    if (!count_it_) {
-        InitIterators();
-    }
-
-    if (!count_it_->setPosition(pos) || count_it_->isEmpty()) {
-        // No chunk in the array -- assume the cell is empty
-        cell = Cell();
-        cell.valid_ = true;
-        return;
-    }
-
-    // should be a non-empty chunk for sure
-    if (!min_it_->setPosition(pos) ||
-        !max_it_->setPosition(pos) ||
-        !sum_it_->setPosition(pos)) {
-
-        std::ostringstream err_msg;
-        err_msg << "Cannot get info from synopsis, pos=(";
-        std::copy(pos.begin(), pos.end(),
-                std::ostream_iterator<Coordinate>(err_msg, ", "));
-        err_msg << ")";
-
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
-                SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
-    }
-
-    cell.valid_ = true;
-    cell.count_ = count_it_->getItem().getUint64();
-    cell.min_ = min_it_->getItem().getDouble();
-    cell.max_ = max_it_->getItem().getDouble();
-    cell.sum_ = sum_it_->getItem().getDouble();
 }
 
 void Sampler::Synopsis::ParseChunkSizes(const std::string &size_param) {
