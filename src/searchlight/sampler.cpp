@@ -554,6 +554,19 @@ void Sampler::Synopsis::SetCacheMode(bool mode) {
     }
 }
 
+void Sampler::Synopsis::Preload() {
+    if (!cache_cells_) {
+        LOG4CXX_WARN(logger, "Attempting to preload non-cached synopsis.");
+        return;
+    }
+
+    RegionIterator iter{*this, synopsis_origin_, synopsis_end_};
+    while (!iter.end()) {
+        GetCurrentCell(iter, nullptr);
+        ++iter;
+    }
+    preloaded_ = true;
+}
 
 void Sampler::Synopsis::InitIterators() {
     /*
@@ -642,11 +655,11 @@ void Sampler::Synopsis::ParseChunkSizes(const std::string &size_param) {
     }
 }
 
-
-
 Sampler::Sampler(const ArrayDesc &data_desc,
-        const std::vector<ArrayPtr> &synopsis_arrays) :
-            data_desc_{data_desc} {
+        const std::vector<ArrayPtr> &synopsis_arrays,
+        const SearchlightConfig &sl_config) :
+            data_desc_{data_desc},
+            sl_config_(sl_config) {
     // Create catalog of describing synopses
     for (const auto &array: synopsis_arrays) {
         const std::string &array_name =
@@ -787,7 +800,15 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
         });
 
         // Enable caching for the primary synopsis
-        loaded_synopses.front()->SetCacheMode(true);
+        const SynopsisPtr &primary_syn = loaded_synopses.front();
+        primary_syn->SetCacheMode(true);
+
+        // .. and preload it if needed
+        if (sl_config_.get("searchlight.sampler.preload", 1)) {
+            LOG4CXX_INFO(logger, "Preloading synopsis: "
+                    << primary_syn->GetName());
+            primary_syn->Preload();
+        }
 
         // Debug printing
         if (logger->isDebugEnabled()) {
@@ -872,7 +893,9 @@ Sampler::Cell *Sampler::Synopsis::GetCurrentCell(
     }
 
     // Load cell if needed (cannot check validity here -- concurrency issues)
-    FillCellFromArray(iter.GetCurrentSynopsisPosition(), *cell);
+    if (!preloaded_) {
+        FillCellFromArray(iter.GetCurrentSynopsisPosition(), *cell);
+    }
 
     return cell;
 }

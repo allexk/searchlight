@@ -57,10 +57,12 @@ public:
      *
      * @param array the scidb's original array
      * @param samples available samples
+     * @param sl_config Searchlight config
      */
-    SearchArrayDesc(const ArrayPtr &array, const ArrayPtrVector &samples) :
+    SearchArrayDesc(const ArrayPtr &array, const ArrayPtrVector &samples,
+            const SearchlightConfig &sl_config) :
         array_(array),
-        sampler_(array->getArrayDesc(), samples),
+        sampler_(array->getArrayDesc(), samples, sl_config),
         data_accessor_(array) {}
 
     /**

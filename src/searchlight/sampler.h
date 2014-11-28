@@ -79,9 +79,11 @@ public:
      *
      * @param data_desc data array descriptor
      * @param synopsis_arrays synopsis arrays
+     * @param sl_config Searchlight config
      */
     Sampler(const ArrayDesc &data_desc,
-            const std::vector<ArrayPtr> &synopsis_arrays);
+            const std::vector<ArrayPtr> &synopsis_arrays,
+            const SearchlightConfig &sl_config);
 
     /**
      * Loads synopses for the particular attribute.
@@ -305,6 +307,18 @@ private:
             return synopsis_array_->getName();
         }
 
+        /**
+         * Preloads this synopsis.
+         *
+         * Preloading should be performed before concurrent access to the
+         * synopsis. If a synopsis is preloaded, threads will not check the
+         * validity of the cells and will use them immediately.
+         *
+         * Since the checking is done via a bool flag, preload must be done
+         * at the initialization phase.
+         */
+        void Preload();
+
     private:
         /*
          * make RegionIterator a friend since it requires frequent access
@@ -337,6 +351,9 @@ private:
 
         // Do we cache cells in memory?
         bool cache_cells_ = false;
+
+        // Is this synopses preloaded? No cell validation required, if it is.
+        bool preloaded_ = false;
 
         // Attribute IDs for min/max/count/sum elements in the synopsis array
         AttributeID min_id_, max_id_, count_id_, sum_id_;
@@ -568,6 +585,9 @@ private:
 
     // Descriptor of the data array we store synopses for
     const ArrayDesc data_desc_;
+
+    // Searchlight config
+    const SearchlightConfig &sl_config_;
 
     // Aggregate map to resolve aggregates
     typedef std::map<const std::string, SampleAggregateFactory> AggrMap;

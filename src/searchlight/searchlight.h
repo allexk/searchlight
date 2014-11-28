@@ -602,7 +602,7 @@ public:
      * @param samples samples available for the data array
      */
     void RegisterArray(ArrayPtr &data, const ArrayPtrVector &samples) {
-        array_desc_.reset(new SearchArrayDesc(data, samples));
+        array_desc_.reset(new SearchArrayDesc(data, samples, GetConfig()));
     }
 
     /**
