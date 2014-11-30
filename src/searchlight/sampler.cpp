@@ -542,12 +542,8 @@ void Sampler::Synopsis::SetCacheMode(bool mode) {
          * later. The cells are invalid and will be loaded from the synopsis
          * later in lazy fashion.
          */
-        size_t total_cell_count = 1;
-        for (auto cn: cell_nums_) {
-            total_cell_count *= cn;
-        }
         cells_.clear();
-        cells_.resize(total_cell_count);
+        cells_.resize(GetTotalCellCount());
     } else {
         cells_.clear();
         cells_.shrink_to_fit();
@@ -799,15 +795,32 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
             return s1->GetCellSize() > s2->GetCellSize();
         });
 
-        // Enable caching for the primary synopsis
-        const SynopsisPtr &primary_syn = loaded_synopses.front();
-        primary_syn->SetCacheMode(true);
+        // Enable caching for some of the synopses
+        size_t memory_limit_mb =
+                sl_config_.get("searchlight.sampler.memory_per_attr", 1024);
+        const bool preload_syns =
+                sl_config_.get("searchlight.sampler.preload", 1);
+        for (const auto &syn: loaded_synopses) {
+            const size_t syn_mem_mb = syn->MemorySize() / 1024 / 1024; // in MB
+            if (syn_mem_mb <= memory_limit_mb) {
+                // Cache the synopsis
+                syn->SetCacheMode(true);
+                // .. and preload it if needed
+                if (preload_syns) {
+                    LOG4CXX_INFO(logger, "Preloading synopsis: "
+                            << syn->GetName());
+                    syn->Preload();
+                }
+                memory_limit_mb -= syn_mem_mb;
+            } else {
+                break;
+            }
+        }
 
-        // .. and preload it if needed
-        if (sl_config_.get("searchlight.sampler.preload", 1)) {
-            LOG4CXX_INFO(logger, "Preloading synopsis: "
-                    << primary_syn->GetName());
-            primary_syn->Preload();
+        // Warn about performance problems...
+        if (!loaded_synopses.front()->IsCached()) {
+            LOG4CXX_WARN(logger, "No synopses are cached for attribute "
+                    << attr_name << "(" << attr_search_id << ")");
         }
 
         // Debug printing
@@ -816,7 +829,8 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
             msg << "Synopses loaded for attribute " << attr_name
                     << '(' << attr_search_id << "): ";
             for (const auto &syn: loaded_synopses) {
-                msg << syn->GetName() << ", ";
+                msg << syn->GetName() << "(cached: " << syn->IsCached()
+                        << "), ";
             }
             logger->debug(msg.str());
         }
@@ -891,7 +905,6 @@ Sampler::Cell *Sampler::Synopsis::GetCurrentCell(
         const size_t cell_num = iter.GetCell();
         cell = &cells_[cell_num];
     }
-
     // Load cell if needed (cannot check validity here -- concurrency issues)
     if (!preloaded_) {
         FillCellFromArray(iter.GetCurrentSynopsisPosition(), *cell);
@@ -922,7 +935,9 @@ IntervalValueVector Sampler::Synopsis::ComputeAggregate(const Coordinates &low,
         }
 
         ++iter;
-        tmp_cell.valid_ = false;
+        if (!cache_cells_) {
+            tmp_cell.valid_ = false;
+        }
     }
 
     // finalize the result

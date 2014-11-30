@@ -26,6 +26,11 @@
             "helper_workload": 1000
         },
 
+        "sampler": {
+            "preload": 1,
+            "memory_per_attr": 1024
+        },
+
         "load_aux_samples": 1
     },
 

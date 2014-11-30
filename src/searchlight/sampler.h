@@ -240,6 +240,15 @@ private:
         void SetCacheMode(bool mode);
 
         /**
+         * Check if this synopsis is cached.
+         *
+         * @return true, if the cells are cached; false, otherwise
+         */
+        bool IsCached() const {
+            return cache_cells_;
+        }
+
+        /**
          * Returns the cell size of the synopsis.
          *
          * @return synopsis cell size
@@ -319,6 +328,15 @@ private:
          */
         void Preload();
 
+        /**
+         * Return memory size needed to cache all cells of this synopsis.
+         *
+         * @return required cache memory size (in bytes)
+         */
+        size_t MemorySize() const {
+            return sizeof(Cell) * GetTotalCellCount();
+        }
+
     private:
         /*
          * make RegionIterator a friend since it requires frequent access
@@ -331,6 +349,19 @@ private:
          *  have the format "x_size,y_size,...".
          */
         void ParseChunkSizes(const std::string &size_param);
+
+        /**
+         * Return total number of cells in the synopsis.
+         *
+         * @return total number of synopsis cells
+         */
+        size_t GetTotalCellCount() const {
+            size_t total_cell_count = 1;
+            for (auto cn: cell_nums_) {
+                total_cell_count *= cn;
+            }
+            return total_cell_count;
+        }
 
         /*
          * Retrieves the synopsis cell from the specified position.
