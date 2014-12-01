@@ -558,13 +558,24 @@ void Sampler::Synopsis::Preload() {
 
     RegionIterator iter{*this, synopsis_origin_, synopsis_end_};
     while (!iter.end()) {
-        GetCurrentCell(iter, nullptr);
+        iter.GetCell();
         ++iter;
     }
     preloaded_ = true;
 }
 
-void Sampler::Synopsis::InitIterators() {
+const Sampler::Cell &Sampler::Synopsis::CachedAccessor::GetCell(
+        const RegionIterator &iter) {
+    return syn_.CacheCell(iter, iters_);
+}
+
+const Sampler::Cell &Sampler::Synopsis::NonCachedAccessor::GetCell(
+        const RegionIterator &iter) {
+    syn_.FillCellFromArray(iter.GetCurrentPosition(), iters_, cell_);
+    return cell_;
+}
+
+void Sampler::Synopsis::InitIterators(ArrayIterators &iters) const {
     /*
      * One thing to consider here. Creating item iterator results in
      * fetching the first array chunk, which might create a small performance
@@ -572,57 +583,57 @@ void Sampler::Synopsis::InitIterators() {
      * chunk iterators when fetching a synopsis cell (see commented code
      * for the FillCell... function).
      */
-    min_it_ = synopsis_array_->getItemIterator(min_id_);
-    max_it_ = synopsis_array_->getItemIterator(max_id_);
-    sum_it_ = synopsis_array_->getItemIterator(sum_id_);
-    count_it_ = synopsis_array_->getItemIterator(count_id_);
+    iters.min_it_ = synopsis_array_->getItemIterator(min_id_);
+    iters.max_it_ = synopsis_array_->getItemIterator(max_id_);
+    iters.sum_it_ = synopsis_array_->getItemIterator(sum_id_);
+    iters.count_it_ = synopsis_array_->getItemIterator(count_id_);
 }
 
-void Sampler::Synopsis::FillCellFromArray(
-        const Coordinates &pos, Sampler::Cell &cell) {
+void Sampler::Synopsis::FillCellFromArray(const Coordinates &pos,
+        ArrayIterators &iters, Cell &cell) const {
+    // Init iterators (first time only)
+    if (!iters.count_it_) {
+        InitIterators(iters);
+    }
+
+    if (!iters.count_it_->setPosition(pos) || iters.count_it_->isEmpty()) {
+        // No chunk in the array -- assume the cell is empty
+        cell.count_ = 0;
+    } else {
+        // should be a non-empty chunk for sure
+        if (!iters.min_it_->setPosition(pos) ||
+            !iters.max_it_->setPosition(pos) ||
+            !iters.sum_it_->setPosition(pos)) {
+
+            std::ostringstream err_msg;
+            err_msg << "Cannot get info from synopsis, pos=(";
+            std::copy(pos.begin(), pos.end(),
+                    std::ostream_iterator<Coordinate>(err_msg, ", "));
+            err_msg << ")";
+
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                    SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
+        }
+
+        cell.count_ = iters.count_it_->getItem().getUint64();
+        cell.min_ = iters.min_it_->getItem().getDouble();
+        cell.max_ = iters.max_it_->getItem().getDouble();
+        cell.sum_ = iters.sum_it_->getItem().getDouble();
+    }
+}
+
+void Sampler::Synopsis::LoadCellFromArray(const Coordinates &pos,
+        ArrayIterators &iters, Cell &cell) const {
     /*
      * Need a lock here. For efficiency reasons this has been
      * implemented as a double-checked locking with fences and atomics.
-     *
-     * TODO: Possibly introduce preloaded synopses and avoid such checks
-     * all together for then, since there won't be any concurrency during
-     * the execution.
      */
     bool valid = cell.valid_.load(std::memory_order_acquire);
     if (!valid) {
         std::lock_guard<std::mutex> lock{mtx_};
         valid = cell.valid_.load(std::memory_order_relaxed);
         if (!valid) {
-            if (!count_it_) {
-                InitIterators();
-            }
-
-            if (!count_it_->setPosition(pos) || count_it_->isEmpty()) {
-                // No chunk in the array -- assume the cell is empty
-                cell.count_ = 0;
-                cell.valid_.store(true, std::memory_order_release);
-                return;
-            }
-
-            // should be a non-empty chunk for sure
-            if (!min_it_->setPosition(pos) ||
-                !max_it_->setPosition(pos) ||
-                !sum_it_->setPosition(pos)) {
-
-                std::ostringstream err_msg;
-                err_msg << "Cannot get info from synopsis, pos=(";
-                std::copy(pos.begin(), pos.end(),
-                        std::ostream_iterator<Coordinate>(err_msg, ", "));
-                err_msg << ")";
-
-                throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
-                        SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
-            }
-
-            cell.count_ = count_it_->getItem().getUint64();
-            cell.min_ = min_it_->getItem().getDouble();
-            cell.max_ = max_it_->getItem().getDouble();
-            cell.sum_ = sum_it_->getItem().getDouble();
+            FillCellFromArray(pos, iters, cell);
             cell.valid_.store(true, std::memory_order_release);
         }
     }
@@ -898,17 +909,16 @@ bool Sampler::Synopsis::RegionValidForSample(const Coordinates &low,
     return true;
 }
 
-Sampler::Cell *Sampler::Synopsis::GetCurrentCell(
-        const RegionIterator &iter, Cell *nc_cell) {
-    Cell *cell = nc_cell;
-    if (cache_cells_) {
-        const size_t cell_num = iter.GetCell();
-        cell = &cells_[cell_num];
-    }
+const Sampler::Cell &Sampler::Synopsis::CacheCell(
+        const RegionIterator &iter, ArrayIterators &iters) {
+    assert(iter.GetCellLinear() < cells_.size());
+    Cell &cell = cells_[iter.GetCellLinear()];
+
     // Load cell if needed (cannot check validity here -- concurrency issues)
     if (!preloaded_) {
-        FillCellFromArray(iter.GetCurrentSynopsisPosition(), *cell);
+        LoadCellFromArray(iter.GetCurrentSynopsisPosition(), iters, cell);
     }
+    assert(cell.valid_);
 
     return cell;
 }
@@ -921,23 +931,16 @@ IntervalValueVector Sampler::Synopsis::ComputeAggregate(const Coordinates &low,
 
     // go through the chunks
     RegionIterator iter(*this, inlow, inhigh);
-    Cell tmp_cell; // for non-caching synopsis
     while (!iter.end()) {
-        const Cell *cell = GetCurrentCell(iter, &tmp_cell);
-        assert(cell->valid_);
-
+        const Cell &cell = iter.GetCell();
         const uint64_t part_size = iter.GetPartSize();
         for (size_t i = 0; i < aggs.size(); i++) {
-            if (cell->count_ > 0) {
+            if (cell.count_ > 0) {
                 aggs[i].get()->AccumulateChunk(shape_cell_size_,
-                        part_size, *cell);
+                        part_size, cell);
             }
         }
-
         ++iter;
-        if (!cache_cells_) {
-            tmp_cell.valid_ = false;
-        }
     }
 
     // finalize the result
@@ -956,21 +959,19 @@ IntervalValue Sampler::Synopsis::GetElement(const Coordinates &point) {
     }
 
     RegionIterator iter(*this, point, point);
-    Cell tmp_cell; // for non-caching synopsis
-    const Cell *cell = GetCurrentCell(iter, &tmp_cell);
-    assert(cell->valid_);
+    const Cell &cell = iter.GetCell();
 
-    if (cell->count_ == 0) {
+    if (cell.count_ == 0) {
         return res; // in an empty chunk -- definitely NULL
-    } else if (cell->count_ == shape_cell_size_) {
+    } else if (cell.count_ == shape_cell_size_) {
         res.state_ = IntervalValue::NON_NULL; // full chunk -- no empty elems
     } else {
         res.state_ = IntervalValue::MAY_NULL;
     }
 
-    res.max_ = cell->max_;
-    res.min_ = cell->min_;
-    res.val_ = cell->sum_ / cell->count_; // uniformity assumption
+    res.max_ = cell.max_;
+    res.min_ = cell.min_;
+    res.val_ = cell.sum_ / cell.count_; // uniformity assumption
 
     return res;
 }

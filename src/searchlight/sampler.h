@@ -339,10 +339,65 @@ private:
 
     private:
         /*
-         * make RegionIterator a friend since it requires frequent access
+         * Make RegionIterator a friend since it requires frequent access
          * to meta-data.
          */
         friend class RegionIterator;
+
+        /**
+         * Contains iterators needed to access the synopsis array.
+         */
+        struct ArrayIterators {
+            ConstItemIteratorPtr min_it_, max_it_, sum_it_, count_it_;
+        };
+
+        /**
+         * CellAccessor class that retrieves a cell from the synopsis.
+         *
+         * Depending on the synopsis it might go to disk and load the cell
+         * or take the cell from memory.
+         */
+        class CellAccessor : private boost::noncopyable {
+        public:
+            virtual const Cell &GetCell(const RegionIterator &iter) = 0;
+        };
+
+        class CachedAccessor : public CellAccessor {
+        public:
+            CachedAccessor(Synopsis &syn) : syn_(syn) {}
+            virtual const Cell &GetCell(const RegionIterator &iter) override;
+        private:
+            Synopsis &syn_;
+            ArrayIterators iters_;
+        };
+
+        class NonCachedAccessor : public CellAccessor {
+        public:
+            NonCachedAccessor(Synopsis &syn) : syn_(syn) {}
+            virtual const Cell &GetCell(const RegionIterator &iter) override;
+        private:
+            const Synopsis &syn_;
+            Cell cell_;
+            ArrayIterators iters_;
+        };
+
+        /**
+         * Return this synopsis cell accessor.
+         *
+         * Note, this accessor may change the synopsis, in case the synopsis
+         * caches cells retrieved.
+         *
+         * The user is responsible for destroying the accessor.
+         *
+         * @return cell accessor for this synopsis
+         */
+        CellAccessor *GetCellAccessor() {
+            if (cache_cells_) {
+                return new CachedAccessor(*this);
+            } else {
+                return new NonCachedAccessor(*this);
+            }
+        }
 
         /*
          *  Parses chunk sizes out of the string. The string is supposed to
@@ -366,16 +421,22 @@ private:
         /*
          * Retrieves the synopsis cell from the specified position.
          */
-        void FillCellFromArray(const Coordinates &pos, Cell &cell);
-
-        // Init synopsis iterators.
-        void InitIterators();
+        void FillCellFromArray(const Coordinates &pos,
+                ArrayIterators &iters, Cell &cell) const;
 
         /*
-         *  Retrieve and load the cell iterator is pointing to.
-         *    nc_cell is a fallback cell, when cells are not cached
+         * Retrieves the synopsis cell and caches it.
          */
-        Cell *GetCurrentCell(const RegionIterator &iter, Cell *nc_cell);
+        void LoadCellFromArray(const Coordinates &pos,
+                ArrayIterators &iters, Cell &cell) const;
+
+        // Init synopsis iterators.
+        void InitIterators(ArrayIterators &iters) const;
+
+        /*
+         *  Load and cache the cell iterator is pointing to.
+         */
+        const Cell &CacheCell(const RegionIterator &iter, ArrayIterators &iters);
 
         // Synopsis cells (linearized)
         Cells cells_;
@@ -388,9 +449,6 @@ private:
 
         // Attribute IDs for min/max/count/sum elements in the synopsis array
         AttributeID min_id_, max_id_, count_id_, sum_id_;
-
-        // Iterators to the synopsis array for faster chunk retrieval
-        ConstItemIteratorPtr min_it_, max_it_, sum_it_, count_it_;
 
         // The sample array
         const ArrayPtr synopsis_array_;
@@ -407,8 +465,18 @@ private:
         // The number of cells per each dimension
         Coordinates cell_nums_;
 
-        // To synchronize access during cell loads
-        std::mutex mtx_;
+        /* To synchronize access during cell loads.
+         *
+         * TODO: Strictly speaking, there is no need to have a single mutex for
+         * multiple consumers loading different cells. Another simple solution
+         * is to have two mutexes, one for even and another for odd cells.
+         * One could even generalize further, e.g., to four mutexes. This way
+         * if consumers load different (modulo) cells, they won't block and
+         * if they load the same cell, one of them will block, which is
+         * the main intention here. Note, in this case each consumer should
+         * have its own copy of the iterators.
+         */
+        mutable std::mutex mtx_;
     };
 
     /**
@@ -430,7 +498,7 @@ private:
          * We assume that the low-high coordinates comprise a valid region,
          * where high[i] >= low[i].
          */
-        RegionIterator(const Synopsis &synopsis, const Coordinates &low,
+        RegionIterator(Synopsis &synopsis, const Coordinates &low,
                 const Coordinates &high) :
                     pos_(low),
                     cell_pos_(-1),
@@ -476,8 +544,16 @@ private:
         }
 
         // Return the linear cell position
-        uint64_t GetCell() const {
+        uint64_t GetCellLinear() const {
             return cell_pos_;
+        }
+
+        // Return synopsis cell this iterator points to.
+        const Cell &GetCell() {
+            if (!cell_accessor_) {
+                cell_accessor_.reset(synopsis_.GetCellAccessor());
+            }
+            return cell_accessor_->GetCell(*this);
         }
 
         // Return current cell position (non-linear)
@@ -589,7 +665,10 @@ private:
         const Coordinates &region_low_, &region_high_;
 
         // The synopsis we are traversing
-        const Synopsis &synopsis_;
+        Synopsis &synopsis_;
+
+        // Accessor to get cells
+        std::unique_ptr<Synopsis::CellAccessor> cell_accessor_;
 
         // Do we point to a valid position?
         bool valid_;
