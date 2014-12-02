@@ -556,11 +556,6 @@ private:
             return cell_accessor_->GetCell(*this);
         }
 
-        // Return current cell position (non-linear)
-        const Coordinates &GetCurrentPosition() const {
-            return pos_;
-        }
-
         // Are we fully covering the current cell with the region?
         bool CoversFullCell() const {
             bool res = true;

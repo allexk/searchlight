@@ -571,7 +571,7 @@ const Sampler::Cell &Sampler::Synopsis::CachedAccessor::GetCell(
 
 const Sampler::Cell &Sampler::Synopsis::NonCachedAccessor::GetCell(
         const RegionIterator &iter) {
-    syn_.FillCellFromArray(iter.GetCurrentPosition(), iters_, cell_);
+    syn_.FillCellFromArray(iter.GetCurrentSynopsisPosition(), iters_, cell_);
     return cell_;
 }
 
