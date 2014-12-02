@@ -360,6 +360,7 @@ private:
         class CellAccessor : private boost::noncopyable {
         public:
             virtual const Cell &GetCell(const RegionIterator &iter) = 0;
+            virtual ~CellAccessor() {}
         };
 
         class CachedAccessor : public CellAccessor {
