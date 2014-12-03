@@ -215,6 +215,13 @@ private:
     class RegionIterator;
 
     /**
+     * Convenience struct for storing a region: a pair of coordinate vectors.
+     */
+    struct Region {
+        Coordinates low_, high_;
+    };
+
+    /**
      * This class contains all synopsis information about a single attribute
      * of the array. This includes synopsis cells and the corresponding
      * metadata. Different synopses, even for a single attribute,
@@ -288,12 +295,14 @@ private:
         /**
          * Compute the region's aggregates over this synopsis.
          *
+         * This function does not "finalyze" the aggregates. This is the
+         * responsibility of the caller.
+         *
          * @param low low region coordinates
          * @param high high region coordinates
          * @param aggs resolver aggregate functions
-         * @return region's aggregates, one per aggregate
          */
-        IntervalValueVector ComputeAggregate(const Coordinates &low,
+        void ComputeAggregate(const Coordinates &low,
                 const Coordinates &high,
                 const SampleAggregatePtrVector &aggs);
 
@@ -336,6 +345,10 @@ private:
         size_t MemorySize() const {
             return sizeof(Cell) * GetTotalCellCount();
         }
+
+        void ComputeAggregatesWithThr(const SampleAggregatePtrVector &aggs,
+                const std::vector<Region> &in_regions,
+                std::vector<Region> &left_regions, double cell_thr);
 
     private:
         /*
@@ -510,6 +523,20 @@ private:
             cell_pos_ = GetCellPos();
         }
 
+        /**
+         * Reset this iterator to a new region.
+         *
+         * @param low left region coordinates
+         * @param high right region coordinates
+         */
+        void Reset(const Coordinates &low, const Coordinates &high) {
+            region_low_ = low;
+            region_high_ = high;
+            pos_ = low;
+            cell_pos_ = GetCellPos();
+            valid_ = true;
+        }
+
         // prefix ++
         RegionIterator &operator++() {
             size_t i = pos_.size() - 1;
@@ -658,7 +685,7 @@ private:
         uint64_t cell_pos_;
 
         // Boundaries for the region
-        const Coordinates &region_low_, &region_high_;
+        Coordinates region_low_, region_high_;
 
         // The synopsis we are traversing
         Synopsis &synopsis_;
@@ -698,6 +725,9 @@ private:
     // Aggregate map to resolve aggregates
     typedef std::map<const std::string, SampleAggregateFactory> AggrMap;
     AggrMap aggrs_;
+
+    // Cell threshold: if the query region covers a cell less, we go deeper
+    double cell_thr_;
 };
 
 /**

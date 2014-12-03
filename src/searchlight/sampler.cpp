@@ -683,6 +683,9 @@ Sampler::Sampler(const ArrayDesc &data_desc,
     aggrs_["sum"] = SumSampleAggregate::Create;
     aggrs_["min"] = MinMaxSampleAggregate::CreateMin;
     aggrs_["max"] = MinMaxSampleAggregate::CreateMax;
+
+    // Read config params
+    cell_thr_ = sl_config_.get("searchlight.sampler.cell_thr", 0.0);
 }
 
 //
@@ -923,7 +926,7 @@ const Sampler::Cell &Sampler::Synopsis::CacheCell(
     return cell;
 }
 
-IntervalValueVector Sampler::Synopsis::ComputeAggregate(const Coordinates &low,
+void Sampler::Synopsis::ComputeAggregate(const Coordinates &low,
         const Coordinates &high, const SampleAggregatePtrVector &aggs) {
     // copy to check correctness and align
     Coordinates inlow(low), inhigh(high);
@@ -942,14 +945,34 @@ IntervalValueVector Sampler::Synopsis::ComputeAggregate(const Coordinates &low,
         }
         ++iter;
     }
+}
 
-    // finalize the result
-    IntervalValueVector res(aggs.size());
-    for (size_t i = 0; i < aggs.size(); i++) {
-        aggs[i].get()->Finalize(res[i]);
+void Sampler::Synopsis::ComputeAggregatesWithThr(
+        const SampleAggregatePtrVector &aggs,
+        const std::vector<Region> &in_regions,
+        std::vector<Region> &left_regions, double cell_thr) {
+    // We will reuse the iterator, but have to init it first with some values
+    RegionIterator iter{*this, synopsis_origin_, synopsis_origin_};
+    for (const auto &region: in_regions) {
+        iter.Reset(region.low_, region.high_);
+        while (!iter.end()) {
+            const uint64_t part_size = iter.GetPartSize();
+            if (double(part_size) / shape_cell_size_ >= cell_thr) {
+                const Cell &cell = iter.GetCell();
+                for (size_t i = 0; i < aggs.size(); i++) {
+                    if (cell.count_ > 0) {
+                        aggs[i].get()->AccumulateChunk(shape_cell_size_,
+                                part_size, cell);
+                    }
+                }
+            } else {
+                Region part;
+                iter.GetCoveredCell(part.low_, part.high_);
+                left_regions.push_back(std::move(part));
+            }
+            ++iter;
+        }
     }
-
-    return res;
 }
 
 IntervalValue Sampler::Synopsis::GetElement(const Coordinates &point) {
@@ -981,27 +1004,6 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
         const StringVector &aggr_names, bool exact) const {
     assert(s_attr < synopses_.size());
 
-    Synopsis *syn = nullptr;
-    if (exact) {
-        for (const auto &s: synopses_[s_attr]) {
-            if (s->RegionValidForSample(low, high)) {
-                syn = s.get();
-                break;
-            }
-        }
-        /*
-         * If we cannot find a suitable synopsis, that means the exact
-         * computation cannot be performed by the sampler.
-         */
-        if (!syn) {
-            return IntervalValueVector();
-        }
-    } else {
-        // For non-exact computation alway use the primary synopsis
-        assert(!synopses_[s_attr].empty());
-        syn = synopses_[s_attr][0].get();
-    }
-
     // resolve aggregates
     SampleAggregatePtrVector aggs(aggr_names.size());
     for (size_t i = 0; i < aggr_names.size(); i++) {
@@ -1016,7 +1018,56 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
         aggs[i].reset(it->second());
     }
 
-    return syn->ComputeAggregate(low, high, aggs);
+    // Choose synopsis
+    Synopsis *syn = nullptr;
+    if (exact) {
+        for (const auto &s: synopses_[s_attr]) {
+            if (s->RegionValidForSample(low, high)) {
+                syn = s.get();
+                break;
+            }
+        }
+        /*
+         * If we cannot find a suitable synopsis, that means the exact
+         * computation cannot be performed by the sampler.
+         */
+        if (!syn) {
+            return IntervalValueVector();
+        } else {
+            syn->ComputeAggregate(low, high, aggs);
+        }
+    } else {
+        // Non-exact computation: use the threshold algorithm
+        assert(!synopses_[s_attr].empty());
+        auto &syns = synopses_[s_attr];
+
+        std::vector<Region> regions{Region{low, high}};
+        syns[0]->CheckAndCorrectBounds(regions[0].low_, regions[0].high_);
+        std::vector<Region> left_regions;
+
+        for (size_t i = 0; i < syns.size(); i++) {
+            // Check if we have a cached higher-reolution synopsis
+            const bool have_better_synopses = (i != syns.size() - 1) &&
+                    syns[i + 1]->IsCached();
+            syns[i]->ComputeAggregatesWithThr(aggs, regions, left_regions,
+                    have_better_synopses ? cell_thr_ : 0.0);
+            if (!left_regions.empty()) {
+                regions = left_regions;
+                left_regions.clear();
+            } else {
+                break;
+            }
+        }
+        assert(left_regions.empty());
+    }
+
+    // finalize the result
+    IntervalValueVector res(aggs.size());
+    for (size_t i = 0; i < aggs.size(); i++) {
+        aggs[i].get()->Finalize(res[i]);
+    }
+
+    return res;
 }
 
 IntervalValue Sampler::GetElement(const Coordinates &point,
