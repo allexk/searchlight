@@ -579,6 +579,18 @@ void Validator::operator()() {
                     &solver_, restart_period_, &search_vars_prototype_, {},
                     false));
     solver_status_ = solver_.Solve(db);
+
+    // Check if Solve() ended because of the false model
+    const Searchlight::Status sl_status = sl_.GetStatus();
+    if (sl_status != Searchlight::Status::TERMINATED
+            && sl_status != Searchlight::Status::COMMITTED) {
+        /*
+         * Solve() exited because of the model. We still have to handle the
+         * main loop and all control messages.
+         */
+        GetNextAssignments();
+    }
+
     LOG4CXX_INFO(logger, "Validator exited solve()");
 }
 

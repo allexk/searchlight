@@ -120,6 +120,8 @@ public:
      * terminate properly.
      */
     void WakeupIfIdle() const {
+        // Avoid the case where we signal before the validator starts waiting
+        std::lock_guard<std::mutex> lock{to_validate_mtx_};
         validate_cond_.notify_all();
     }
 
