@@ -86,6 +86,13 @@ public:
             const SearchlightConfig &sl_config);
 
     /**
+     * Destructor.
+     *
+     * For now it just outputs some statistics.
+     */
+    ~Sampler();
+
+    /**
      * Loads synopses for the particular attribute.
      *
      * If the synopses has already been loaded, the function does nothing.
@@ -346,9 +353,36 @@ private:
             return sizeof(Cell) * GetTotalCellCount();
         }
 
+        /**
+         * Compute an aggregate for regions considering cell threshold.
+         *
+         * If a region intersects a cell in less than the threshold part
+         * (specified as a [0, 1] ratio), the intersection is put into the
+         * specified list and is not computed. All other intersections
+         * (above the threshold) are computed as usual.
+         *
+         * Note, if the threshold is <=0, this synopsis will compute all
+         * regions entirely, without leftovers.
+         *
+         * @param aggs aggregates to compute
+         * @param in_regions input regions to compute
+         * @param left_regions regions left without the computation
+         * @param cell_thr cell threshold
+         */
         void ComputeAggregatesWithThr(const SampleAggregatePtrVector &aggs,
                 const std::vector<Region> &in_regions,
                 std::vector<Region> &left_regions, double cell_thr);
+
+        /**
+         * Output this synopsis statistics into a stream.
+         *
+         * @param str stream for output
+         */
+        void OutputStats(std::ostream &str) const {
+            str << "Synopsis " << GetName() << ": \n";
+            str << "\tCells accessed: "
+                    << cells_accessed_.load(std::memory_order_relaxed);
+        }
 
     private:
         /*
@@ -478,6 +512,9 @@ private:
 
         // The number of cells per each dimension
         Coordinates cell_nums_;
+
+        // Stats: total number of cell accessed
+        std::atomic<uint64_t> cells_accessed_{0};
 
         /* To synchronize access during cell loads.
          *

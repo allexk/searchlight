@@ -688,6 +688,21 @@ Sampler::Sampler(const ArrayDesc &data_desc,
     cell_thr_ = sl_config_.get("searchlight.sampler.cell_thr", 0.0);
 }
 
+Sampler::~Sampler() {
+    std::ostringstream stats_str;
+    stats_str << "Stats for synopses follows:\n";
+    for (size_t i = 0; i < synopses_.size(); i++) {
+        stats_str << "\tStats for attribute " << i << ": \n";
+        for (const auto &syn: synopses_[i]) {
+            syn->OutputStats(stats_str);
+            stats_str << "\n";
+        }
+    }
+    if (logger->isInfoEnabled()) {
+        logger->info(stats_str.str());
+    }
+}
+
 //
 // Code for using a pair of array/chunk iterators instead of item iterators.
 //
@@ -934,8 +949,10 @@ void Sampler::Synopsis::ComputeAggregate(const Coordinates &low,
 
     // go through the chunks
     RegionIterator iter(*this, inlow, inhigh);
+    uint64_t cells_accessed = 0;
     while (!iter.end()) {
         const Cell &cell = iter.GetCell();
+        cells_accessed++;
         const uint64_t part_size = iter.GetPartSize();
         for (size_t i = 0; i < aggs.size(); i++) {
             if (cell.count_ > 0) {
@@ -945,6 +962,7 @@ void Sampler::Synopsis::ComputeAggregate(const Coordinates &low,
         }
         ++iter;
     }
+    cells_accessed_.fetch_add(cells_accessed, std::memory_order_relaxed);
 }
 
 void Sampler::Synopsis::ComputeAggregatesWithThr(
@@ -953,12 +971,14 @@ void Sampler::Synopsis::ComputeAggregatesWithThr(
         std::vector<Region> &left_regions, double cell_thr) {
     // We will reuse the iterator, but have to init it first with some values
     RegionIterator iter{*this, synopsis_origin_, synopsis_origin_};
+    uint64_t cells_accessed = 0;
     for (const auto &region: in_regions) {
         iter.Reset(region.low_, region.high_);
         while (!iter.end()) {
             const uint64_t part_size = iter.GetPartSize();
             if (double(part_size) / shape_cell_size_ >= cell_thr) {
                 const Cell &cell = iter.GetCell();
+                cells_accessed++;
                 for (size_t i = 0; i < aggs.size(); i++) {
                     if (cell.count_ > 0) {
                         aggs[i].get()->AccumulateChunk(shape_cell_size_,
@@ -973,6 +993,7 @@ void Sampler::Synopsis::ComputeAggregatesWithThr(
             ++iter;
         }
     }
+    cells_accessed_.fetch_add(cells_accessed, std::memory_order_relaxed);
 }
 
 IntervalValue Sampler::Synopsis::GetElement(const Coordinates &point) {
@@ -983,6 +1004,7 @@ IntervalValue Sampler::Synopsis::GetElement(const Coordinates &point) {
 
     RegionIterator iter(*this, point, point);
     const Cell &cell = iter.GetCell();
+    cells_accessed_.fetch_add(1, std::memory_order_relaxed);
 
     if (cell.count_ == 0) {
         return res; // in an empty chunk -- definitely NULL
