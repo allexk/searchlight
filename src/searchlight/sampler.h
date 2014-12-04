@@ -539,8 +539,15 @@ private:
 
         // prefix ++
         RegionIterator &operator++() {
+            // Row-major order
             size_t i = pos_.size() - 1;
-            while ((pos_[i] += synopsis_.cell_size_[i]) > region_high_[i]) {
+            /*
+             * We HAVE to align the coordinate by the cell here. Otherwise,
+             * we might miss small pieces of the region protruding beyond the
+             * last cell in any dimension.
+             */
+            while ((pos_[i] = AlignCoordinate(pos_[i], i) +
+                    synopsis_.cell_size_[i]) > region_high_[i]) {
                 pos_[i] = region_low_[i];
                 if (i == 0) {
                     valid_ = false;
@@ -551,11 +558,11 @@ private:
 
             if (valid_) {
                 /*
-                 *  Align by the cell boundary. We need this to properly
-                 *  detect cell pieces the region covers.
+                 * Small optimization for moving the cell number: since
+                 * we're going in the row-major order, we can just increment
+                 * it along a row. However, when me move to the next row, we
+                 * recompute it from scratch.
                  */
-                pos_[i] -= (pos_[i] - synopsis_.synopsis_origin_[i]) %
-                        synopsis_.cell_size_[i];
                 if (i == pos_.size() - 1) {
                     cell_pos_++;
                 } else {
@@ -647,6 +654,18 @@ private:
         }
 
     private:
+        /**
+         * Align the coordinate with the start of the corresponding cell.
+         *
+         * @param x coordinate to align
+         * @param i dimension index
+         * @return aligned coordinate
+         */
+        Coordinate AlignCoordinate(Coordinate x, size_t i) const {
+            return x - (x - synopsis_.synopsis_origin_[i]) %
+                    synopsis_.cell_size_[i];
+        }
+
         // Returns the linear cell number for the current position
         uint64_t GetCellPos() const {
             // Linear position is computed in synopsis coordinates
@@ -669,9 +688,7 @@ private:
         void GetHighCellCoords(Coordinates &high) const {
             for (size_t i = 0; i < pos_.size(); i++) {
                 const Coordinate cell_size = synopsis_.cell_size_[i];
-                high[i] = (pos_[i] -
-                      (pos_[i] - synopsis_.synopsis_origin_[i]) % cell_size) +
-                      cell_size - 1;
+                high[i] = AlignCoordinate(pos_[i], i) + cell_size - 1;
                 if (high[i] > region_high_[i]) {
                     high[i] = region_high_[i];
                 }
