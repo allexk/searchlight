@@ -615,9 +615,21 @@ Validator::CandidateVector *Validator::GetNextAssignments() {
             return nullptr;
         } else if (sl_status == Searchlight::Status::FIN_SEARCH) {
             if (FinishedLocally()) {
+                /*
+                 * Have to avoid recursive locking in case we're at the
+                 * coordinator and it immediately "sends" commit.
+                 *
+                 * Since after re-locking the status might have changed,
+                 * re-check it again.
+                 *
+                 * Note, we still cannot exit the loop: might have forwards
+                 * coming up.
+                 */
+                validate_lock.unlock();
                 LOG4CXX_INFO(logger, "Validator finished locally");
                 sl_.ReportFinValidator();
-                // Still cannot exit: might have forwards coming up
+                validate_lock.lock();
+                continue;
             }
         }
 
