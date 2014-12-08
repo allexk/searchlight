@@ -108,15 +108,17 @@ public:
                 res.push_back(END_OF_VARIES_PARAMS());
             } else {
                 assert(param->getExpectedType().typeId() == TID_INT64);
-                const size_t dims_num = schemas[0].getDimensions().size();
-                if (params_num < 2 * dims_num) {
-                    res.push_back(PARAM_CONSTANT(TID_INT64));
-                } else if (params_num == 2 * dims_num) {
-                    res.push_back(PARAM_CONSTANT(TID_BOOL));
-                    res.push_back(END_OF_VARIES_PARAMS());
-                } else {
-                    res.push_back(END_OF_VARIES_PARAMS());
-                }
+                res.push_back(PARAM_CONSTANT(TID_INT64));
+            }
+        } else {
+            const size_t dims_num = schemas[0].getDimensions().size();
+            if (params_num < 2 * dims_num) {
+                res.push_back(PARAM_CONSTANT(TID_INT64));
+            } else if (params_num == 2 * dims_num) {
+                res.push_back(PARAM_CONSTANT(TID_BOOL));
+                res.push_back(END_OF_VARIES_PARAMS());
+            } else {
+                res.push_back(END_OF_VARIES_PARAMS());
             }
         }
 
