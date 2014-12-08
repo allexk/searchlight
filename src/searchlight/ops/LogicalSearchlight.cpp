@@ -90,6 +90,8 @@ public:
             const std::string& alias) :
         LogicalOperator(logicalName, alias) {
 
+        _properties.tile = true; // enable propagation of tile mode
+
         ADD_PARAM_INPUT(); // array
         ADD_PARAM_INPUT(); // primary sample
         ADD_PARAM_VARIES();
