@@ -59,10 +59,11 @@ public:
         PhysicalOperator(logicalName, physicalName, parameters, schema) {
 
         bool require_replicate = false;
-        if (_parameters.size() > 0) {
+        if (_parameters.size() > 0 &&
+                _parameters.size() != schema.getDimensions().size() * 2) {
                 require_replicate =
                     ((boost::shared_ptr<OperatorParamPhysicalExpression> &)
-                        _parameters[0])->getExpression()->
+                        _parameters.back())->getExpression()->
                         evaluate().getBool();
         }
         if (require_replicate) {
