@@ -622,23 +622,6 @@ void Sampler::Synopsis::FillCellFromArray(const Coordinates &pos,
     }
 }
 
-void Sampler::Synopsis::LoadCellFromArray(const Coordinates &pos,
-        ArrayIterators &iters, Cell &cell) const {
-    /*
-     * Need a lock here. For efficiency reasons this has been
-     * implemented as a double-checked locking with fences and atomics.
-     */
-    bool valid = cell.valid_.load(std::memory_order_acquire);
-    if (!valid) {
-        std::lock_guard<std::mutex> lock{mtx_};
-        valid = cell.valid_.load(std::memory_order_relaxed);
-        if (!valid) {
-            FillCellFromArray(pos, iters, cell);
-            cell.valid_.store(true, std::memory_order_release);
-        }
-    }
-}
-
 void Sampler::Synopsis::ParseChunkSizes(const std::string &size_param) {
     typedef boost::tokenizer<boost::char_separator<char> > tokenizer_t;
     boost::char_separator<char> sep("xX"); // size_1xsize_2x...xsize_n
@@ -934,7 +917,24 @@ const Sampler::Cell &Sampler::Synopsis::CacheCell(
 
     // Load cell if needed (cannot check validity here -- concurrency issues)
     if (!preloaded_) {
-        LoadCellFromArray(iter.GetCurrentSynopsisPosition(), iters, cell);
+        /*
+         * Need a lock here. For efficiency reasons this has been
+         * implemented as a double-checked locking with fences and atomics.
+         *
+         * This used to be a separate function, but later it was inlined
+         * to avoid a huge overhead on non-preloaded synopses. This is a
+         * critical code path!
+         */
+        bool valid = cell.valid_.load(std::memory_order_acquire);
+        if (!valid) {
+            std::lock_guard<std::mutex> lock{mtx_};
+            valid = cell.valid_.load(std::memory_order_relaxed);
+            if (!valid) {
+                FillCellFromArray(iter.GetCurrentSynopsisPosition(), iters,
+                        cell);
+                cell.valid_.store(true, std::memory_order_release);
+            }
+        }
     }
     assert(cell.valid_);
 

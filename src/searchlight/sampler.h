@@ -472,12 +472,6 @@ private:
         void FillCellFromArray(const Coordinates &pos,
                 ArrayIterators &iters, Cell &cell) const;
 
-        /*
-         * Retrieves the synopsis cell and caches it.
-         */
-        void LoadCellFromArray(const Coordinates &pos,
-                ArrayIterators &iters, Cell &cell) const;
-
         // Init synopsis iterators.
         void InitIterators(ArrayIterators &iters) const;
 
