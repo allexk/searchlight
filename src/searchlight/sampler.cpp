@@ -564,15 +564,40 @@ void Sampler::Synopsis::Preload() {
     preloaded_ = true;
 }
 
-const Sampler::Cell &Sampler::Synopsis::CachedAccessor::GetCell(
-        const RegionIterator &iter) {
-    return syn_.CacheCell(iter, iters_);
-}
+Sampler::Cell &Sampler::Synopsis::GetCell(
+        const RegionIterator &iter, AccessContext &ctx) {
+    if (cache_cells_) {
+        assert(iter.GetCellLinear() < cells_.size());
+        Cell &cell = cells_[iter.GetCellLinear()];
 
-const Sampler::Cell &Sampler::Synopsis::NonCachedAccessor::GetCell(
-        const RegionIterator &iter) {
-    syn_.FillCellFromArray(iter.GetCurrentSynopsisPosition(), iters_, cell_);
-    return cell_;
+        // Load cell if needed (cannot check validity here -- concurrency issues)
+        if (!preloaded_) {
+            /*
+             * Need a lock here. For efficiency reasons this has been
+             * implemented as a double-checked locking with fences and atomics.
+             *
+             * This used to be a separate function, but later it was inlined
+             * to avoid a huge overhead on non-preloaded synopses. This is a
+             * critical code path!
+             */
+            bool valid = cell.valid_.load(std::memory_order_acquire);
+            if (!valid) {
+                std::lock_guard<std::mutex> lock{mtx_};
+                valid = cell.valid_.load(std::memory_order_relaxed);
+                if (!valid) {
+                    FillCellFromArray(iter.GetCurrentSynopsisPosition(),
+                            ctx.iters_, cell);
+                    cell.valid_.store(true, std::memory_order_release);
+                }
+            }
+        }
+        assert(cell.valid_);
+        return cell;
+    } else {
+        FillCellFromArray(iter.GetCurrentSynopsisPosition(), ctx.iters_,
+                ctx.cell_);
+        return ctx.cell_;
+    }
 }
 
 void Sampler::Synopsis::InitIterators(ArrayIterators &iters) const {

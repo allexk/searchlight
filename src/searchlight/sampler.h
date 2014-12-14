@@ -399,53 +399,24 @@ private:
         };
 
         /**
-         * CellAccessor class that retrieves a cell from the synopsis.
-         *
-         * Depending on the synopsis it might go to disk and load the cell
-         * or take the cell from memory.
+         * Stores context information for current synopsis accessor.
          */
-        class CellAccessor : private boost::noncopyable {
-        public:
-            virtual const Cell &GetCell(const RegionIterator &iter) = 0;
-            virtual ~CellAccessor() {}
-        };
-
-        class CachedAccessor : public CellAccessor {
-        public:
-            CachedAccessor(Synopsis &syn) : syn_(syn) {}
-            virtual const Cell &GetCell(const RegionIterator &iter) override;
-        private:
-            Synopsis &syn_;
+        struct AccessContext {
             ArrayIterators iters_;
-        };
-
-        class NonCachedAccessor : public CellAccessor {
-        public:
-            NonCachedAccessor(Synopsis &syn) : syn_(syn) {}
-            virtual const Cell &GetCell(const RegionIterator &iter) override;
-        private:
-            const Synopsis &syn_;
-            Cell cell_;
-            ArrayIterators iters_;
+            Cell cell_; // for non-cached synopses
         };
 
         /**
-         * Return this synopsis cell accessor.
+         * Return cell pointed by the iterator.
          *
-         * Note, this accessor may change the synopsis, in case the synopsis
-         * caches cells retrieved.
+         * The user specifies contex, containing additional information
+         * for the reader.
          *
-         * The user is responsible for destroying the accessor.
-         *
-         * @return cell accessor for this synopsis
+         * @param iter iterator pointing at the cell
+         * @param ctx reader context
+         * @return cell pointed to by the iterator
          */
-        CellAccessor *GetCellAccessor() {
-            if (cache_cells_) {
-                return new CachedAccessor(*this);
-            } else {
-                return new NonCachedAccessor(*this);
-            }
-        }
+        Cell &GetCell(const RegionIterator &iter, AccessContext &ctx);
 
         /*
          *  Parses chunk sizes out of the string. The string is supposed to
@@ -615,11 +586,8 @@ private:
         }
 
         // Return synopsis cell this iterator points to.
-        const Cell &GetCell() {
-            if (!cell_accessor_) {
-                cell_accessor_.reset(synopsis_.GetCellAccessor());
-            }
-            return cell_accessor_->GetCell(*this);
+        inline const Cell &GetCell() const {
+            return synopsis_.GetCell(*this, acc_context_);
         }
 
         // Are we fully covering the current cell with the region?
@@ -738,8 +706,8 @@ private:
         // The synopsis we are traversing
         Synopsis &synopsis_;
 
-        // Accessor to get cells
-        std::unique_ptr<Synopsis::CellAccessor> cell_accessor_;
+        // Context to get cells (mutable, it's convenience/cache)
+        mutable Synopsis::AccessContext acc_context_;
 
         // Do we point to a valid position?
         bool valid_;
