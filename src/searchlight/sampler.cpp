@@ -564,6 +564,29 @@ void Sampler::Synopsis::Preload() {
     preloaded_ = true;
 }
 
+Sampler::Region Sampler::Synopsis::GetSynopsisMBR(const Region &reg) const {
+    Region res(reg);
+    for (size_t i = 0; i < reg.low_.size(); ++i) {
+        res.low_[i] -= (reg.low_[i] - synopsis_origin_[i]) % cell_size_[i];
+        res.high_[i] -= (reg.high_[i] - synopsis_origin_[i]) % cell_size_[i];
+        res.high_[i] += cell_size_[i] - 1;
+    }
+    return res;
+}
+
+size_t Sampler::Synopsis::GetRegionCost(const Region &reg) const {
+    Region mbr(GetSynopsisMBR(reg));
+
+    // MBR is aligned with the synopsis grid, the cost is simple division
+    size_t cost = 1;
+    for (size_t i = 0; i < mbr.low_.size(); ++i) {
+        const size_t len = mbr.high_[i] - mbr.low_[i] + 1;
+        assert(len % cell_size_[i] == 0);
+        cost *= len / cell_size_[i];
+    }
+    return cost;
+}
+
 Sampler::Cell &Sampler::Synopsis::GetCell(
         const RegionIterator &iter, AccessContext &ctx) {
     if (cache_cells_) {
@@ -694,6 +717,8 @@ Sampler::Sampler(const ArrayDesc &data_desc,
 
     // Read config params
     cell_thr_ = sl_config_.get("searchlight.sampler.cell_thr", 0.0);
+    mbr_thr_ = sl_config_.get("searchlight.sampler.mbr_thr", 0.0);
+    cell_limit_ = sl_config_.get("searchlight.sampler.cell_limit", 0);
 }
 
 Sampler::~Sampler() {
@@ -1088,14 +1113,24 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
         assert(!synopses_[s_attr].empty());
         auto &syns = synopses_[s_attr];
 
-        std::vector<Region> regions{Region{low, high}};
+        const Region orig_region{low, high};
+        std::vector<Region> regions{orig_region};
         syns[0]->CheckAndCorrectBounds(regions[0].low_, regions[0].high_);
         std::vector<Region> left_regions;
 
         for (size_t i = 0; i < syns.size(); i++) {
-            // Check if we have a cached higher-reolution synopsis
-            const bool have_better_synopses = (i != syns.size() - 1) &&
+            // Check if we have a cached higher-resolution synopsis
+            bool have_better_synopses = (i != syns.size() - 1) &&
                     syns[i + 1]->IsCached();
+
+            // Check the MBR threshold
+            if (mbr_thr_ > 0.0) {
+                const Region syn_mbr(syns[i]->GetSynopsisMBR(orig_region));
+                if (orig_region.AreaRatio(syn_mbr) >= mbr_thr_) {
+                    have_better_synopses = false;
+                }
+            }
+
             syns[i]->ComputeAggregatesWithThr(aggs, regions, left_regions,
                     have_better_synopses ? cell_thr_ : 0.0);
             if (!left_regions.empty()) {

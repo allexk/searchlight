@@ -226,6 +226,37 @@ private:
      */
     struct Region {
         Coordinates low_, high_;
+
+        /**
+         * Return the area of the region.
+         *
+         * @return region area
+         */
+        size_t Area() const {
+            size_t res = 1;
+            for (size_t i = 0; i < low_.size(); i++) {
+                res *= high_[i] - low_[i] + 1;
+            }
+            return res;
+        }
+
+        /**
+         * Return the ratio of this region's area to the other's.
+         *
+         * @param other othe region
+         * @return areas ratio
+         */
+        double AreaRatio(const Region &other) const {
+            assert(low_.size() == high_.size() == other.low_.size() ==
+                    other.high_.size());
+            double res = 1;
+            for (size_t i = 0; i < low_.size(); i++) {
+                const double len = high_[i] - low_[i] + 1;
+                const size_t other_len = other.high_[i] - other.low_[i] + 1;
+                res *= len / other_len;
+            }
+            return res;
+        }
     };
 
     /**
@@ -383,6 +414,22 @@ private:
             str << "\tCells accessed: "
                     << cells_accessed_.load(std::memory_order_relaxed);
         }
+
+        /**
+         * Return MBR for the region aligned with the synopsis grid.
+         *
+         * @param reg region
+         * @return synopsis MBR for the region
+         */
+        Region GetSynopsisMBR(const Region &reg) const;
+
+        /**
+         * Return the cost of a region in cells.
+         *
+         * @param reg the region to compute the cost for
+         * @return region cost
+         */
+        size_t GetRegionCost(const Region &reg) const;
 
     private:
         /*
@@ -744,6 +791,12 @@ private:
 
     // Cell threshold: if the query region covers a cell less, we go deeper
     double cell_thr_;
+
+    // MBR threshold: if the query region is covered less, we'll go deeper
+    double mbr_thr_;
+
+    // Limit on the total number of cells to use for estimations
+    size_t cell_limit_;
 };
 
 /**
