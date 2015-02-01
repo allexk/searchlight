@@ -165,6 +165,10 @@ SearchlightTask::SearchlightTask(const std::string &library_name,
     ResolveTask(library_name, task_name);
     searchlight_.RegisterArray(data, samples);
 
+    // Are we using dynamic scheduling for helpers/solvers?
+    dynamic_scheduling_ =
+            config_.get("searchlight.dynamic_scheduling", 1);
+
     // Set distribution update frequence for the data array
     const int distr_update_freq =
             config_.get("balance.map_update_frequency", 5);
@@ -258,7 +262,27 @@ void SearchlightTask::ReadConfig(const std::string &file_name) {
     }
 }
 
-void SearchlightTask::ReportIdleSolver(uint64_t solver_id) {
+void SearchlightTask::ReportIdleSolver(uint64_t solver_id, bool deferable) {
+    if (dynamic_scheduling_ && deferable) {
+        /*
+         * For now we prefer validator helpers to pending loads. So, we first
+         * check if the validator wants to run a helper, even just for a
+         * round-trip to the coordinator to report idleness and get a new
+         * load.
+         *
+         * Another way might be to perform: FreeThread(); ReserveThread() to
+         * give pending loads the ability to cease the thread.
+         */
+        bool persistent_helper;
+        const bool started = searchlight_.GetValidator().AddValidatorHelper(
+                &persistent_helper);
+        if (started && persistent_helper) {
+            // If the helper is persistent, don't report the solver as idle yet
+            std::lock_guard<std::mutex> lock{mtx_};
+            pending_idle_solvers_.push_back(solver_id);
+            return;
+        }
+    }
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
         // We are at the coordinator -- handle the solver
@@ -364,7 +388,29 @@ void SearchlightTask::DispatchHelper(uint64_t helper, uint64_t dest) {
 }
 
 void SearchlightTask::HandleHelper(uint64_t helper, uint64_t helpee) {
-    searchlight_.HandleHelper(helper, GetLocalIDFromSolverID(helpee));
+    std::unique_lock<std::mutex> lock{mtx_};
+    const auto iter = pending_assgns_.find(helpee);
+    if (iter != pending_assgns_.end()) {
+        /*
+         * We have a pending assignment -- give it away to the helper
+         * TODO: Think about time-stamps to avoid unnecessary load movements.
+         */
+        if (GetInstanceFromSolverID(helper) ==
+                GetInstanceFromSolverID(helpee)) {
+            // The same instance -- no gain, since we don't have threads
+            lock.unlock();
+            RejectHelp({helper}, helpee, false);
+        } else {
+            LiteAssignmentVector load_copy{std::move(iter->second)};
+            pending_assgns_.erase(iter);
+            lock.unlock();
+            DispatchWork(load_copy, helper);
+            ReportIdleSolver(helpee, false);
+        }
+    } else {
+        lock.unlock();
+        searchlight_.HandleHelper(helper, GetLocalIDFromSolverID(helpee));
+    }
 }
 
 void SearchlightTask::HandleAcceptHelper(uint64_t helper) {
@@ -553,8 +599,8 @@ void SearchlightTask::HandleRemoteLoad(const SearchlightBalance &msg,
         SearchlightMessenger::UnpackAssignment(msg.load(i), load[i]);
     }
 
-    // Put the load into the solver
-    searchlight_.PrepareHelper(load, GetLocalIDFromSolverID(helper));
+    // Put or store the load
+    DispatchOrStoreLoad(load, helper);
 }
 
 void SearchlightTask::HandleForwards(const SearchlightBalance &msg,
@@ -647,6 +693,36 @@ std::string SearchlightTask::GetNextSolution() {
     return res;
 }
 
+bool SearchlightTask::PendingSolverJobs(bool check_idle_solvers) {
+    std::unique_lock<std::mutex> lock{mtx_};
+    const bool res = !pending_assgns_.empty();
+    if (check_idle_solvers && !pending_idle_solvers_.empty()) {
+        const uint64_t idle_solver = pending_idle_solvers_.front();
+        pending_idle_solvers_.pop_front();
+        lock.unlock();
+        ReportIdleSolver(idle_solver, false);
+    }
+    return res;
+}
+
+void SearchlightTask::FreeThread() {
+    std::unique_lock<std::mutex> lock{mtx_};
+    if (!pending_assgns_.empty()) {
+        // Have a pending load
+        const auto load_it = pending_assgns_.begin();
+        LiteAssignmentVector load_copy{std::move(load_it->second)};
+        const uint64_t helper = load_it->first;
+        pending_assgns_.erase(load_it);
+        lock.unlock();
+
+        searchlight_.PrepareHelper(load_copy,
+                GetLocalIDFromSolverID(helper));
+        LOG4CXX_INFO(logger, "Dispatched a pending assignment...");
+    } else {
+        ++threads_available_;
+    }
+}
+
 void SearchlightTask::DispatchWork(const LiteAssignmentVector &work,
         uint64_t dest_solver) {
     // First, dispatch work
@@ -655,8 +731,7 @@ void SearchlightTask::DispatchWork(const LiteAssignmentVector &work,
     if (my_instance_id_ == dest_inst) {
         // helper is a local solver
         LiteAssignmentVector work_copy{work};
-        searchlight_.PrepareHelper(work_copy,
-                GetLocalIDFromSolverID(dest_solver));
+        DispatchOrStoreLoad(work_copy, dest_solver);
     } else {
         SearchlightMessenger::getInstance()->DispatchWork(query, work,
                 dest_solver, dest_inst);
@@ -667,6 +742,23 @@ void SearchlightTask::DispatchWork(const LiteAssignmentVector &work,
         HandleAcceptHelper(dest_solver);
     } else {
         SearchlightMessenger::getInstance()->AcceptHelp(query, dest_solver);
+    }
+}
+
+void SearchlightTask::DispatchOrStoreLoad(LiteAssignmentVector &load,
+        uint64_t dest_solver) {
+    std::unique_lock<std::mutex> lock{mtx_};
+    if (threads_available_ > 0) {
+        // Reserve a thread
+        threads_available_--;
+        lock.unlock();
+        // Put the load into the solver
+        searchlight_.PrepareHelper(load, GetLocalIDFromSolverID(dest_solver));
+    } else {
+        // No threads -- have to save the load for later
+        assert(pending_assgns_.count(dest_solver) == 0);
+        pending_assgns_.emplace(dest_solver, std::move(load));
+        LOG4CXX_INFO(logger, "No threads available: saving the remote load...");
     }
 }
 

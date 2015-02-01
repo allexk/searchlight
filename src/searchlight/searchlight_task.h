@@ -141,9 +141,15 @@ public:
      * If the solver is local to the coordinator, the coordinator will
      * handle it locally, no messages involved.
      *
+     * If the <code>postponed</code> parameter is true, then the solver's
+     * reporting might be postponed due to dynamic scheduling, if the
+     * validator need more helpers. If the dynamic scheduling is off, the
+     * parameter doesn't make any effect.
+     *
      * @param id solver id
+     * @param deferable true, if the solver's reporting can be postponed
      */
-    void ReportIdleSolver(uint64_t solver_id);
+    void ReportIdleSolver(uint64_t solver_id, bool deferable);
 
     /**
      * Reports locally finished validator.
@@ -314,6 +320,48 @@ public:
         }
     }
 
+    /**
+     * Reserve a thread if one is available.
+     *
+     * It is assumed that the caller respects the return value. If it is
+     * false, that means no available threads are available. True means
+     * a new thread can be created and given work to do.
+     *
+     * @return true, if the reservation was a success; false, otherwise
+     */
+    bool ReserveThread() {
+        std::lock_guard<std::mutex> lock{mtx_};
+        if (threads_available_ > 0) {
+            threads_available_--;
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    /**
+     * Free one of the reserved threads.
+     */
+    void FreeThread();
+
+    /**
+     * Check if there are somesolver jobs pending and some solvers are
+     * waiting to be reported as idle.
+     *
+     * If the function detects pending jobs, that means the caller should
+     * free their own thread ASAP. While this is non-binding, it should be
+     * respected.
+     *
+     * The additional check_idle_solvers parameter signals the task to
+     * check if some of the solvers are waiting to be reported as idle. This
+     * is primarily useful for persistent helpers, who want to signal they
+     * no longer needed for flood control. If there are indeed idle solvers,
+     * one of them will be reported to the coordinator.
+     *
+     * @return true, if there are solver jobs; false, otherwise
+     */
+    bool PendingSolverJobs(bool check_idle_solvers);
+
 private:
     // Contains information about the state of distributed search.
     struct DistributedSearchInfo {
@@ -425,6 +473,14 @@ private:
     // Reads config from the specified file. Only JSON is supported for now.
     void ReadConfig(const std::string &file_name);
 
+    // Handler when a new thread is available
+    void HandleFreeThread();
+
+    // Dispatches a new load to a solver or stores it until a thread is ready.
+    // Note: the load will be unusable after the call
+    void DispatchOrStoreLoad(LiteAssignmentVector &load,
+            uint64_t dest_solver);
+
     // The main DLL Handler (we need it to be destroyed last!)
     DLLHandler dll_handler_;
 
@@ -433,6 +489,12 @@ private:
 
     // Our instance id
     InstanceID my_instance_id_;
+
+    // Threads available for running
+    size_t threads_available_ = 0;
+
+    // Are we using dynamic scheduling for validator helpers/solvers?
+    bool dynamic_scheduling_;
 
     // The main sl instance
     Searchlight searchlight_;
@@ -455,6 +517,12 @@ private:
 
     // Stringified solutions.
     std::list<std::string> solutions_queue_;
+
+    // List of solvers waiting to be reported idle (due to dynamic scheduling)
+    std::list<uint64_t> pending_idle_solvers_;
+
+    // Pending external loads waiting for a solver
+    std::unordered_map<uint64_t, LiteAssignmentVector> pending_assgns_;
 
     // Mutex to protect shared task structures
     std::mutex mtx_;

@@ -431,7 +431,7 @@ void SearchlightSolver::Solve() {
         status_ = Status::VOID;
 
         // Report idleness
-        sl_.sl_task_.ReportIdleSolver(id_);
+        sl_.sl_task_.ReportIdleSolver(id_, true);
 
         // Then get rid of remaining helpers
         RejectHelpers(false);

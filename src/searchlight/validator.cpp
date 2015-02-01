@@ -408,6 +408,15 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
     helper_workload_ =
             sl_config.get("searchlight.validator.helper_workload", 1000);
 
+    // Are we using dynamic scheduling for helpers?
+    dynamic_helper_scheduling_ =
+            sl_config.get("searchlight.dynamic_scheduling", 1);
+
+    // Watermarks
+    low_watermark_ = sl_config.get("searchlight.validator.low_watermark", 500);
+    high_watermark_ =
+            sl_config.get("searchlight.validator.high_watermark", 1000);
+
     // Determine forwarding type
     const std::string &forw_type =
             sl_config.get("balance.validator_balance", "none");
@@ -642,32 +651,62 @@ Validator::CandidateVector *Validator::GetNextAssignments() {
         validate_cond_.wait(validate_lock);
     }
 
-    // First, try to offload to helpers
-    while (to_validate_.size() > 1) {
-        ValidatorHelper *helper = DispatchValidatorHelper();
-        if (helper) {
-            CandidateVector &workload = to_validate_.front();
-            LOG4CXX_INFO(logger, "Off-loading " << workload.size()
-                    << " assignments to a helper...");
-            to_validate_total_ -= workload.size();
-            helper->RunWorkload(std::move(workload));
-            to_validate_.pop_front();
-        } else {
-            break;
+    // First, try to offload to helpers.
+    bool should_run_helpers = to_validate_.size() > 1;
+    while (should_run_helpers) {
+        should_run_helpers = false;
+        if (sl_task_.ReserveThread()) {
+           bool pers_helper;
+           should_run_helpers = AddValidatorHelper(&pers_helper);
+           should_run_helpers = should_run_helpers && to_validate_.size() > 1;
         }
     }
 
     // The rest we'll handle ourselves
     assert(to_validate_.size() > 0);
     CandidateVector *res = new CandidateVector;
-    res->swap(to_validate_.front());
-    to_validate_.pop_front();
-    to_validate_total_ -= res->size();
+    *res = GetWorkload();
 
     // Flow control: notify the main solver about catching up
     validate_cond_.notify_all();
 
     return res;
+}
+
+Validator::CandidateVector Validator::GetWorkload() {
+    assert(!to_validate_.empty());
+
+    CandidateVector res;
+    res.swap(to_validate_.front());
+    to_validate_.pop_front();
+    to_validate_total_ -= res.size();
+
+    return res;
+}
+
+bool Validator::AddValidatorHelper(bool *persistent) {
+    std::lock_guard<std::mutex> validate_lock{to_validate_mtx_};
+    return AddValidatorHelperInt(persistent);
+}
+
+bool Validator::AddValidatorHelperInt(bool *persistent) {
+    auto helper = DispatchValidatorHelper();
+    if (to_validate_.empty() || !helper) {
+        if (dynamic_helper_scheduling_) {
+            LOG4CXX_DEBUG(logger, "No helper workload, returning the thread...");
+            sl_task_.FreeThread();
+        }
+        return false;
+    }
+
+    LOG4CXX_INFO(logger, "Added another validator helper...");
+    if (to_validate_total_ > high_watermark_) {
+        helper->SetPersistent(true);
+        *persistent = true;
+        LOG4CXX_INFO(logger, "The helper is made persistent...");
+    }
+    helper->RunWorkload(GetWorkload());
+    return true;
 }
 
 Validator::ValidatorHelper *Validator::DispatchValidatorHelper() {
@@ -676,7 +715,8 @@ Validator::ValidatorHelper *Validator::DispatchValidatorHelper() {
         free_validator_helpers_.pop_front();
         ValidatorHelper *helper = validator_helpers_[id].get();
         return helper;
-    } else if (validator_helpers_.size() < max_helpers_allowed_) {
+    } else if (dynamic_helper_scheduling_ ||
+            validator_helpers_.size() < max_helpers_allowed_) {
         const int id = validator_helpers_.size();
         ValidatorHelper *helper =
                 new ValidatorHelper{id, *this, search_vars_prototype_};
@@ -730,17 +770,50 @@ Validator::ValidatorHelper::ValidatorHelper(int id, Validator &parent,
 }
 
 void Validator::ValidatorHelper::operator()() {
-    LOG4CXX_INFO(logger, "Starting the helper validator search...");
-    DecisionBuilder *db =
-            solver_.RevAlloc(new RestoreAssignmentBuilder(parent_, adapter_,
-                    &solver_, 0, &prototype_,
-                    std::move(workload_), true));
-    solver_.Solve(db);
-    LOG4CXX_INFO(logger, "Validator helper exited solve()");
+    do {
+        LOG4CXX_INFO(logger, "Starting a helper validator workload...");
+        DecisionBuilder *db =
+                solver_.RevAlloc(new RestoreAssignmentBuilder(parent_, adapter_,
+                        &solver_, 0, &prototype_,
+                        std::move(workload_), true));
+        solver_.Solve(db);
+        workload_.clear();
+        LOG4CXX_INFO(logger, "Validator helper finished workload");
+
+        // Need to determine if we want to continue
+        std::lock_guard<std::mutex> lock{parent_.to_validate_mtx_};
+        bool should_stop = false;
+        if (persistent_) {
+            /*
+             * If we're persistent, we will notify the task only when we've
+             * fallen below the low watermark.
+             */
+            if (parent_.to_validate_total_ < parent_.low_watermark_) {
+                persistent_ = false;
+                should_stop = parent_.sl_task_.PendingSolverJobs(true);
+                LOG4CXX_INFO(logger, "Persistent helper is below the "
+                        "low watermark. Switching off persistence...");
+            }
+        } else {
+            /*
+             * Non-persistent. We check every time we're below the high
+             * watermark if the solver needs threads.
+             */
+            if (parent_.to_validate_total_ < parent_.high_watermark_) {
+                should_stop = parent_.sl_task_.PendingSolverJobs(false);
+            }
+        }
+
+        if (!should_stop && !parent_.to_validate_.empty()) {
+            SetWorkload(parent_.GetWorkload());
+        }
+    } while (!workload_.empty());
 
     std::lock_guard<std::mutex> lock{parent_.to_validate_mtx_};
     parent_.free_validator_helpers_.push_back(id_);
     parent_.validate_cond_.notify_all();
+    parent_.sl_task_.FreeThread();
+    LOG4CXX_INFO(logger, "Validator helper exited solve()");
 }
 
 void Validator::ValidatorHelper::RunWorkload(CandidateVector &&workload) {

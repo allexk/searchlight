@@ -125,6 +125,36 @@ public:
         validate_cond_.notify_all();
     }
 
+    /**
+     * Check if the validator is flooded with candidates.
+     *
+     * The validator is flooded if the number of pending candidates is
+     * greater than the high watermark (a parameter).
+     *
+     * @return true, if there is a flood; false otherwise
+     */
+    bool FloodDetected() const {
+        // No locking: atomic access is fine, since it's just heuristic
+        return to_validate_total_ >= high_watermark_;
+    }
+
+    /**
+     * Add a new helper for the validator.
+     *
+     * The request is non-binding, although the thread is supposed to
+     * be reserved by the caller. The validator might decide not to add
+     * any helpers, in which case the thread is returned back.
+     *
+     * The function will return the persistence of the added worker (if
+     * it has been added). A persistent worker is supposed to be long-term, so
+     * the caller might plan accordingly. A non-persistent worker checks in
+     * with the task regularly to see if it needs to quit.
+     *
+     * @param persistent pointer to put the persistence of the worker to
+     * @return true, if the helper's been started; false, otherwise
+     */
+    bool AddValidatorHelper(bool *persistent);
+
 private:
     // Type of validator forwarding
     enum class Forwarding {
@@ -200,6 +230,21 @@ private:
          */
         void RunWorkload(CandidateVector &&workload);
 
+        /**
+         * Set the persistence of the helper.
+         *
+         * A persistent helper lasts until it reaches below the low watermark.
+         * Then it checks in with the task. A non-persistent helper checks in
+         * every time when below the high watermark.
+         *
+         * All helpers are non-persistent by default.
+         *
+         * @param pers persistance value
+         */
+        void SetPersistent(bool pers) {
+            persistent_ = pers;
+        }
+
     private:
         /*
          * Internal helper for setting up the workload.
@@ -234,6 +279,9 @@ private:
 
         // Thread to run the helper
         std::thread thr_;
+
+        // Persistent helper (lasts until the low watermark)
+        bool persistent_ = false;
 
         // Id of the helper
         const int id_;
@@ -273,6 +321,12 @@ private:
     // Pushes candidate to to_validate_
     void PushCandidate(CandidateAssignment &&asgn);
 
+    // Returns a new assignment workload
+    CandidateVector GetWorkload();
+
+    // Adds a helper to the pool (assumes the mutex is locked)
+    bool AddValidatorHelperInt(bool *persistent);
+
     // Searchlight instance
     Searchlight &sl_;
 
@@ -281,7 +335,7 @@ private:
 
     // Pending validations and their count
     std::deque<CandidateVector> to_validate_;
-    size_t to_validate_total_ = 0;
+    std::atomic<size_t> to_validate_total_{0};
 
     // Info about remote candidates (local id -> (instance, remote id))
     std::unordered_map<int, std::pair<InstanceID, int>> remote_candidates_;
@@ -346,6 +400,12 @@ private:
 
     // Number of assignments to off-load to a helper
     size_t helper_workload_;
+
+    // Low- and high-watermark to determine the necessity of help
+    size_t low_watermark_, high_watermark_;
+
+    // Do we use dynamic helper scheduling?
+    bool dynamic_helper_scheduling_;
 };
 
 
