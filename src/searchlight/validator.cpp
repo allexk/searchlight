@@ -783,24 +783,26 @@ void Validator::ValidatorHelper::operator()() {
         // Need to determine if we want to continue
         std::lock_guard<std::mutex> lock{parent_.to_validate_mtx_};
         bool should_stop = false;
-        if (persistent_) {
-            /*
-             * If we're persistent, we will notify the task only when we've
-             * fallen below the low watermark.
-             */
-            if (parent_.to_validate_total_ < parent_.low_watermark_) {
-                persistent_ = false;
-                should_stop = parent_.sl_task_.PendingSolverJobs(true);
-                LOG4CXX_INFO(logger, "Persistent helper is below the "
-                        "low watermark. Switching off persistence...");
-            }
-        } else {
-            /*
-             * Non-persistent. We check every time we're below the high
-             * watermark if the solver needs threads.
-             */
-            if (parent_.to_validate_total_ < parent_.high_watermark_) {
-                should_stop = parent_.sl_task_.PendingSolverJobs(false);
+        if (parent_.dynamic_helper_scheduling_) {
+            if (persistent_) {
+                /*
+                 * If we're persistent, we will notify the task only when we've
+                 * fallen below the low watermark.
+                 */
+                if (parent_.to_validate_total_ < parent_.low_watermark_) {
+                    persistent_ = false;
+                    should_stop = parent_.sl_task_.PendingSolverJobs(true);
+                    LOG4CXX_INFO(logger, "Persistent helper is below the "
+                            "low watermark. Switching off persistence...");
+                }
+            } else {
+                /*
+                 * Non-persistent. We check every time we're below the high
+                 * watermark if the solver needs threads.
+                 */
+                if (parent_.to_validate_total_ < parent_.high_watermark_) {
+                    should_stop = parent_.sl_task_.PendingSolverJobs(false);
+                }
             }
         }
 

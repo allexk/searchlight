@@ -330,6 +330,10 @@ public:
      * @return true, if the reservation was a success; false, otherwise
      */
     bool ReserveThread() {
+        if (!dynamic_scheduling_) {
+            return true;
+        }
+
         std::lock_guard<std::mutex> lock{mtx_};
         if (threads_available_ > 0) {
             threads_available_--;
