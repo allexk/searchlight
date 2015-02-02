@@ -657,7 +657,7 @@ Validator::CandidateVector *Validator::GetNextAssignments() {
         should_run_helpers = false;
         if (sl_task_.ReserveThread()) {
            bool pers_helper;
-           should_run_helpers = AddValidatorHelper(&pers_helper);
+           should_run_helpers = AddValidatorHelperInt(&pers_helper);
            should_run_helpers = should_run_helpers && to_validate_.size() > 1;
         }
     }
