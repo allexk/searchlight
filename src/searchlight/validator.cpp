@@ -690,10 +690,13 @@ bool Validator::AddValidatorHelper(bool *persistent) {
 }
 
 bool Validator::AddValidatorHelperInt(bool *persistent) {
-    auto helper = DispatchValidatorHelper();
-    if (to_validate_.empty() || !helper) {
+    Validator::ValidatorHelper *helper = nullptr;
+    if (!to_validate_.empty()) {
+        helper = DispatchValidatorHelper();
+    }
+    if (!helper) {
         if (dynamic_helper_scheduling_) {
-            LOG4CXX_DEBUG(logger, "No helper workload, returning the thread...");
+            LOG4CXX_DEBUG(logger, "No helper needed, returning the thread...");
             sl_task_.FreeThread();
         }
         return false;
