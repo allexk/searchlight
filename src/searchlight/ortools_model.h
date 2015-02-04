@@ -40,8 +40,14 @@
 #define SEARCHLIGHT_ORTOOLS_MODEL_H_
 
 #include "searchlight.h"
+#include <constraint_solver/model.pb.h>
 
 namespace searchlight {
+
+/**
+ * Buffer for storing solver models.
+ */
+using CPModelProto = operations_research::CPModelProto;
 
 /**
  * Clones model from one solver to another.
@@ -59,5 +65,35 @@ namespace searchlight {
  */
 bool CloneModel(const Searchlight &sl, const Solver &from, Solver &to,
         const AdapterPtr &adapter);
+
+/**
+ * Clones model from one solver to another.
+ *
+ * Model consists of variables and constraints. It is assumed that the model
+ * is already provided by the user. It can be exported from another solver
+ * by using ExportModel().
+ * The destination solver should be empty. Otherwise, conflicts
+ * are possible and the result is undefined.
+ *
+ * @param sl searchlight instance
+ * @param from the model
+ * @param to solver to clone the model to
+ * @param adapter adapter for UDFs in the destination solver
+ * @return true, if clone is successful; false, otherwise
+ */
+bool CloneModel(const Searchlight &sl, const CPModelProto &from, Solver &to,
+        const AdapterPtr &adapter);
+
+/**
+ * Export the model to a buffer for storage.
+ *
+ * This can be used to later restore the model to another solver. For example,
+ * to craete a template and use it to create multiple duplicate solvers.
+ *
+ * @param solver solver to export the model from
+ * @param model_proto the buffer to store the model
+ */
+void ExportModel(const Solver &solver, CPModelProto *model_proto);
 }
+
 #endif /* SEARCHLIGHT_ORTOOLS_MODEL_H_ */

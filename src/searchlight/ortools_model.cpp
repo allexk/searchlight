@@ -42,7 +42,6 @@
 
 #include <base/stl_util.h>
 #include <base/callback.h>
-#include <constraint_solver/model.pb.h>
 
 /*
  * Copy-pasted visitors for exporting models. We slightly modify SecondPass
@@ -934,7 +933,6 @@ namespace {
 
 using operations_research::CPIntegerExpressionProto;
 using operations_research::CPModelLoader;
-using operations_research::CPModelProto;
 using operations_research::FirstPassVisitor;
 using operations_research::SecondPassVisitor;
 
@@ -982,10 +980,8 @@ bool RegisterUDFBuilder(const Searchlight &sl, Solver &solver,
     }
     return true;
 }
+} /* namespace <anonymous> */
 
-/*
- * Exports the model from the solver. We need this to use modified visitors.
- */
 void ExportModel(const Solver &solver, CPModelProto *model_proto) {
   FirstPassVisitor first_pass;
   solver.Accept(&first_pass);
@@ -993,9 +989,17 @@ void ExportModel(const Solver &solver, CPModelProto *model_proto) {
   solver.Accept(&second_pass);
 }
 
-} /* namespace <anonymous> */
-
 bool CloneModel(const Searchlight &sl, const Solver &from, Solver &to,
+        const AdapterPtr &adapter) {
+    // Export the model
+    CPModelProto model;
+    ExportModel(from, &model);
+
+    // Clone
+    return CloneModel(sl, model, to, adapter);
+}
+
+bool CloneModel(const Searchlight &sl, const CPModelProto &from, Solver &to,
         const AdapterPtr &adapter) {
 
     // Register UDF builder
@@ -1003,11 +1007,8 @@ bool CloneModel(const Searchlight &sl, const Solver &from, Solver &to,
         return false;
     }
 
-    // Export the model
-    CPModelProto model;
-    ExportModel(from, &model);
-
     // Import the model
-    return to.LoadModel(model);
+    return to.LoadModel(from);
 }
+
 } /* namespace searchlight */

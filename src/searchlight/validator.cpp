@@ -32,8 +32,6 @@
 #include "validator.h"
 #include "searchlight_task.h"
 
-#include "ortools_model.h"
-
 namespace searchlight {
 
 // The logger
@@ -357,7 +355,8 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
         search_vars_prototype_(&solver_) {
 
     // First, clone the solver (solver 0 is always available)
-    if (!CloneModel(sl_, sl_.GetSearchSolver(0), solver_, adapter_)) {
+    ExportModel(sl_.GetSearchSolver(0), &validator_model_);
+    if (!CloneModel(sl_, validator_model_, solver_, adapter_)) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << "Cannot create the validator solver!";
     }
@@ -738,8 +737,13 @@ Validator::ValidatorHelper::ValidatorHelper(int id, Validator &parent,
                         "validator helper_" + std::to_string(id))},
                 prototype_{&solver_},
                 id_{id} {
-    // First, clone the solver
-    if (!CloneModel(parent_.sl_, parent_.solver_, solver_, adapter_)) {
+    /*
+     *  First, clone the solver. It's crucial to create it from the model and
+     *  not from the validator's solver. The validator solver might be
+     *  running when the helper is being created, and, thus, the variables
+     *  might have very different domains.
+     */
+    if (!CloneModel(parent_.sl_, parent_.validator_model_, solver_, adapter_)) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << "Cannot create a validator helper solver!";
     }

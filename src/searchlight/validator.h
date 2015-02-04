@@ -34,6 +34,7 @@
 
 #include "scidb_inc.h"
 #include "ortools_inc.h"
+#include "ortools_model.h"
 
 #include <condition_variable>
 #include <mutex>
@@ -332,6 +333,9 @@ private:
 
     // Searchlight task
     SearchlightTask &sl_task_;
+
+    // Validator model for later cloning
+    CPModelProto validator_model_;
 
     // Pending validations and their count
     std::deque<CandidateVector> to_validate_;
