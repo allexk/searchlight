@@ -775,11 +775,16 @@ Validator::ValidatorHelper::ValidatorHelper(int id, Validator &parent,
 void Validator::ValidatorHelper::operator()() {
     do {
         LOG4CXX_INFO(logger, "Starting a helper validator workload...");
-        DecisionBuilder *db =
-                solver_.RevAlloc(new RestoreAssignmentBuilder(parent_, adapter_,
+        /*
+         * Using uniue_ptr here since we create multiple dbs that are not
+         * going to be freed by the solver -- they will reside before the
+         * search sentinel.
+         */
+        const std::unique_ptr<DecisionBuilder> db{
+                new RestoreAssignmentBuilder(parent_, adapter_,
                         &solver_, 0, &prototype_,
-                        std::move(workload_), true));
-        solver_.Solve(db);
+                        std::move(workload_), true)};
+        solver_.Solve(db.get());
         workload_.clear();
         LOG4CXX_INFO(logger, "Validator helper finished workload");
 
