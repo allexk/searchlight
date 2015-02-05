@@ -451,6 +451,15 @@ public:
         return solver_;
     }
 
+    /**
+     * Return solver's status.
+     *
+     * @return solver's status
+     */
+    Status GetSolverStatus() const {
+        return status_;
+    }
+
 private:
     // Reject/release helpers
     void RejectHelpers(bool hard);
@@ -780,6 +789,17 @@ public:
     void HandleHelper(uint64_t id, uint32_t solver) {
         assert(solver < solvers_.size());
         solvers_[solver]->HandleHelper(id);
+    }
+
+    /**
+     * Return specified solver's status.
+     *
+     * @param solver solver to get the status for
+     * @return solver's status
+     */
+    SearchlightSolver::Status GetSolverStatus(uint32_t solver) const {
+        assert(solver < solvers_.size());
+        return solvers_[solver]->GetSolverStatus();
     }
 
     /**

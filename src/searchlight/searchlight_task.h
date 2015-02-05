@@ -522,8 +522,8 @@ private:
     // Stringified solutions.
     std::list<std::string> solutions_queue_;
 
-    // List of solvers waiting to be reported idle (due to dynamic scheduling)
-    std::list<uint64_t> pending_idle_solvers_;
+    // Set of solvers waiting to be reported idle (due to dynamic scheduling)
+    std::unordered_set<uint64_t> pending_idle_solvers_;
 
     // Pending external loads waiting for a solver
     std::unordered_map<uint64_t, LiteAssignmentVector> pending_assgns_;

@@ -279,7 +279,7 @@ void SearchlightTask::ReportIdleSolver(uint64_t solver_id, bool deferable) {
         if (started && persistent_helper) {
             // If the helper is persistent, don't report the solver as idle yet
             std::lock_guard<std::mutex> lock{mtx_};
-            pending_idle_solvers_.push_back(solver_id);
+            pending_idle_solvers_.insert(solver_id);
             return;
         }
     }
@@ -388,8 +388,18 @@ void SearchlightTask::DispatchHelper(uint64_t helper, uint64_t dest) {
 }
 
 void SearchlightTask::HandleHelper(uint64_t helper, uint64_t helpee) {
-    if (dynamic_scheduling_) {
+    /*
+     * Special conditions (like "pending idle") are only relevant for VOID
+     * solvers. For others, we let them handle the helper themselves.
+     */
+    if (dynamic_scheduling_ &&
+            searchlight_.GetSolverStatus(GetLocalIDFromSolverID(helpee)) ==
+                    SearchlightSolver::Status::VOID) {
         std::unique_lock<std::mutex> lock{mtx_};
+        /*
+         * First, we want to see if the solver has a pending assignment. If so,
+         * we might try to off-load it to the helper.
+         */
         const auto iter = pending_assgns_.find(helpee);
         if (iter != pending_assgns_.end()) {
             /*
@@ -401,13 +411,30 @@ void SearchlightTask::HandleHelper(uint64_t helper, uint64_t helpee) {
                 // The same instance -- no gain, since we don't have threads
                 lock.unlock();
                 RejectHelp({helper}, helpee, false);
+                LOG4CXX_DEBUG(logger, "Got the same instance helper for a"
+                        "pending assignment, reject...");
             } else {
                 LiteAssignmentVector load_copy{std::move(iter->second)};
                 pending_assgns_.erase(iter);
                 lock.unlock();
                 DispatchWork(load_copy, helper);
                 ReportIdleSolver(helpee, false);
+                LOG4CXX_DEBUG(logger, "Got a helper for a pending assignment, "
+                        "forwarding the load...");
             }
+            return;
+        }
+
+        /*
+         * Secondly, we check if the solver is pending idle. In this case it's
+         * still busy at the coordinator. We'll make a hard help reject then,
+         * to make sure no helpers arrive until the solver reports itself idle.
+         */
+        if (pending_idle_solvers_.count(helpee)) {
+            lock.unlock();
+            RejectHelp({helper}, helpee, true);
+            LOG4CXX_DEBUG(logger, "Got a helper for a pending idle solver, "
+                    "hard reject, id=0x" << std::hex << helpee);
             return;
         }
     }
@@ -573,7 +600,7 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
             }
             break;
         case SearchlightBalance::CANDIDATE_FORWARD:
-            LOG4CXX_DEBUG(logger,
+            LOG4CXX_TRACE(logger,
                     "Got forwards for the validator from inst=" << inst);
             HandleForwards(*balance_msg, inst);
             break;
@@ -702,8 +729,11 @@ bool SearchlightTask::PendingSolverJobs(bool check_idle_solvers) {
     std::unique_lock<std::mutex> lock{mtx_};
     const bool res = !pending_assgns_.empty();
     if (check_idle_solvers && !pending_idle_solvers_.empty()) {
-        const uint64_t idle_solver = pending_idle_solvers_.front();
-        pending_idle_solvers_.pop_front();
+        const auto iter = pending_idle_solvers_.begin();
+        const uint64_t idle_solver = *iter;
+        pending_idle_solvers_.erase(iter);
+        LOG4CXX_DEBUG(logger, "Releasing pending idle solver, id=0x" <<
+                std::hex << idle_solver);
         lock.unlock();
         ReportIdleSolver(idle_solver, false);
     }
