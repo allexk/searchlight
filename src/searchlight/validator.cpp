@@ -708,9 +708,10 @@ bool Validator::AddValidatorHelperInt(bool *persistent) {
         helper->SetPersistent(true);
         *persistent = true;
         LOG4CXX_INFO(logger, "The helper is made persistent...");
+    } else {
+        *persistent = false;
     }
-    LOG4CXX_DEBUG(logger, "Helper started, total assignments=" <<
-            to_validate_total_);
+
     helper->RunWorkload(GetWorkload());
     return true;
 }
@@ -830,6 +831,7 @@ void Validator::ValidatorHelper::operator()() {
     parent_.free_validator_helpers_.push_back(id_);
     parent_.validate_cond_.notify_all();
     parent_.sl_task_.FreeThread();
+    persistent_ = false;
 
     LOG4CXX_DEBUG(logger, "Helper finished, total assignments=" <<
             parent_.to_validate_total_);
