@@ -127,19 +127,6 @@ public:
     }
 
     /**
-     * Check if the validator is flooded with candidates.
-     *
-     * The validator is flooded if the number of pending candidates is
-     * greater than the high watermark (a parameter).
-     *
-     * @return true, if there is a flood; false otherwise
-     */
-    bool FloodDetected() const {
-        // No locking: atomic access is fine, since it's just heuristic
-        return to_validate_total_ >= high_watermark_;
-    }
-
-    /**
      * Add a new helper for the validator.
      *
      * The request is non-binding, although the thread is supposed to
@@ -339,7 +326,7 @@ private:
 
     // Pending validations and their count
     std::deque<CandidateVector> to_validate_;
-    std::atomic<size_t> to_validate_total_{0};
+    size_t to_validate_total_ = 0;
 
     // Info about remote candidates (local id -> (instance, remote id))
     std::unordered_map<int, std::pair<InstanceID, int>> remote_candidates_;
