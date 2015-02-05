@@ -261,7 +261,7 @@ void SearchlightMessenger::SetDistributedMapUpdateFrequency(
     QueryContextPtr query_ctx = GetQueryContext(query->getQueryID(), true);
     auto array = GetRegisteredArray(query_ctx, array_name);
     array->map_broadcast_period_ = map_update_freq;
-    LOG4CXX_INFO(logger, "Set update frequency: array=" << array_name
+    LOG4CXX_DEBUG(logger, "Set update frequency: array=" << array_name
             << ", freq=" << map_update_freq);
 }
 
@@ -910,7 +910,7 @@ void SearchlightMessenger::ForwardCandidates(
     }
 
     // log
-    LOG4CXX_DEBUG(logger, "Forwarding candidates: dest=" << dest
+    LOG4CXX_TRACE(logger, "Forwarding candidates: dest=" << dest
             << ", forw_id=" << forw_id);
 
     // send
@@ -963,7 +963,7 @@ void SearchlightMessenger::SendBalanceResult(
     record->set_result(result);
 
     // log
-    LOG4CXX_DEBUG(logger, "Sending balancing result: dest=" << dest
+    LOG4CXX_TRACE(logger, "Sending balancing result: dest=" << dest
             << ", id=" << forw_id << ", result=" << result);
 
     // send
