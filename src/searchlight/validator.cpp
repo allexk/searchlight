@@ -679,8 +679,10 @@ Validator::CandidateVector Validator::GetWorkload() {
     to_validate_.pop_front();
     to_validate_total_ -= res.size();
 
-    LOG4CXX_DEBUG(logger,
+    if (logger->isDebugEnabled() && to_validate_total_ > 0) {
+        LOG4CXX_DEBUG(logger,
             "Dispatched a new workload, left=" << to_validate_total_);
+    }
 
     return res;
 }
