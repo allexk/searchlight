@@ -395,7 +395,6 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
          */
         search_vars_prototype_.Add(const_cast<IntVar *>(var->second));
     }
-    search_vars_prototype_.Store(); // Store initial values
 
     const SearchlightConfig &sl_config = sl_task_.GetConfig();
     max_pending_validations_ =
@@ -772,7 +771,6 @@ Validator::ValidatorHelper::ValidatorHelper(int id, Validator &parent,
          */
         IntVar *var = const_cast<IntVar *>(it->second);
         prototype_.Add(var);
-        var->SetRange(elem.Var()->Min(), elem.Var()->Max());
     }
 }
 
