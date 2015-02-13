@@ -24,14 +24,10 @@ target_link_libraries(searchlight_udo ${COIN_LIBRARIES})
 
 # searchlight UDFs
 add_library(searchlight_udfs SHARED searchlight/searchlight_udfs.cpp)
-target_link_libraries(searchlight_udfs searchlight_udo)
 
 # example tasks
 add_library(searchlight_sw SHARED tasks/sw.cpp)
-target_link_libraries(searchlight_sw searchlight_udo)
-
 add_library(searchlight_sdss SHARED tasks/sdss.cpp)
-target_link_libraries(searchlight_sdss searchlight_udo)
 
 #install rules for the Searchlight libs
 install(TARGETS searchlight_udo searchlight_udfs searchlight_sw

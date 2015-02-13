@@ -66,13 +66,27 @@ endif()
 
 # Output directories
 SET(LIBRARY_OUTPUT_PATH ${CMAKE_BINARY_DIR}/lib)
-SET(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/bin)
 
 # Since we link with or-tools and we ourselves, which is not
 # in the standard path, we need to modify
 # RPATHs of the libraries.
-set(CMAKE_INSTALL_RPATH "$ORIGIN")
-set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+set(CMAKE_INSTALL_RPATH "$ORIGIN/sl-aux")
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
+
+# Determine libraries to be installed in the plugin directory along with searchlight
+foreach (lib IN LISTS ORTOOLS_LIBRARIES GFLAGS_LIBRARIES COIN_LIBRARIES)
+    get_filename_component(lib_path ${lib} PATH)
+    get_filename_component(lib_name ${lib} NAME)
+    list(FIND CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES ${lib_path} is_system_dir)
+    if (is_system_dir EQUAL -1)
+        # A little bit of cheating: since these libraries are not handled
+        # by CMake, we need to copy the corresponding symlink .so.* files
+        # for the dynamic linker. We do it by simple GLOBing.
+        file(GLOB lib_files_all "${lib}*")
+        install(FILES ${lib_files_all} DESTINATION lib/scidb/plugins/sl-aux)
+        message(STATUS "Library ${lib_name} will be installed to the SciDB plugins directory...")
+    endif()
+endforeach()
 
 # the sources
 include_directories(src)
