@@ -191,10 +191,9 @@ public:
                                 adapter_->GetCurrentStats().chunks_pos_,
                                 last_asgn_.get());
                 if (!forwarded) {
-                    last_action_.type_ = Action::Type::LOCAL_CHECK;
-                    adapter_->SetAdapterMode(Adapter::EXACT);
-                    return solver->RevAlloc(
-                            new RestoreAssignment{last_asgn_.get()});
+                    validator_.PushToLocalZone(
+                            adapter_->GetCurrentStats().chunks_pos_,
+                            last_asgn_.get());
                 }
             }
         }
@@ -236,6 +235,8 @@ public:
         last_action_.forward_id_ = forw_id;
         if (forw_id >= 0) {
             last_action_.type_ = Action::Type::REMOTE_CHECK;
+        } else if (forw_id == -2) {
+            last_action_.type_ = Action::Type::LOCAL_CHECK;
         } else {
             last_action_.type_ =
                     validator_.forw_type_ != Validator::Forwarding::NONE ?
@@ -435,6 +436,41 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
             active_validators.end(), sl_task.GetInstanceID());
     my_logical_id_ = iter == active_validators.end() ? -1 :
             iter - active_validators.begin();
+
+    // Create zones
+    const auto &search_array_desc = adapter_->GetSearchArrayDesc();
+    search_array_desc.CreateChunkZones({active_validators.size()}, {});
+
+    /*
+     * Determine the number of zones. We want at least two zones to fit in
+     * memory. However, we should take into account two types of memory:
+     * local (L) for disk buffering and temporary (T) for temporary
+     * transferred arrays.
+     */
+    const unsigned int ZONES_IN_MEMORY = 2;
+    // Params
+    const size_t validator_size =
+            (search_array_desc.GetSearchArraySize() - 1) /
+            active_validators.size() + 1;
+    const size_t cache_size = size_t(Config::getInstance()->getOption<int>(
+            scidb::CONFIG_CACHE_SIZE)) * 1024 * 1024;
+    const size_t tmp_size = size_t(Config::getInstance()->getOption<int>(
+            scidb::CONFIG_MEM_ARRAY_THRESHOLD)) * 1024 * 1024;
+    const size_t inst_count = sl_task_.GetQueryInstanceCount();
+    // Number of zones
+    const size_t zones_num = std::max(ZONES_IN_MEMORY * validator_size /
+            inst_count / cache_size,
+            ZONES_IN_MEMORY * validator_size * (inst_count - 1) /
+            inst_count / tmp_size) + 1;
+
+    // Init structures
+    to_validate_.resize(zones_num + 1); // one "zone" for non-simulated cands
+    zones_mru_.resize(zones_num);
+    for (size_t i = 0; i < zones_num; ++i) {
+        zones_mru_[i] = i; // All zones are equal at the beginning, MRU-wise
+    }
+    LOG4CXX_INFO(logger, "Creating " << zones_num
+            << " zones for the validator...");
 }
 
 void Validator::AddSolution(const Assignment &sol) {
@@ -444,7 +480,7 @@ void Validator::AddSolution(const Assignment &sol) {
     LOG4CXX_TRACE(logger, "New solution to validate: " << sol.DebugString());
 
     std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
-    PushCandidate({std::move(lite_sol), -1});
+    PushCandidate({std::move(lite_sol), -1}, to_validate_.size() - 1);
 
     // We might have to wait -- flood control
     while (to_validate_total_ > max_pending_validations_) {
@@ -461,22 +497,28 @@ void Validator::AddSolution(const Assignment &sol) {
     validate_cond_.notify_all();
 }
 
-void Validator::PushCandidate(CandidateAssignment &&asgn) {
-    if (to_validate_.empty() ||
-            to_validate_.back().size() >= helper_workload_) {
-        to_validate_.emplace_back();
-        to_validate_.back().reserve(helper_workload_);
+void Validator::PushCandidate(CandidateAssignment &&asgn, size_t zone) {
+    auto &zone_cands = to_validate_[zone];
+    if (zone_cands.empty() || zone_cands.back().size() >= helper_workload_) {
+        zone_cands.emplace_back();
+        zone_cands.back().reserve(helper_workload_);
     }
-    to_validate_.back().push_back(std::move(asgn));
+    zone_cands.back().push_back(std::move(asgn));
     to_validate_total_++;
 }
 
 void Validator::AddRemoteCandidates(LiteAssignmentVector &cands,
+        const std::vector<std::vector<Coordinates1D>> &coords,
         InstanceID src, int forw_id) {
+    assert(cands.size() == coords.size());
+
+    auto coords_rit = coords.rbegin();
     std::lock_guard<std::mutex> validate_lock(to_validate_mtx_);
     while (!cands.empty()) {
+        const size_t zone = DetermineLocalZone(*coords_rit);
+        ++coords_rit;
         const int cand_id = remote_cand_id_++;
-        PushCandidate({std::move(cands.back()), cand_id});
+        PushCandidate({std::move(cands.back()), cand_id}, zone);
         cands.pop_back();
         remote_candidates_.emplace(cand_id, std::make_pair(src, forw_id++));
     }
@@ -504,6 +546,36 @@ void Validator::SendForwardResult(int forw_id, bool result) {
     sl_task_.SendBalanceResult(forw_info.first, forw_info.second, result);
 }
 
+template <typename CoordinatesSequence>
+size_t Validator::DetermineLocalZone(const CoordinatesSequence &chunks) const {
+    std::vector<int> zone_counts(to_validate_.size() - 1); // zones number
+    adapter_->GetSearchArrayDesc().GetStripesChunkDistribution(
+            chunks, zone_counts, chunk_zones_.zones_[1]);
+
+    // Pick the zone with the maximum count.
+    size_t max_zone = 0, max_count = zone_counts[0];
+    for (size_t i = 1; i < zone_counts.size(); ++i) {
+        if (max_count < zone_counts[i]) {
+            max_zone = i;
+            max_count = zone_counts[i];
+        }
+    }
+    return max_zone;
+}
+
+void Validator::PushToLocalZone(const CoordinateSet &chunks,
+        const Assignment *asgn) {
+    // Determine zone
+    const size_t zone = DetermineLocalZone(chunks);
+
+    // Convert and push
+    LiteVarAssignment lite_sol;
+    FullAssignmentToLite(*asgn, lite_sol);
+
+    std::lock_guard<std::mutex> lock{to_validate_mtx_};
+    PushCandidate({std::move(lite_sol), -2}, zone);
+}
+
 bool Validator::CheckForward(const CoordinateSet &chunks,
         const Assignment *asgn) {
     const auto &active_validators = sl_task_.GetActiveValidators();
@@ -513,7 +585,7 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
     switch (forw_type_) {
         case Forwarding::STRIPES:
             adapter_->GetSearchArrayDesc().GetStripesChunkDistribution(
-                    chunks, inst_counts);
+                    chunks, inst_counts, chunk_zones_.zones_[0]);
             break;
         case Forwarding::DYNAMIC: {
             std::vector<int> inst_counts_all(sl_task_.GetQueryInstanceCount());
@@ -533,8 +605,8 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
      *  For now we just pick the validator with the maximum count, which
      *  means it contains most of the chunks.
      */
-    int max_inst = -1, max_count = -1;
-    for (size_t i = 0; i < inst_counts.size(); ++i) {
+    int max_inst = 0, max_count = inst_counts[0];
+    for (size_t i = 1; i < inst_counts.size(); ++i) {
         if (max_count < inst_counts[i]) {
             max_inst = i;
             max_count = inst_counts[i];
@@ -560,7 +632,16 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
             std::lock_guard<std::mutex> lock{to_validate_mtx_};
             forwarded_candidates_.emplace(cand_id, asgns[0]);
         }
-        sl_task_.ForwardCandidates(asgns, active_validators[max_inst],
+
+        // Prepare coordinates
+        std::vector<std::vector<int64_t>> coords(1); // one candidate
+        coords[0].reserve(chunks.size());
+        const size_t coord_ord = chunk_zones_.zones_[1].dim_num_;
+        for (const auto &c: chunks) {
+            coords[0].push_back(c[coord_ord]);
+        }
+
+        sl_task_.ForwardCandidates(asgns, coords, active_validators[max_inst],
                 cand_id);
         return true;
     }
@@ -572,7 +653,7 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
 
 void Validator::Synchronize() const {
     std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
-    while (!to_validate_.empty()) {
+    while (to_validate_total_ > 0) {
         LOG4CXX_TRACE(logger, "Synchronizing with the validator"
                 ", queue size=" << to_validate_total_);
         validate_cond_.wait(validate_lock);
@@ -641,7 +722,7 @@ Validator::CandidateVector *Validator::GetNextAssignments() {
         }
 
         // Then check if we have any candidates or forwards
-        if (!to_validate_.empty()) {
+        if (to_validate_total_ > 0) {
             break;
         }
 
@@ -649,21 +730,21 @@ Validator::CandidateVector *Validator::GetNextAssignments() {
         validate_cond_.wait(validate_lock);
     }
 
-    // First, try to offload to helpers.
-    bool should_run_helpers = to_validate_.size() > 1;
+    // This is mine!
+    assert(to_validate_total_ > 0);
+    CandidateVector *res = new CandidateVector;
+    *res = GetWorkload();
+
+    // Try to off-load the rest to helpers
+    bool should_run_helpers = to_validate_total_ > 0;
     while (should_run_helpers) {
         should_run_helpers = false;
         if (sl_task_.ReserveThread()) {
            bool pers_helper;
-           should_run_helpers = AddValidatorHelperInt(&pers_helper);
-           should_run_helpers = should_run_helpers && to_validate_.size() > 1;
+           should_run_helpers = AddValidatorHelperInt(&pers_helper) &&
+                   to_validate_total_ > 0;
         }
     }
-
-    // The rest we'll handle ourselves
-    assert(to_validate_.size() > 0);
-    CandidateVector *res = new CandidateVector;
-    *res = GetWorkload();
 
     // Flow control: notify the main solver about catching up
     validate_cond_.notify_all();
@@ -672,11 +753,32 @@ Validator::CandidateVector *Validator::GetNextAssignments() {
 }
 
 Validator::CandidateVector Validator::GetWorkload() {
-    assert(!to_validate_.empty());
+    assert(to_validate_total_);
 
     CandidateVector res;
-    res.swap(to_validate_.front());
-    to_validate_.pop_front();
+    // First, we need to find a normal zone
+    for (auto rit = zones_mru_.rbegin(); rit != zones_mru_.rend(); ++rit) {
+        const size_t zone = *rit;
+        if (!to_validate_[zone].empty()) {
+            res.swap(to_validate_[zone].front());
+            to_validate_[zone].pop_front();
+            if (rit != zones_mru_.rbegin()) {
+                zones_mru_.erase((++rit).base());
+                zones_mru_.push_back(zone);
+                break;
+            }
+        }
+    }
+
+    // Then, check non-simulated local candidates
+    if (!to_validate_.back().empty()) {
+        auto &nonsim_cands = to_validate_.back().front();
+        res.insert(res.end(), std::make_move_iterator(nonsim_cands.begin()),
+                std::make_move_iterator(nonsim_cands.end()));
+        to_validate_.back().pop_front();
+    }
+
+    // Accounting
     to_validate_total_ -= res.size();
 
     if (logger->isDebugEnabled() && to_validate_total_ > 0) {
@@ -694,7 +796,7 @@ bool Validator::AddValidatorHelper(bool *persistent) {
 
 bool Validator::AddValidatorHelperInt(bool *persistent) {
     Validator::ValidatorHelper *helper = nullptr;
-    if (!to_validate_.empty()) {
+    if (to_validate_total_ > 0) {
         helper = DispatchValidatorHelper();
     }
     if (!helper) {

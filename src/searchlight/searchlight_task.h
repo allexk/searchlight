@@ -190,10 +190,12 @@ public:
      * The destination validator will reply with the same id when it's done.
      *
      * @param cands candidates to forward
+     * @param coords candidates coordinates
      * @param dest destination validator
      * @param forw_id id of the forward
      */
     void ForwardCandidates(const LiteAssignmentVector &cands,
+            const std::vector<std::vector<int64_t>> &coords,
             InstanceID dest, int forw_id) const;
 
     /**

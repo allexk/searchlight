@@ -51,6 +51,22 @@ namespace searchlight {
 class SearchArrayDesc {
 public:
     /**
+     * Structure describing chunk zones for the distribution.
+     *
+     * Each zone defines successive divisions of the original array into
+     * slices along a single coordinate. Thus, two numbers: start (origin) and
+     * the slice size.
+     */
+    struct ChunkZones {
+        struct Zone {
+            Coordinate start_;
+            uint64_t slice_;
+            size_t dim_num_;
+        };
+        std::vector<Zone> zones_;
+    };
+
+    /**
      * Creates a search array descriptor. We pass a vector of samples to it.
      * The first in the vector becomes the primary sample, while others
      * become auxiliary samples to optimize region reads.
@@ -163,11 +179,52 @@ public:
      * that the number of stripes is equal to the number of counters in the
      * input array.
      *
+     * By default, this functions uses dimension from the zone specification
+     * to select the appropriate coordinate for each of the chunk positions.
+     * However, if coordinates are one-dimensional, the dimension is ignored
+     * and the only available coordinate is used instead. This is especially
+     * helpful in case of transferring forwards, when it is inefficient to
+     * send full coordinates.
+     *
+     * The function can work with any sequential container that supports
+     * forward traversing. It is assumed that the container contains
+     * coordinates in vector form.
+     *
      * @param chunk_pos set of chunk positions
      * @param distr output counters (one per active instance)
+     * @param zone distribution to use
      */
-    void GetStripesChunkDistribution(const CoordinateSet &chunk_pos,
-            std::vector<int> &distr) const;
+    template <typename CoordinatesSequence>
+    void GetStripesChunkDistribution(const CoordinatesSequence &chunk_pos,
+            std::vector<int> &distr, const ChunkZones::Zone &zone) const;
+
+    /**
+     * Create chunk zones according to the specified parameters.
+     *
+     * The function starts from the whole array area. Then, at step i,
+     * it picks the maximum length interval and slices the
+     * dimension into slice_nums[i] pieces. This describes a zone.
+     * If more steps is needed, it contracts the current area by
+     * picking the slice with number slice_ords[i].
+     *
+     * The number of zones is determined by the size of slice_nums.
+     *
+     * @param slice_nums number of slices at each step
+     * @param slice_ords the slice to pick for the next iteration
+     * @return zones
+     */
+    ChunkZones CreateChunkZones(const std::vector<size_t> &slice_nums,
+            const std::vector<size_t> &slice_ords) const;
+
+    /**
+     * Return the entire search array size.
+     *
+     * This function takes only registered attributes into account, not all
+     * array attributes.
+     *
+     * @return search array size
+     */
+    size_t GetSearchArraySize() const;
 
 private:
     // The data array
@@ -179,7 +236,7 @@ private:
     std::vector<AttributeID> search_orig_ids_;
 
     // Maps  attribute names to internal access ids
-    std::map<std::string, AttributeID> attr_to_id_;
+    std::unordered_map<std::string, AttributeID> attr_to_id_;
 
     // The sampler
     Sampler sampler_;

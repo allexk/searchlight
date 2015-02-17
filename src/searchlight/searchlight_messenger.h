@@ -294,11 +294,13 @@ public:
      *
      * @param query caller's query context
      * @param cands candidates to forward
+     * @param coords candidates coordinates
      * @param dest destination validator
      * @param forw_id id of this forward
      */
     void ForwardCandidates(const boost::shared_ptr<Query> &query,
             const LiteAssignmentVector &cands,
+            const std::vector<std::vector<int64_t>> &coords,
             InstanceID dest,
             int forw_id) const;
 
@@ -364,9 +366,11 @@ public:
      *
      * @param asgn assignment to pack
      * @param msg message to store the values into
+     * @param aux info with the assignment
      */
     static void PackAssignment(const LiteVarAssignment &asgn,
-            VarAssignment &msg);
+            VarAssignment &msg,
+            const std::vector<int64_t> &aux);
 
     /**
      * Unpacks a message assignment into min/max vectors.
@@ -516,7 +520,10 @@ private:
     void HandleGeneralMessage(
             const boost::shared_ptr<MessageDescription> &msg_desc);
 
-    // Helper to fill in a balance message
+    // Helpers to fill in a balance message
+    static void FillBalanceMessage(SearchlightBalance &msg,
+            const LiteAssignmentVector &asgns,
+            const std::vector<std::vector<int64_t>> &aux);
     static void FillBalanceMessage(SearchlightBalance &msg,
             const LiteAssignmentVector &asgns);
 

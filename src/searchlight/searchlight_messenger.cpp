@@ -891,6 +891,7 @@ void SearchlightMessenger::AcceptHelp(const boost::shared_ptr<Query> &query,
 void SearchlightMessenger::ForwardCandidates(
         const boost::shared_ptr<Query> &query,
         const LiteAssignmentVector &cands,
+        const std::vector<std::vector<int64_t>> &coords,
         InstanceID dest,
         int forw_id) const {
     // prepare the message
@@ -901,7 +902,7 @@ void SearchlightMessenger::ForwardCandidates(
 
     // fill the record
     record->set_type(SearchlightBalance::CANDIDATE_FORWARD);
-    FillBalanceMessage(*record, cands);
+    FillBalanceMessage(*record, cands, coords);
     record->add_id(forw_id);
     {
         std::lock_guard<std::mutex> lock{mtx_};
@@ -1075,7 +1076,7 @@ void SearchlightMessenger::UnpackAssignment(const VarAssignment &msg,
 }
 
 void SearchlightMessenger::PackAssignment(const LiteVarAssignment &asgn,
-        VarAssignment &msg) {
+        VarAssignment &msg, const std::vector<int64_t> &aux) {
     const bool asgn_is_range = !asgn.maxs_.empty();
     for (int i = 0; i < asgn.mins_.size(); i++) {
         msg.add_var_min(asgn.mins_[i]);
@@ -1083,13 +1084,28 @@ void SearchlightMessenger::PackAssignment(const LiteVarAssignment &asgn,
             msg.add_var_max(asgn.maxs_[i]);
         }
     }
+    // Aux info, if any
+    for (const auto x: aux) {
+        msg.add_aux_info(x);
+    }
+}
+
+void SearchlightMessenger::FillBalanceMessage(SearchlightBalance &msg,
+        const LiteAssignmentVector &asgns,
+        const std::vector<std::vector<int64_t>> &aux) {
+    for (size_t i = 0; i < asgns.size(); ++i) {
+        VarAssignment *var_asgn = msg.add_load();
+        PackAssignment(asgns[i], *var_asgn,
+                aux.empty() ? std::vector<int64_t>{} : aux[i]);
+    }
 }
 
 void SearchlightMessenger::FillBalanceMessage(SearchlightBalance &msg,
         const LiteAssignmentVector &asgns) {
-    for (const auto &a: asgns) {
+    const std::vector<int64_t> aux;
+    for (size_t i = 0; i < asgns.size(); ++i) {
         VarAssignment *var_asgn = msg.add_load();
-        PackAssignment(a, *var_asgn);
+        PackAssignment(asgns[i], *var_asgn, aux);
     }
 }
 

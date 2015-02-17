@@ -11,6 +11,7 @@ message FetchChunk {
 message VarAssignment {
     repeated int64  var_min   = 1 [packed=true]; // min value
     repeated int64  var_max   = 2 [packed=true]; // max value
+    repeated int64  aux_info  = 3 [packed=true]; // additional info (forw. coordinates for now)
 }
 
 message SearchlightSolution {

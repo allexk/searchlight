@@ -77,9 +77,11 @@ public:
      * @param cands candidates to validate
      * @param src source validator
      * @param forw_id remote forward id of the first candidate
+     * @param coords relevant coordinates to determine forwards zones
      */
-    void AddRemoteCandidates(LiteAssignmentVector &cands, InstanceID src,
-            int forw_id);
+    void AddRemoteCandidates(LiteAssignmentVector &cands,
+            const std::vector<std::vector<Coordinates1D>> &coords,
+            InstanceID src, int forw_id);
 
     /**
      * Handles the result of the forwarder validation.
@@ -159,7 +161,7 @@ private:
         // The assignment itself
         LiteVarAssignment var_asgn_;
 
-        // Id >= 0, if the candidate is a remote; -1, local
+        // Id >= 0, the candidate is remote; -1, needs simulation; -2, local
         int forw_id_;
     };
     using CandidateVector = std::vector<CandidateAssignment>;
@@ -296,7 +298,7 @@ private:
          *  No mutex here since it's called from the main validator loop,
          *  which takes care of that.
          */
-        return to_validate_.empty() && forwarded_candidates_.empty() &&
+        return to_validate_total_ == 0 && forwarded_candidates_.empty() &&
                 free_validator_helpers_.size() == validator_helpers_.size();
     }
 
@@ -306,8 +308,15 @@ private:
     // Checks if we want to forward (returns true) and forwards if we can.
     bool CheckForward(const CoordinateSet &chunks, const Assignment *asgn);
 
+    // Determines the assignment's zone and pushes the candidate there
+    void PushToLocalZone(const CoordinateSet &chunks, const Assignment *asgn);
+
+    // Determine the local zone to use
+    template <typename CoordinatesSequence>
+    size_t DetermineLocalZone(const CoordinatesSequence &chunks) const;
+
     // Pushes candidate to to_validate_
-    void PushCandidate(CandidateAssignment &&asgn);
+    void PushCandidate(CandidateAssignment &&asgn, size_t zone);
 
     // Returns a new assignment workload
     CandidateVector GetWorkload();
@@ -324,9 +333,13 @@ private:
     // Validator model for later cloning
     CPModelProto validator_model_;
 
-    // Pending validations and their count
-    std::deque<CandidateVector> to_validate_;
+    // Pending validations and their count (vector of zones)
+    std::vector<std::deque<CandidateVector>> to_validate_;
     size_t to_validate_total_ = 0;
+    // Zones in the MRU order (we use vector since that might be faster even
+    // for in-the-middle erases than list splicing.
+    // The MRU zone goes last!
+    std::vector<int> zones_mru_;
 
     // Info about remote candidates (local id -> (instance, remote id))
     std::unordered_map<int, std::pair<InstanceID, int>> remote_candidates_;
@@ -397,6 +410,9 @@ private:
 
     // Do we use dynamic helper scheduling?
     bool dynamic_helper_scheduling_;
+
+    // Chunk zones to determine forwards and local candidate batches
+    SearchArrayDesc::ChunkZones chunk_zones_;
 };
 
 

@@ -197,6 +197,11 @@ struct CoordinatesHash {
  */
 typedef std::unordered_set<Coordinates, CoordinatesHash> CoordinateSet;
 
+/**
+ * One-dimensional coordinates.
+ */
+typedef std::array<Coordinate, 1> Coordinates1D;
+
 } /* namespace searchlight */
 
 #undef BOOST_NO_CXX11_EXPLICIT_CONVERSION_OPERATORS
