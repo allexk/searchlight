@@ -190,29 +190,43 @@ public:
      * forward traversing. It is assumed that the container contains
      * coordinates in vector form.
      *
+     * This function also updates the index pointing to the element with
+     * the maximum count. It is assumed that the initial value points to
+     * the current maximum. In the common case of a zero-filled array, the
+     * index can be safely set to zero.
+     *
      * @param chunk_pos set of chunk positions
      * @param distr output counters (one per active instance)
+     * @param max_ind variable to return the new maximum count index
      * @param zone distribution to use
      */
     template <class CoordinatesSequence>
     void GetStripesChunkDistribution(const CoordinatesSequence &chunk_pos,
-            std::vector<int> &distr, const ChunkZones::Zone &zone) const {
+            std::vector<int> &distr, size_t &max_ind,
+            const ChunkZones::Zone &zone) const {
         const Coordinate low = zone.start_;
         const uint64_t stripe_len = zone.slice_;
         const size_t coord_ord =
                 chunk_pos.begin()->size() > 1 ? zone.dim_num_ : 0;
+        int max_num = distr[max_ind];
         for (const auto &pos: chunk_pos) {
+            // Determine the index
+            size_t changed_index;
             if (pos[coord_ord] < low) {
                 // Overflow
-                distr[0]++;
+                changed_index = 0;
             } else {
-                const size_t inst = (pos[coord_ord] - low) / stripe_len;
-                if (inst > distr.size()) {
+                changed_index = (pos[coord_ord] - low) / stripe_len;
+                if (changed_index > distr.size()) {
                     // Overflow
-                    distr.back()++;
-                } else {
-                    distr[inst]++;
+                    changed_index = distr.size() - 1;
                 }
+            }
+            // Update
+            distr[changed_index]++;
+            if (distr[changed_index] > max_num) {
+                max_num = distr[changed_index];
+                max_ind = changed_index;
             }
         }
     }

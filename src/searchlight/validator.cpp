@@ -576,18 +576,10 @@ size_t Validator::DetermineLocalZone(const CoordinatesSequence &chunks) const {
     if (LocalZonesNumber() == 1) {
         return 0;
     }
-    std::vector<int> zone_counts(to_validate_.size() - 1); // zones number
+    std::vector<int> zone_counts(LocalZonesNumber()); // zones number
+    size_t max_zone = 0;
     adapter_->GetSearchArrayDesc().GetStripesChunkDistribution(
-            chunks, zone_counts, chunk_zones_.zones_[1]);
-
-    // Pick the zone with the maximum count.
-    size_t max_zone = 0, max_count = zone_counts[0];
-    for (size_t i = 1; i < zone_counts.size(); ++i) {
-        if (max_count < zone_counts[i]) {
-            max_zone = i;
-            max_count = zone_counts[i];
-        }
-    }
+            chunks, zone_counts, max_zone, chunk_zones_.zones_[1]);
     return max_zone;
 }
 
@@ -610,10 +602,11 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
     std::vector<int> inst_counts(active_validators.size());
 
     // Get the distribution
+    size_t max_inst = 0;
     switch (forw_type_) {
         case Forwarding::STRIPES:
             adapter_->GetSearchArrayDesc().GetStripesChunkDistribution(
-                    chunks, inst_counts, chunk_zones_.zones_[0]);
+                    chunks, inst_counts, max_inst, chunk_zones_.zones_[0]);
             break;
         case Forwarding::DYNAMIC: {
             std::vector<int> inst_counts_all(sl_task_.GetQueryInstanceCount());
@@ -622,6 +615,8 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
             for (size_t i = 0; i < active_validators.size(); i++) {
                 inst_counts[i] = inst_counts_all[active_validators[i]];
             }
+            max_inst = std::distance(inst_counts.begin(),
+                    std::max_element(inst_counts.begin(), inst_counts.end()));
             break;
         }
         case Forwarding::NONE:
@@ -630,28 +625,16 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
     }
 
     /*
-     *  For now we just pick the validator with the maximum count, which
-     *  means it contains most of the chunks.
-     */
-    int max_inst = 0, max_count = inst_counts[0];
-    for (size_t i = 1; i < inst_counts.size(); ++i) {
-        if (max_count < inst_counts[i]) {
-            max_inst = i;
-            max_count = inst_counts[i];
-        }
-    }
-
-    /*
      *  In case the local instance contains the same number of chunks,
      *  we don't forward.
      */
     if (my_logical_id_ != -1 && max_inst != my_logical_id_ &&
-            inst_counts[my_logical_id_] == max_count) {
+            inst_counts[my_logical_id_] == inst_counts[max_inst]) {
 
         max_inst = my_logical_id_;
     }
 
-    if (max_inst != my_logical_id_) {
+    if (my_logical_id_ == -1 || max_inst != my_logical_id_) {
         // forward
         LiteAssignmentVector asgns(1);
         FullAssignmentToLite(*asgn, asgns[0]);
