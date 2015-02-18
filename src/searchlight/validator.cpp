@@ -662,13 +662,15 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
         }
 
         // Prepare coordinates
-        std::vector<std::vector<int64_t>> coords(1); // one candidate
+        std::vector<std::vector<int64_t>> coords;
         if (LocalZonesNumber() > 1) {
-            coords[0].reserve(chunks.size());
+            // Need coordinate de-suplication
+            std::unordered_set<int64_t> dedup_coords;
             const size_t coord_ord = chunk_zones_.zones_[1].dim_num_;
             for (const auto &c: chunks) {
-                coords[0].push_back(c[coord_ord]);
+                dedup_coords.insert(c[coord_ord]);
             }
+            coords.emplace_back(dedup_coords.begin(), dedup_coords.end());
         }
 
         sl_task_.ForwardCandidates(asgns, coords, active_validators[max_inst],
