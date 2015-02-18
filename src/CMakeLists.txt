@@ -22,12 +22,21 @@ target_link_libraries(searchlight_udo ${ORTOOLS_LIBRARIES})
 target_link_libraries(searchlight_udo ${GFLAGS_LIBRARIES})
 target_link_libraries(searchlight_udo ${COIN_LIBRARIES})
 
+# NOTE: we need to link all auxilliary libraries with the UDO library,
+# since it is loaded with RTLD_LOCAL by SciDB. That means its dependencies
+# on constraint solver and other principal libraries will not work for
+# task libraries. Thus, explicit dependencies.
+
 # searchlight UDFs
 add_library(searchlight_udfs SHARED searchlight/searchlight_udfs.cpp)
+target_link_libraries(searchlight_udfs searchlight_udo)
 
 # example tasks
 add_library(searchlight_sw SHARED tasks/sw.cpp)
+target_link_libraries(searchlight_sw searchlight_udo)
+
 add_library(searchlight_sdss SHARED tasks/sdss.cpp)
+target_link_libraries(searchlight_sdss searchlight_udo)
 
 #install rules for the Searchlight libs
 install(TARGETS searchlight_udo searchlight_udfs searchlight_sw
