@@ -787,28 +787,35 @@ Validator::CandidateVector Validator::GetWorkload() {
 
     CandidateVector res;
     // First, we need to find a normal zone
-    for (auto rit = zones_mru_.rbegin(); rit != zones_mru_.rend(); ++rit) {
-        const size_t zone = *rit;
-        if (!to_validate_[zone].empty()) {
-            res.swap(to_validate_[zone].front());
-            to_validate_[zone].pop_front();
-            if (rit != zones_mru_.rbegin()) {
-                zones_mru_.erase((++rit).base());
-                zones_mru_.push_back(zone);
-                break;
+    if (to_validate_total_ > to_validate_.back().size()) {
+        for (auto rit = zones_mru_.rbegin(); rit != zones_mru_.rend(); ++rit) {
+            const size_t zone = *rit;
+            if (!to_validate_[zone].empty()) {
+                res.swap(to_validate_[zone].front());
+                to_validate_[zone].pop_front();
+                if (rit != zones_mru_.rbegin()) {
+                    zones_mru_.erase((++rit).base());
+                    zones_mru_.push_back(zone);
+                    break;
+                }
             }
         }
     }
 
     // Then, check non-simulated local candidates
     if (!to_validate_.back().empty()) {
-        auto &nonsim_cands = to_validate_.back().front();
-        res.insert(res.end(), std::make_move_iterator(nonsim_cands.begin()),
-                std::make_move_iterator(nonsim_cands.end()));
+        if (res.empty()) {
+            res.swap(to_validate_.back().front());
+        } else {
+            auto &nonsim_cands = to_validate_.back().front();
+            res.insert(res.end(), std::make_move_iterator(nonsim_cands.begin()),
+                    std::make_move_iterator(nonsim_cands.end()));
+        }
         to_validate_.back().pop_front();
     }
 
     // Accounting
+    assert(!res.empty());
     to_validate_total_ -= res.size();
 
     if (logger->isDebugEnabled() && to_validate_total_ > 0) {
