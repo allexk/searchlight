@@ -191,9 +191,17 @@ public:
                                 adapter_->GetCurrentStats().chunks_pos_,
                                 last_asgn_.get());
                 if (!forwarded) {
-                    validator_.PushToLocalZone(
-                            adapter_->GetCurrentStats().chunks_pos_,
-                            last_asgn_.get());
+                    if (validator_.LocalZonesNumber() > 1) {
+                        validator_.PushToLocalZone(
+                                adapter_->GetCurrentStats().chunks_pos_,
+                                last_asgn_.get());
+                    } else {
+                        // one zone, check here
+                        last_action_.type_ = Action::Type::LOCAL_CHECK;
+                        adapter_->SetAdapterMode(Adapter::EXACT);
+                        return solver->RevAlloc(
+                                new RestoreAssignment{last_asgn_.get()});
+                    }
                 }
             }
         }
@@ -437,31 +445,37 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
     my_logical_id_ = iter == active_validators.end() ? -1 :
             iter - active_validators.begin();
 
-    // Create zones
-    const auto &search_array_desc = adapter_->GetSearchArrayDesc();
-    search_array_desc.CreateChunkZones({active_validators.size()}, {});
 
-    /*
-     * Determine the number of zones. We want at least two zones to fit in
-     * memory. However, we should take into account two types of memory:
-     * local (L) for disk buffering and temporary (T) for temporary
-     * transferred arrays.
-     */
-    const unsigned int ZONES_IN_MEMORY = 2;
-    // Params
-    const size_t validator_size =
-            (search_array_desc.GetSearchArraySize() - 1) /
-            active_validators.size() + 1;
-    const size_t cache_size = size_t(Config::getInstance()->getOption<int>(
-            scidb::CONFIG_CACHE_SIZE)) * 1024 * 1024;
-    const size_t tmp_size = size_t(Config::getInstance()->getOption<int>(
-            scidb::CONFIG_MEM_ARRAY_THRESHOLD)) * 1024 * 1024;
-    const size_t inst_count = sl_task_.GetQueryInstanceCount();
-    // Number of zones
-    const size_t zones_num = std::max(ZONES_IN_MEMORY * validator_size /
-            inst_count / cache_size,
-            ZONES_IN_MEMORY * validator_size * (inst_count - 1) /
-            inst_count / tmp_size) + 1;
+    // Configured number of zones
+    size_t zones_num = sl_config.get("searchlight.validator.zones", 0);
+    const auto &search_array_desc = adapter_->GetSearchArrayDesc();
+
+    // If not specified, determine automatically
+    if (zones_num == 0) {
+        /*
+         * Determine the number of zones. We want at least two zones to fit in
+         * memory. However, we should take into account two types of memory:
+         * local (L) for disk buffering and temporary (T) for temporary
+         * transferred arrays.
+         */
+        const unsigned int ZONES_IN_MEMORY = 2;
+
+        // Params
+        const size_t validator_size =
+                (search_array_desc.GetSearchArraySize() - 1) /
+                active_validators.size() + 1;
+        const size_t cache_size = size_t(Config::getInstance()->getOption<int>(
+                scidb::CONFIG_CACHE_SIZE)) * 1024 * 1024;
+        const size_t tmp_size = size_t(Config::getInstance()->getOption<int>(
+                scidb::CONFIG_MEM_ARRAY_THRESHOLD)) * 1024 * 1024;
+        const size_t inst_count = sl_task_.GetQueryInstanceCount();
+
+        // Number of zones
+        zones_num = std::max(ZONES_IN_MEMORY * validator_size /
+                inst_count / cache_size,
+                ZONES_IN_MEMORY * validator_size * (inst_count - 1) /
+                inst_count / tmp_size) + 1;
+    }
 
     // Init structures
     to_validate_.resize(zones_num + 1); // one "zone" for non-simulated cands
@@ -471,6 +485,17 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
     }
     LOG4CXX_INFO(logger, "Creating " << zones_num
             << " zones for the validator...");
+
+    if (my_logical_id_ != -1) {
+        chunk_zones_ = search_array_desc.CreateChunkZones(
+                {active_validators.size(), zones_num},
+                {size_t(my_logical_id_)});
+    } else {
+        // This validator isn't active -- no local zones
+        chunk_zones_ = search_array_desc.CreateChunkZones(
+                {active_validators.size()},
+                {});
+    }
 }
 
 void Validator::AddSolution(const Assignment &sol) {
@@ -510,13 +535,13 @@ void Validator::PushCandidate(CandidateAssignment &&asgn, size_t zone) {
 void Validator::AddRemoteCandidates(LiteAssignmentVector &cands,
         const std::vector<std::vector<Coordinates1D>> &coords,
         InstanceID src, int forw_id) {
-    assert(cands.size() == coords.size());
+    assert(LocalZonesNumber() == 1 || cands.size() == coords.size());
 
     auto coords_rit = coords.rbegin();
     std::lock_guard<std::mutex> validate_lock(to_validate_mtx_);
     while (!cands.empty()) {
-        const size_t zone = DetermineLocalZone(*coords_rit);
-        ++coords_rit;
+        const size_t zone = LocalZonesNumber() == 1 ? 0 :
+                DetermineLocalZone(*(coords_rit++));
         const int cand_id = remote_cand_id_++;
         PushCandidate({std::move(cands.back()), cand_id}, zone);
         cands.pop_back();
@@ -548,6 +573,9 @@ void Validator::SendForwardResult(int forw_id, bool result) {
 
 template <typename CoordinatesSequence>
 size_t Validator::DetermineLocalZone(const CoordinatesSequence &chunks) const {
+    if (LocalZonesNumber() == 1) {
+        return 0;
+    }
     std::vector<int> zone_counts(to_validate_.size() - 1); // zones number
     adapter_->GetSearchArrayDesc().GetStripesChunkDistribution(
             chunks, zone_counts, chunk_zones_.zones_[1]);
@@ -635,10 +663,12 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
 
         // Prepare coordinates
         std::vector<std::vector<int64_t>> coords(1); // one candidate
-        coords[0].reserve(chunks.size());
-        const size_t coord_ord = chunk_zones_.zones_[1].dim_num_;
-        for (const auto &c: chunks) {
-            coords[0].push_back(c[coord_ord]);
+        if (LocalZonesNumber() > 1) {
+            coords[0].reserve(chunks.size());
+            const size_t coord_ord = chunk_zones_.zones_[1].dim_num_;
+            for (const auto &c: chunks) {
+                coords[0].push_back(c[coord_ord]);
+            }
         }
 
         sl_task_.ForwardCandidates(asgns, coords, active_validators[max_inst],

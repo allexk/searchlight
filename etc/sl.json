@@ -24,6 +24,7 @@
             "restart_period": 1024,
             "max_helpers": 1,
             "helper_workload": 100,
+            "zones": 0,
 
             "low_watermark": 500,
             "high_watermark": 1000

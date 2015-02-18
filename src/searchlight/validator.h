@@ -324,6 +324,12 @@ private:
     // Adds a helper to the pool (assumes the mutex is locked)
     bool AddValidatorHelperInt(bool *persistent);
 
+    // Return the number of local zones
+    size_t LocalZonesNumber() const {
+        // one "zone" for new, non-simulated, candidates
+        return to_validate_.size() - 1;
+    }
+
     // Searchlight instance
     Searchlight &sl_;
 
