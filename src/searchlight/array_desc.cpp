@@ -89,30 +89,6 @@ void SearchArrayDesc::GetDynamicChunksDistribution(
             distr);
 }
 
-template <typename CoordinatesSequence>
-void SearchArrayDesc::GetStripesChunkDistribution(
-        const CoordinatesSequence &chunk_pos, std::vector<int> &distr,
-        const ChunkZones::Zone &zone) const {
-
-    const Coordinate low = zone.start_;
-    const uint64_t stripe_len = zone.slice_;
-    const size_t coord_ord = chunk_pos.begin()->size() > 1 ? zone.dim_num_ : 0;
-    for (const auto &pos: chunk_pos) {
-        if (pos[coord_ord] < low) {
-            // Overflow
-            distr[0]++;
-        } else {
-            const size_t inst = (pos[coord_ord] - low) / stripe_len;
-            if (inst > distr.size()) {
-                // Overflow
-                distr.back()++;
-            } else {
-                distr[inst]++;
-            }
-        }
-    }
-}
-
 SearchArrayDesc::ChunkZones SearchArrayDesc::CreateChunkZones(
         const std::vector<size_t> &slice_nums,
         const std::vector<size_t> &slice_ords) const {
