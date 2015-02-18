@@ -167,6 +167,7 @@ size_t SearchArrayDesc::GetSearchArraySize() const {
             ++res;
         }
     }
+    res = (res + 7) / 8; // in bytes
     return res * desc.getCurrSize();
 }
 
