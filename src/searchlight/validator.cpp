@@ -776,19 +776,21 @@ Validator::CandidateVector Validator::GetWorkload() {
         for (auto rit = zones_mru_.rbegin(); rit != zones_mru_.rend(); ++rit) {
             const size_t zone = *rit;
             if (!to_validate_[zone].empty()) {
+                assert(!to_validate_[zone].front().empty());
                 res.swap(to_validate_[zone].front());
                 to_validate_[zone].pop_front();
                 if (rit != zones_mru_.rbegin()) {
                     zones_mru_.erase((++rit).base());
                     zones_mru_.push_back(zone);
-                    break;
                 }
+                break;
             }
         }
     }
 
     // Then, check non-simulated local candidates
     if (!to_validate_.back().empty()) {
+        assert(!to_validate_.back().front().empty());
         if (res.empty()) {
             res.swap(to_validate_.back().front());
         } else {
@@ -948,7 +950,7 @@ void Validator::ValidatorHelper::operator()() {
             }
         }
 
-        if (!should_stop && !parent_.to_validate_.empty()) {
+        if (!should_stop && parent_.to_validate_total_ > 0) {
             SetWorkload(parent_.GetWorkload());
         }
     } while (!workload_.empty());
