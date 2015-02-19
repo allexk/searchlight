@@ -352,7 +352,7 @@ private:
 
     // Pending validations and their count (vector of zones)
     std::vector<std::deque<CandidateVector>> to_validate_;
-    size_t to_validate_total_ = 0, prev_to_validate_total_ = 0;
+    size_t to_validate_total_ = 0;
     // Zones in the MRU order (we use vector since that might be faster even
     // for in-the-middle erases than list splicing.
     // The MRU zone goes last!
@@ -360,6 +360,7 @@ private:
 
     // Periodicity of sending the number of candidates updates and the info
     std::size_t send_info_period_;
+    std::size_t last_sent_cands_num_ = 0;
     std::vector<size_t> validators_cands_info_;
 
     // Info about remote candidates (local id -> (instance, remote id))

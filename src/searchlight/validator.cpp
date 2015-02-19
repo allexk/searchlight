@@ -534,15 +534,20 @@ void Validator::PushCandidate(CandidateAssignment &&asgn, size_t zone) {
     zone_cands.back().push_back(std::move(asgn));
     to_validate_total_++;
 
-    if (my_logical_id_ != -1) {
+    if (my_logical_id_ != -1 && zone < to_validate_.size() - 1) {
+        /*
+         * Count only real candidates for the stats. Non-sims are cheap
+         * and don't matter.
+         */
         validators_cands_info_[my_logical_id_]++;
         if (send_info_period_ > 0) {
+            const size_t local_cands = validators_cands_info_[my_logical_id_];
             // Active validator: check if we want to send the info update
-            const size_t cands_diff = std::abs(int64_t(to_validate_total_) -
-                    int64_t(prev_to_validate_total_));
+            const size_t cands_diff = std::abs(int64_t(local_cands) -
+                    int64_t(last_sent_cands_num_));
             if (cands_diff >= send_info_period_) {
-                prev_to_validate_total_ = to_validate_total_;
-                sl_task_.BroadcastValidatorInfo(to_validate_total_);
+                last_sent_cands_num_ = local_cands;
+                sl_task_.BroadcastValidatorInfo(local_cands);
             }
         }
     }
@@ -823,6 +828,10 @@ Validator::CandidateVector Validator::GetWorkload() {
                     zones_mru_.erase((++rit).base());
                     zones_mru_.push_back(zone);
                 }
+
+                // Update stats
+                assert(my_logical_id_ != -1);
+                validators_cands_info_[my_logical_id_] -= res.size();
                 break;
             }
         }
