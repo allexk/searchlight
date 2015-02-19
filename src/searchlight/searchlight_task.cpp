@@ -616,6 +616,20 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
                 HandleAcceptHelper(balance_msg->id(i));
             }
             break;
+        case SearchlightBalance::VALIDATOR_INFO:
+            assert(balance_msg->id_size() && balance_msg->id(0) >= 0);
+            assert(std::find(active_validators_.begin(),
+                    active_validators_.end(), inst) !=
+                            active_validators_.end());
+
+            const size_t cands_num = balance_msg->id(0);
+            const size_t val_ord = std::distance(active_validators_.begin(),
+                    std::find(active_validators_.begin(),
+                            active_validators_.end(), inst));
+            LOG4CXX_DEBUG(logger, "Validator broadcasted cands number: "
+                    "val=" << val_ord << ", cands=" << cands_num);
+            searchlight_.GetValidator().UpdateCandsInfo(cands_num, val_ord);
+            break;
     }
 }
 
@@ -824,6 +838,12 @@ void SearchlightTask::SendBalanceResult(InstanceID dest, int id,
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     SearchlightMessenger::getInstance()->SendBalanceResult(query, dest, id,
             result);
+}
+
+void SearchlightTask::BroadcastValidatorInfo(size_t cands_num) const {
+    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+    SearchlightMessenger::getInstance()->BroadcastValidatorInfo(query,
+            cands_num);
 }
 
 const ConstChunk *SearchlightResultsArray::nextChunk(AttributeID attId,

@@ -414,6 +414,8 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
             sl_config.get("searchlight.validator.max_helpers", 1);
     helper_workload_ =
             sl_config.get("searchlight.validator.helper_workload", 1000);
+    send_info_period_ =
+            sl_config.get("searchlight.validator.send_info_period", 0);
 
     // Are we using dynamic scheduling for helpers?
     dynamic_helper_scheduling_ =
@@ -444,7 +446,6 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
             active_validators.end(), sl_task.GetInstanceID());
     my_logical_id_ = iter == active_validators.end() ? -1 :
             iter - active_validators.begin();
-
 
     // Configured number of zones
     size_t zones_num = sl_config.get("searchlight.validator.zones", 0);
@@ -496,6 +497,8 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
                 {active_validators.size()},
                 {});
     }
+
+    validators_cands_info_.resize(active_validators.size());
 }
 
 void Validator::AddSolution(const Assignment &sol) {
@@ -530,6 +533,19 @@ void Validator::PushCandidate(CandidateAssignment &&asgn, size_t zone) {
     }
     zone_cands.back().push_back(std::move(asgn));
     to_validate_total_++;
+
+    if (my_logical_id_ != -1) {
+        validators_cands_info_[my_logical_id_]++;
+        if (send_info_period_ > 0) {
+            // Active validator: check if we want to send the info update
+            const size_t cands_diff = std::abs(int64_t(to_validate_total_) -
+                    int64_t(prev_to_validate_total_));
+            if (cands_diff >= send_info_period_) {
+                prev_to_validate_total_ = to_validate_total_;
+                sl_task_.BroadcastValidatorInfo(to_validate_total_);
+            }
+        }
+    }
 }
 
 void Validator::AddRemoteCandidates(LiteAssignmentVector &cands,
@@ -624,17 +640,41 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
             break;
     }
 
-    /*
-     *  In case the local instance contains the same number of chunks,
-     *  we don't forward.
-     */
+    // A couple of forward heuristsics...
     if (my_logical_id_ != -1 && max_inst != my_logical_id_ &&
             inst_counts[my_logical_id_] == inst_counts[max_inst]) {
-
+        /*
+         *  In case the local instance contains the same number of chunks,
+         *  we don't forward.
+         */
         max_inst = my_logical_id_;
     }
 
+    /*
+     * Check if we have a borderline tie. In which case we use the
+     * validator's info.
+     */
+    int tie_inst = 0;
+    if (max_inst > 0 && inst_counts[max_inst - 1] ==
+            inst_counts[max_inst]) {
+        tie_inst = -1;
+    } else if (max_inst < inst_counts.size() - 1 &&
+            inst_counts[max_inst + 1] == inst_counts[max_inst]) {
+        tie_inst = 1;
+    }
+
+    if (validators_cands_info_[max_inst + tie_inst] <
+            validators_cands_info_[max_inst]) {
+        // Tie-break in favor of the instance with less candidates
+        LOG4CXX_TRACE(logger, "Tie-break of inst=" << max_inst <<
+                " in favor of inst=" << max_inst + tie_inst);
+        max_inst += tie_inst;
+    }
+
     if (my_logical_id_ == -1 || max_inst != my_logical_id_) {
+        // Update stats locally (global will follow through broadcasts)
+        validators_cands_info_[max_inst]++;
+
         // forward
         LiteAssignmentVector asgns(1);
         FullAssignmentToLite(*asgn, asgns[0]);

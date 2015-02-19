@@ -41,6 +41,7 @@ message SearchlightBalance {
         HELP_LOAD            = 5; // Message contains load for the helper
         CANDIDATE_FORWARD    = 6; // Forwarding of a candidate to a validator
         BALANCE_RESULT       = 7; // Result of balancing (e.g., for forwarder candidates)
+        VALIDATOR_INFO       = 8; // Info about the validator's load
     }
 
     required Type type          = 1; // Type of the message

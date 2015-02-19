@@ -145,6 +145,17 @@ public:
      */
     bool AddValidatorHelper(bool *persistent);
 
+    /**
+     * Update the number of candidates statistics for the specified validator.
+     *
+     * @param cands the number of candidates
+     * @param val validator ordinal number
+     */
+    void UpdateCandsInfo(size_t cands, size_t val) {
+        // No locking, this is just stats
+        validators_cands_info_[val] = cands;
+    }
+
 private:
     // Type of validator forwarding
     enum class Forwarding {
@@ -341,11 +352,15 @@ private:
 
     // Pending validations and their count (vector of zones)
     std::vector<std::deque<CandidateVector>> to_validate_;
-    size_t to_validate_total_ = 0;
+    size_t to_validate_total_ = 0, prev_to_validate_total_ = 0;
     // Zones in the MRU order (we use vector since that might be faster even
     // for in-the-middle erases than list splicing.
     // The MRU zone goes last!
     std::vector<int> zones_mru_;
+
+    // Periodicity of sending the number of candidates updates and the info
+    std::size_t send_info_period_;
+    std::vector<size_t> validators_cands_info_;
 
     // Info about remote candidates (local id -> (instance, remote id))
     std::unordered_map<int, std::pair<InstanceID, int>> remote_candidates_;

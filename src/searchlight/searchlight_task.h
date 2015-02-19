@@ -208,6 +208,15 @@ public:
     void SendBalanceResult(InstanceID dest, int id, bool result) const;
 
     /**
+     * Broadcast validator's info.
+     *
+     * Currently we broadcast only the number of candidates in the queue.
+     *
+     * @param cands_num the number of candidates
+     */
+    void BroadcastValidatorInfo(size_t cands_num) const;
+
+    /**
      * Returns query context of this task.
      *
      * @return task's query context

@@ -224,6 +224,18 @@ public:
     void BroadcastFinishSearch(const boost::shared_ptr<Query> &query) const;
 
     /**
+     * Broadcast the validator info.
+     *
+     * For now we broadcast only the number of candidates currently in the
+     * validator's queue.
+     *
+     * @param query current query context
+     * @param cands_num the number of candidates
+     */
+    void BroadcastValidatorInfo(const boost::shared_ptr<Query> &query,
+            size_t cands_num) const;
+
+    /**
      * Sends search commit control message to all instances.
      *
      * @param query the current query

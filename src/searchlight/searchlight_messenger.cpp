@@ -998,6 +998,27 @@ void SearchlightMessenger::BroadcastFinishSearch(
     query_ctx->stats_.msgs_sent_++;
 }
 
+void SearchlightMessenger::BroadcastValidatorInfo(
+        const boost::shared_ptr<Query> &query,
+        size_t cands_num) const {
+    // prepare the message
+    boost::shared_ptr<scidb::MessageDesc> msg =
+            PrepareMessage(query->getQueryID(), mtSLBalance);
+    boost::shared_ptr<SearchlightBalance> record =
+            msg->getRecord<SearchlightBalance>();
+
+    // fill the record
+    record->set_type(SearchlightBalance::VALIDATOR_INFO);
+    record->add_id(cands_num);
+
+    // log
+    LOG4CXX_TRACE(logger, "Broadcasting validator info: cands=" << cands_num);
+
+    // send
+    NetworkManager *network_manager = NetworkManager::getInstance();
+    network_manager->broadcast(msg);
+}
+
 void SearchlightMessenger::BroadcastCommit(
         const boost::shared_ptr<Query> &query) const {
     // prepare the message
