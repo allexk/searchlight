@@ -70,7 +70,7 @@ SET(LIBRARY_OUTPUT_PATH ${CMAKE_BINARY_DIR}/lib)
 # Since we link with or-tools and we ourselves, which is not
 # in the standard path, we need to modify
 # RPATHs of the libraries.
-set(CMAKE_INSTALL_RPATH "$ORIGIN/sl-aux")
+set(CMAKE_INSTALL_RPATH "$ORIGIN:$ORIGIN/sl-aux")
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
 
 # Determine libraries to be installed in the plugin directory along with searchlight
