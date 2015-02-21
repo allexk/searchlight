@@ -496,6 +496,16 @@ private:
                 os << "\n\tForwards sent (total)=";
                 std::copy(forwards_sent_.begin(), forwards_sent_.end(),
                         std::ostream_iterator<uint64_t>(os, ", "));
+
+                // Waiting time stats
+                const auto wait_secs =
+                        std::chrono::duration_cast<std::chrono::seconds>(
+                        total_wait_time_).count();
+                const auto wait_usecs =
+                        std::chrono::duration_cast<std::chrono::milliseconds>(
+                        total_wait_time_).count();
+                os << "\n\tWaiting time=" << wait_secs << '.' <<
+                        wait_usecs << 's';
                 os << '\n';
             }
         };
