@@ -626,9 +626,11 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
             const size_t val_ord = std::distance(active_validators_.begin(),
                     std::find(active_validators_.begin(),
                             active_validators_.end(), inst));
-            LOG4CXX_DEBUG(logger, "Validator broadcasted cands number: "
-                    "val=" << val_ord << ", cands=" << cands_num);
-            searchlight_.GetValidator().UpdateCandsInfo(cands_num, val_ord);
+            if (InstanceActive(my_instance_id_)) {
+                LOG4CXX_DEBUG(logger, "Validator broadcasted cands number: "
+                        "val=" << val_ord << ", cands=" << cands_num);
+                searchlight_.GetValidator().UpdateCandsInfo(cands_num, val_ord);
+            }
             break;
     }
 }
