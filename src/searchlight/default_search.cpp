@@ -235,6 +235,7 @@ public:
         LOG4CXX_TRACE(logger, "Setting interval for  " <<
                 var_->DebugString() << " to: [" << min_ << ", " << max_ << "]");
         var_->SetRange(min_, max_);
+        LOG4CXX_TRACE(logger, "Interval set");
     }
 
     /**
@@ -243,11 +244,18 @@ public:
      * @param s the solver
      */
     virtual void Refute(Solver* const s) override {
-        var_->RemoveInterval(min_, max_);
-        // Temporarily deactivate the interval
-        sl_search_.DeactivateVarInterval(var_, var_int_ind_, true);
         LOG4CXX_TRACE(logger, "Temporarily deactivating interval for  " <<
                 var_->DebugString() << ", [" << min_ << ", " << max_ << "]");
+        /*
+         * Temporarily freeze the solver's queue, since some variables
+         * perform element-wise removes even for intervals.
+         */
+        var_->FreezeQueue();
+        var_->RemoveInterval(min_, max_);
+        var_->UnfreezeQueue();
+        // Temporarily deactivate the interval
+        sl_search_.DeactivateVarInterval(var_, var_int_ind_, true);
+        LOG4CXX_TRACE(logger, "Interval removed and deacrivated");
     }
 
     /**
@@ -475,6 +483,8 @@ Decision* SLSearch::Next(Solver* const s) {
                     var, int_min, int_max));
         } else {
             // cannot find a suitable interval: exhausted
+            LOG4CXX_TRACE(logger,
+                    "Could not find the next best interval: exhausted");
             return s->MakeFailDecision();
         }
     }
