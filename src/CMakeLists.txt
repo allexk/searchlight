@@ -41,4 +41,4 @@ target_link_libraries(searchlight_sdss searchlight_udo)
 #install rules for the Searchlight libs
 install(TARGETS searchlight_udo searchlight_udfs searchlight_sw
     searchlight_sdss
-    DESTINATION lib/scidb/plugins)
+    DESTINATION ${SL_LIB_DIR})

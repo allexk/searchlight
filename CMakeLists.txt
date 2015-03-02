@@ -4,7 +4,7 @@ project(searchlight)
 # default build type
 if (NOT CMAKE_BUILD_TYPE)
     message(STATUS "Setting the type of the build to: Release")
-    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Type of the build: Release/Debug/RelWithDebInfo/MinSizeRel" FORCE)
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Type of the build: Release/Debug/RelWithDebInfo/MinSizeRel")
 endif()
 message(STATUS "The type of build is: ${CMAKE_BUILD_TYPE}")
 
@@ -67,6 +67,12 @@ endif()
 # Output directories
 SET(LIBRARY_OUTPUT_PATH ${CMAKE_BINARY_DIR}/lib)
 
+# Libraries install dir
+if (NOT SL_LIB_DIR)
+    message(STATUS "Libraries will be installed into: lib/scidb/plugins")
+    set(SL_LIB_DIR "lib/scidb/plugins" CACHE STRING "Relatieve path to install the SL libraries to")
+endif()
+
 # Since we link with or-tools and we ourselves, which is not
 # in the standard path, we need to modify
 # RPATHs of the libraries.
@@ -83,7 +89,7 @@ foreach (lib IN LISTS ORTOOLS_LIBRARIES GFLAGS_LIBRARIES COIN_LIBRARIES)
         # by CMake, we need to copy the corresponding symlink .so.* files
         # for the dynamic linker. We do it by simple GLOBing.
         file(GLOB lib_files_all "${lib}*")
-        install(FILES ${lib_files_all} DESTINATION lib/scidb/plugins/sl-aux)
+        install(FILES ${lib_files_all} DESTINATION ${SL_LIB_DIR}/sl-aux)
         message(STATUS "Library ${lib_name} will be installed to the SciDB plugins directory...")
     endif()
 endforeach()
