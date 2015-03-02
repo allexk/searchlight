@@ -103,7 +103,8 @@ public:
     void *LoadDLL(const std::string &name) {
         auto it = dlls_.find(name);
         if (it == dlls_.end()) {
-            std::string full_name = dlls_dir_ + "/lib" + name + ".so";
+            //std::string full_name = dlls_dir_ + "/lib" + name + ".so";
+            std::string full_name = std::string{"lib"} + name + ".so";
             void *dll_handle= dlopen(full_name.c_str(), RTLD_LAZY | RTLD_LOCAL);
             if (!dll_handle) {
                 std::ostringstream err_msg;
