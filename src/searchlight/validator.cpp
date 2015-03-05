@@ -511,13 +511,15 @@ void Validator::AddSolution(const Assignment &sol) {
     PushCandidate({std::move(lite_sol), -1}, to_validate_.size() - 1);
 
     // We might have to wait -- flood control
-    while (to_validate_total_ > max_pending_validations_) {
+    while (to_validate_total_.load(std::memory_order_relaxed) >
+        max_pending_validations_) {
         /*
          * It is safe to use the same condition since the validator will be
          * certainly non-blocked.
          */
         LOG4CXX_TRACE(logger, "Waiting for the validator to catch up"
-                ", queue size=" << to_validate_total_);
+                ", queue size=" <<
+                to_validate_total_.load(std::memory_order_relaxed));
         validate_cond_.wait(validate_lock);
     }
 
@@ -532,7 +534,7 @@ void Validator::PushCandidate(CandidateAssignment &&asgn, size_t zone) {
         zone_cands.back().reserve(helper_workload_);
     }
     zone_cands.back().push_back(std::move(asgn));
-    to_validate_total_++;
+    to_validate_total_.fetch_add(1, std::memory_order_relaxed);
 
     if (my_logical_id_ != -1 && zone < to_validate_.size() - 1) {
         /*
@@ -713,9 +715,10 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
 
 void Validator::Synchronize() const {
     std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
-    while (to_validate_total_ > 0) {
+    while (to_validate_total_.load(std::memory_order_relaxed) > 0) {
         LOG4CXX_TRACE(logger, "Synchronizing with the validator"
-                ", queue size=" << to_validate_total_);
+                ", queue size=" <<
+                to_validate_total_.load(std::memory_order_relaxed));
         validate_cond_.wait(validate_lock);
     }
 }
@@ -782,7 +785,7 @@ Validator::CandidateVector *Validator::GetNextAssignments() {
         }
 
         // Then check if we have any candidates or forwards
-        if (to_validate_total_ > 0) {
+        if (to_validate_total_.load(std::memory_order_relaxed) > 0) {
             break;
         }
 
@@ -791,18 +794,19 @@ Validator::CandidateVector *Validator::GetNextAssignments() {
     }
 
     // This is mine!
-    assert(to_validate_total_ > 0);
+    assert(to_validate_total_.load(std::memory_order_relaxed) > 0);
     CandidateVector *res = new CandidateVector;
     *res = GetWorkload();
 
     // Try to off-load the rest to helpers
-    bool should_run_helpers = to_validate_total_ > 0;
+    bool should_run_helpers =
+            to_validate_total_.load(std::memory_order_relaxed) > 0;
     while (should_run_helpers) {
         should_run_helpers = false;
         if (sl_task_.ReserveThread()) {
            bool pers_helper;
            should_run_helpers = AddValidatorHelperInt(&pers_helper) &&
-                   to_validate_total_ > 0;
+                   to_validate_total_.load(std::memory_order_relaxed) > 0;
         }
     }
 
@@ -813,11 +817,12 @@ Validator::CandidateVector *Validator::GetNextAssignments() {
 }
 
 Validator::CandidateVector Validator::GetWorkload() {
-    assert(to_validate_total_);
+    assert(to_validate_total_.load(std::memory_order_relaxed));
 
     CandidateVector res;
     // First, we need to find a normal zone
-    if (to_validate_total_ > to_validate_.back().size()) {
+    if (to_validate_total_.load(std::memory_order_relaxed) >
+            to_validate_.back().size()) {
         for (auto rit = zones_mru_.rbegin(); rit != zones_mru_.rend(); ++rit) {
             const size_t zone = *rit;
             if (!to_validate_[zone].empty()) {
@@ -852,11 +857,13 @@ Validator::CandidateVector Validator::GetWorkload() {
 
     // Accounting
     assert(!res.empty());
-    to_validate_total_ -= res.size();
+    to_validate_total_.fetch_sub(res.size(), std::memory_order_relaxed);
 
-    if (logger->isDebugEnabled() && to_validate_total_ > 0) {
+    if (logger->isDebugEnabled() &&
+            to_validate_total_.load(std::memory_order_relaxed) > 0) {
         LOG4CXX_DEBUG(logger,
-            "Dispatched a new workload, left=" << to_validate_total_);
+            "Dispatched a new workload, left=" <<
+            to_validate_total_.load(std::memory_order_relaxed));
     }
 
     return res;
@@ -869,7 +876,7 @@ bool Validator::AddValidatorHelper(bool *persistent) {
 
 bool Validator::AddValidatorHelperInt(bool *persistent) {
     Validator::ValidatorHelper *helper = nullptr;
-    if (to_validate_total_ > 0) {
+    if (to_validate_total_.load(std::memory_order_relaxed) > 0) {
         helper = DispatchValidatorHelper();
     }
     if (!helper) {
@@ -881,7 +888,7 @@ bool Validator::AddValidatorHelperInt(bool *persistent) {
     }
 
     LOG4CXX_INFO(logger, "Added another validator helper...");
-    if (to_validate_total_ > high_watermark_) {
+    if (to_validate_total_.load(std::memory_order_relaxed) > high_watermark_) {
         helper->SetPersistent(true);
         *persistent = true;
         LOG4CXX_INFO(logger, "The helper is made persistent...");
@@ -975,15 +982,16 @@ void Validator::ValidatorHelper::operator()() {
         LOG4CXX_INFO(logger, "Validator helper finished workload");
 
         // Need to determine if we want to continue
-        std::lock_guard<std::mutex> lock{parent_.to_validate_mtx_};
         bool should_stop = false;
         if (parent_.dynamic_helper_scheduling_) {
+            const size_t cands_num =
+                    parent_.to_validate_total_.load(std::memory_order_relaxed);
             if (persistent_) {
                 /*
                  * If we're persistent, we will notify the task only when we've
                  * fallen below the low watermark.
                  */
-                if (parent_.to_validate_total_ < parent_.low_watermark_) {
+                if (cands_num < parent_.low_watermark_) {
                     persistent_ = false;
                     should_stop = parent_.sl_task_.PendingSolverJobs(true);
                     LOG4CXX_INFO(logger, "Persistent helper is below the "
@@ -994,13 +1002,15 @@ void Validator::ValidatorHelper::operator()() {
                  * Non-persistent. We check every time we're below the high
                  * watermark if the solver needs threads.
                  */
-                if (parent_.to_validate_total_ < parent_.high_watermark_) {
+                if (cands_num < parent_.high_watermark_) {
                     should_stop = parent_.sl_task_.PendingSolverJobs(false);
                 }
             }
         }
 
-        if (!should_stop && parent_.to_validate_total_ > 0) {
+        std::lock_guard<std::mutex> lock{parent_.to_validate_mtx_};
+        if (!should_stop && parent_.to_validate_total_.load(
+                std::memory_order_relaxed) > 0) {
             SetWorkload(parent_.GetWorkload());
         }
     } while (!workload_.empty());

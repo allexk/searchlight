@@ -309,7 +309,8 @@ private:
          *  No mutex here since it's called from the main validator loop,
          *  which takes care of that.
          */
-        return to_validate_total_ == 0 && forwarded_candidates_.empty() &&
+        return to_validate_total_.load(std::memory_order_relaxed) == 0 &&
+                forwarded_candidates_.empty() &&
                 free_validator_helpers_.size() == validator_helpers_.size();
     }
 
@@ -352,7 +353,7 @@ private:
 
     // Pending validations and their count (vector of zones)
     std::vector<std::deque<CandidateVector>> to_validate_;
-    size_t to_validate_total_ = 0;
+    std::atomic<size_t> to_validate_total_{0};
     // Zones in the MRU order (we use vector since that might be faster even
     // for in-the-middle erases than list splicing.
     // The MRU zone goes last!
