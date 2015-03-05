@@ -969,6 +969,7 @@ void Validator::ValidatorHelper::operator()() {
                 new RestoreAssignmentBuilder(parent_, adapter_,
                         &solver_, 0, &prototype_,
                         std::move(workload_), true)};
+        adapter_->SetAdapterMode(Adapter::DUMB); // Will be switched in Next()
         solver_.Solve(db.get());
         workload_.clear();
         LOG4CXX_INFO(logger, "Validator helper finished workload");
