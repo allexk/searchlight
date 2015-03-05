@@ -821,8 +821,10 @@ Validator::CandidateVector Validator::GetWorkload() {
 
     CandidateVector res;
     // First, we need to find a normal zone
-    if (to_validate_total_.load(std::memory_order_relaxed) >
-            to_validate_.back().size()) {
+    const size_t non_sim_count = to_validate_.back().empty() ? 0 :
+            (to_validate_.back().size() - 1) * helper_workload_ +
+            to_validate_.back().back().size();
+    if (to_validate_total_.load(std::memory_order_relaxed) > non_sim_count) {
         for (auto rit = zones_mru_.rbegin(); rit != zones_mru_.rend(); ++rit) {
             const size_t zone = *rit;
             if (!to_validate_[zone].empty()) {
