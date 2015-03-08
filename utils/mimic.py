@@ -9,6 +9,14 @@ import datetime
 # Signals that can be found in MIMIC
 _SIGNALS = ['I', 'II', 'III', 'V', 'PAP', 'MCL1', 'ABP', 'AVF', 'MCL', 'ART', 'AOBP', 'UAP', 'RESP', 'L', 'CVP', 'AVL',
             'R', 'AVR', 'RAP', 'PLETH', 'LAP']
+_SIGNALS_DICT = dict([(s, i) for i, s in enumerate(_SIGNALS)])
+
+
+def _find_signal_indexes(signals):
+    """Find signal indexes in the list of all signals and return in the sorted order"""
+    indexes = [_SIGNALS_DICT[s] for s in signals]
+    indexes.sort()
+    return indexes
 
 
 def _parse_file_name(file_name):
