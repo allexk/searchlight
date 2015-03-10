@@ -131,16 +131,15 @@ if opts.region:
 
 # determine the name of the sample array and the total chunks number
 sample_array_name = opts.array + '_' + opts.attr + '_'
-sample_array_origin = []
+array_origin = []
 sample_array_end = []
 for (i, chunk) in enumerate(opts.chunks):
     if i != 0:
         sample_array_name += 'x'
     sample_array_name += str(chunk)
 
-    sample_array_origin.append(int(dims[i]['start']) / chunk)
-    sample_array_end.append((int(dims[i]['start']) +
-                             int(dims[i]['length']) - 1) / chunk)
+    array_origin.append(int(dims[i]['start']))
+    sample_array_end.append((int(dims[i]['length']) - 1) / chunk)
 
 # sample each attribute into the file
 csv_file_name = opts.outcsv
@@ -169,8 +168,14 @@ else:
 csv_file.write(header)
 for s in samples:
     for l in s:
-        l = l.strip()
-        csv_file.write('\n%s' % l)
+        # We need to convert coordinates to the synopsis one here.
+        # The way regrid() works is by setting the first coordinate
+        # equivalent to the original coordinate and then incrementing them
+        # when going to the next chunk.
+        l = l.strip().split(',')
+        for i in range(len(dims)):
+            l[i] = str(int(l[i]) - array_origin[i])
+        csv_file.write('\n%s' % ','.join(l))
 csv_file.close()
 
 # create the script
@@ -212,8 +217,7 @@ sum: double, count: uint64>[" % sample_array_name)
 for (i, d) in enumerate(dims):
     if i > 0:
         script_file.write(', ')
-    script_file.write('%s=%s:%s,1000,0' % (d['name'], sample_array_origin[i],
-                                           sample_array_end[i]))
+    script_file.write('%s=0:%d,1000,0' % (d['name'], sample_array_end[i]))
 script_file.write("]'\n\n")
 
 script_file.write('# Converting raw to sample\n')
