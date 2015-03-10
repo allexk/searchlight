@@ -11,14 +11,14 @@ from collections import OrderedDict
 # Signals that can be found in MIMIC
 _SIGNALS = ['I', 'II', 'III', 'V', 'PAP', 'MCL1', 'ABP', 'AVF', 'MCL', 'ART', 'AOBP', 'UAP', 'RESP', 'L', 'CVP', 'AVL',
             'R', 'AVR', 'RAP', 'PLETH', 'LAP']
-_SIGNALS_DICT = dict([(s, i) for i, s in enumerate(_SIGNALS)])
 
 
-def _find_signal_indexes(signals):
-    """Find signal indexes in the list of all signals and return in the sorted order"""
-    indexes = [_SIGNALS_DICT[s] for s in signals]
-    indexes.sort()
-    return indexes
+def _list_to_ordered_dict(list_):
+    """Create an ordered dictionary for the list.
+
+    The dictionary contains key --> list position mapping.
+    """
+    return OrderedDict([(s, i) for i, s in enumerate(list_)])
 
 
 def _parse_file_name(file_name):
@@ -105,7 +105,7 @@ class PatientRecord(object):
                 # No header? Just consider the corresponding segment empty.
                 print "Cannot find %s, assume the segment is empty..." % header_name
 
-    def store_to_csv(self, record_mat_dir, csv_writer_data, csv_writer_segments):
+    def store_to_csv(self, record_mat_dir, csv_writer_data, csv_writer_segments, req_signals):
         """Store all segments signals to the specified CSV writer.
 
         The assumed schema is: global_rec_id, tick, <signals>. <signals> means all (currently 21) signals
@@ -118,29 +118,33 @@ class PatientRecord(object):
             record_mat_dir -- directory with the MATLAB data files for the segments
             csv_writer_data -- CSV writer object capable of writing multiple rows with 'writerows()' (for data)
             csv_writer_segments -- the same as above, but for meta info
+            req_signals -- signals to process
         """
-        tick_count = 0
         for seg in self._segments:
             csv_writer_segments.writerow([self.global_id, seg['Id'], seg['StartTime'].strftime('%H:%M:%S.%f'),
                                          seg['StartTick'], seg['Ticks']])
-            signal_indexes = _find_signal_indexes(seg['Signals'])
+            signal_indexes = []
+            for (i, sig) in enumerate(seg['Signals']):
+                assert sig in _SIGNALS, 'Unknown signal found: %s' % sig
+                if sig in req_signals:
+                    signal_indexes.append((req_signals[sig], i))
+            if not signal_indexes:
+                # this segment doesn't contain the required signals
+                continue
             seg_file_name = os.path.join(record_mat_dir, '%s_%04d.mat' % (self.name, seg['Id']))
             try:
                 segment_data = sio.loadmat(seg_file_name)
                 # Iterate over rows of the signal array
+                start_tick = seg['StartTick']
                 for signals_row in segment_data['signal']:
-                    assert len(signals_row) == len(signal_indexes), 'Header/Data mismatch in the number of signals'
-                    signals = [None] * len(_SIGNALS)
-                    for (i, sig_idx) in enumerate(signal_indexes):
-                        signals[sig_idx] = '{:.3f}'.format(signals_row[i])
-                    csv_row = [self.global_id, tick_count] + signals
-                    tick_count += 1
+                    signals = [None] * len(req_signals.keys())
+                    for tuple_idx, array_idx in signal_indexes:
+                        signals[tuple_idx] = '{:.3f}'.format(signals_row[array_idx])
+                    csv_row = [self.global_id, start_tick] + signals
+                    start_tick += 1
                     csv_writer_data.writerow(csv_row)
             except IOError:
                     print 'Cannot open %s to read signals, assuming the segment empty...' % seg_file_name
-                    tick_count += seg['Ticks']
-        assert tick_count == self._segments[-1]['StartTick'] + self._segments[-1]['Ticks'],\
-            'Internal: incorrect tick count'
 
     def print_segments(self):
         for seg in self._segments:
@@ -197,7 +201,7 @@ class Patient(object):
             self._records.append(PatientRecord(group_name, len(self._records), group_ord,
                                                os.path.join(orig_patient_dir, self.id)))
 
-    def store_to_csv(self, patient_mat_dir, csv_writer_data, csv_writer_records, csv_writer_segments):
+    def store_to_csv(self, patient_mat_dir, csv_writer_data, csv_writer_records, csv_writer_segments, req_signals):
         """Store all records to the specified CSV writer.
 
         For the schema see the PatientRecord's method with the same name. All records are stored one after
@@ -212,10 +216,11 @@ class Patient(object):
             csv_writer_data -- CSV writer object capable of writing multiple rows with 'writerows()'
             csv_writer_records -- the same for records meta
             csv_writer_segments -- the same for segments meta
+            req_signals -- signals to process
         """
         for rec in self._records:
             csv_writer_records.writerow([rec.global_id, self.id, rec.name])
-            rec.store_to_csv(patient_mat_dir, csv_writer_data, csv_writer_segments)
+            rec.store_to_csv(patient_mat_dir, csv_writer_data, csv_writer_segments, req_signals)
 
     def __iter__(self):
         """Iterates over patient records."""
@@ -251,7 +256,7 @@ class MIMICWaveformData(object):
             # Create a new patient
             self._patients[patient_id] = Patient(patient_id, record_files, mimic_orig_dir)
 
-    def store_to_csv(self, output_path):
+    def store_to_csv(self, output_path, req_signals):
         """Store all segments for all patients into a CSV file.
 
         For the schema see the PatientRecord's method with the same name. All records are stored one after
@@ -259,10 +264,11 @@ class MIMICWaveformData(object):
 
         Params:
             output_path -- file path for the CSV file (will be created/overwritten)
+            req_signals -- signals to process
         """
         with open(os.path.join(output_path, 'mimic_wave.csv'), 'w') as csv_data_file:
             csv_writer_data = csv.writer(csv_data_file)
-            csv_writer_data.writerow(['RecordId', 'Tick'] + _SIGNALS)
+            csv_writer_data.writerow(['RecordId', 'Tick'] + req_signals)
             with open(os.path.join(output_path, 'mimic_records.csv'), 'w') as csv_records_file:
                 csv_writer_records = csv.writer(csv_records_file)
                 csv_writer_records.writerow(['RecordId', 'PatientId', 'Record'])
@@ -272,7 +278,8 @@ class MIMICWaveformData(object):
 
                     for (patient_id, patient) in self._patients.iteritems():
                         patient_mat_dir = os.path.join(self._mimic_mat_dir, patient_id)
-                        patient.store_to_csv(patient_mat_dir, csv_writer_data, csv_writer_records, csv_writer_segments)
+                        patient.store_to_csv(patient_mat_dir, csv_writer_data, csv_writer_records,
+                                             csv_writer_segments, _list_to_ordered_dict(req_signals))
 
     def __iter__(self):
         """Iterates over all patients."""
@@ -289,6 +296,7 @@ def _main():
 
     # command line parameters
     parser.add_argument('--csv', metavar='path to CSV', default=None, help="Path to store signals/meta CSV")
+    parser.add_argument('--signals', metavar='signals', nargs='*', default=_SIGNALS, help="Signals to process")
     parser.add_argument('mimic_mat_dir', help='Directory with MIMIC waveform MATLAB files')
     parser.add_argument('mimic_orig_dir', help='Directory with MIMIC original data/header files')
 
@@ -322,7 +330,7 @@ def _main():
 
     # check if we need to save the CSV
     if opts.csv:
-        mimic.store_to_csv(opts.csv)
+        mimic.store_to_csv(opts.csv, opts.signals)
     return 0
 
 if __name__ == '__main__':
