@@ -198,7 +198,7 @@ script_file.write("iquery --ignore-errors -a -q 'remove(%s)'\n" % \
 script_file.write("iquery -q 'create array %s <" % raw_sample_array_name)
 for d in dims:
     script_file.write('%s: int64, ' % d['name'])
-script_file.write("min: double, max: double, sum: double, count: uint64>\
+script_file.write("min: double null, max: double null, sum: double, count: uint64>\
 [i=0:*,10000,0]'\n\n")
 
 sdb_file_name = os.path.join(os.path.dirname(csv_file_name),
@@ -212,7 +212,7 @@ script_file.write("iquery -n -q 'load %s from '\\''%s'\\'\n\n" % \
     (raw_sample_array_name, sdb_file_name))
 
 script_file.write('# Creating the sample array\n')
-script_file.write("iquery -q 'create array %s <min: double, max: double, \
+script_file.write("iquery -q 'create array %s <min: double null, max: double null, \
 sum: double, count: uint64>[" % sample_array_name)
 for (i, d) in enumerate(dims):
     if i > 0:
