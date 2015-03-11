@@ -224,6 +224,6 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
     }
 
     // set task
-    sl_solver.SetTask(coords, lens, db, mons);
+    sl_solver.SetTask(coords, {lens[1]}, db, mons);
 }
 } /* namespace searchlight */
