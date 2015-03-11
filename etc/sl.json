@@ -7,25 +7,25 @@
             "probe_submit": 0,
             "interval_penalty": 0.5,
 
-            "time_strategy": "exp",
-            "time_interval": 2,
+            "time_strategy": "fin",
+            "time_interval": 300,
             "restarts": 0,
 
-            "luby_scale": 1,
+            "luby_scale": 0,
 
             "fails_restart_probes": 1000,
-            "fails_restart_thr": 0.2,
+            "fails_restart_thr": -1,
 
-            "val_sync": 1
+            "val_sync": 0
         },
 
         "validator": {
             "max_validations": 1000000,
             "restart_period": 1024,
-            "max_helpers": 1,
+            "send_info_period": 200,
+            "max_helpers": 0,
             "helper_workload": 100,
             "zones": 0,
-
             "low_watermark": 500,
             "high_watermark": 1000
         },
@@ -38,7 +38,7 @@
             "cell_limit": 1000
         },
 
-        "load_aux_samples": 1,
+        "load_aux_samples": 0,
         "dynamic_scheduling": 1
     },
 
@@ -48,7 +48,7 @@
         "map_update_frequency": 0,
         "general_low": 0.1,
         "general_high": 0.5,
-        "slices_number": 0,
+        "slices_number": 100,
         "load_slices": 1
     },
 
