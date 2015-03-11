@@ -139,7 +139,6 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
          */
         UDFFunctionCreator max_fab = sl->GetUDFFunctionCreator("max");
         std::vector<IntVar *> part_vars(4);
-        std::vector<IntVar *> part_maxs(2);
 
         // max of the region
         IntExpr * const region_max = solver.RevAlloc(max_fab(&solver, adapter,
@@ -148,7 +147,7 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
         // left
         if (lneighb_size) {
             part_vars[0] = coords[0]; // the same id/timeline
-            part_vars[1] = solver.MakeSum(coords[0], -lneighb_size)->Var();
+            part_vars[1] = solver.MakeSum(coords[1], -lneighb_size)->Var();
             part_vars[2] = solver.MakeIntConst(1);
             part_vars[3] = solver.MakeIntConst(lneighb_size);
 
