@@ -34,11 +34,12 @@ target_link_libraries(searchlight_udfs searchlight_udo)
 # example tasks
 add_library(searchlight_sw SHARED tasks/sw.cpp)
 target_link_libraries(searchlight_sw searchlight_udo)
-
 add_library(searchlight_sdss SHARED tasks/sdss.cpp)
 target_link_libraries(searchlight_sdss searchlight_udo)
+add_library(searchlight_mimic SHARED tasks/mimic.cpp)
+target_link_libraries(searchlight_mimic searchlight_udo)
 
 #install rules for the Searchlight libs
 install(TARGETS searchlight_udo searchlight_udfs searchlight_sw
-    searchlight_sdss
+    searchlight_sdss searchlight_mimic
     DESTINATION ${SL_LIB_DIR})
