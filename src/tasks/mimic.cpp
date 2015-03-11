@@ -115,6 +115,9 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
     std::vector<IntVar *> all_vars(coords);
     all_vars.insert(all_vars.end(), lens.begin(), lens.end());
 
+    // Search vars
+    std::vector<IntVar *> search_vars{coords[0], coords[1], lens[1]};
+
     // valid window
     solver.AddConstraint(solver.MakeLessOrEqual(
             solver.MakeSum(coords[1], lens[1]), end_time + 1));
@@ -192,23 +195,23 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
     DecisionBuilder *db;
     std::vector<SearchMonitor *> mons;
     if (search_heuristic == "impact") {
-        db = solver.MakeDefaultPhase(all_vars);
+        db = solver.MakeDefaultPhase(search_vars);
     } else if (search_heuristic == "random") {
-        db = solver.MakePhase(all_vars, Solver::CHOOSE_RANDOM,
+        db = solver.MakePhase(search_vars, Solver::CHOOSE_RANDOM,
             Solver::ASSIGN_RANDOM_VALUE);
         if (luby_scale != 0) {
             mons.push_back(solver.MakeLubyRestart(luby_scale));
         }
         mons.push_back(solver.MakeTimeLimit(time_limit * 1000));
     } else if (search_heuristic == "split") {
-        db = solver.MakePhase(all_vars, Solver::CHOOSE_MAX_SIZE,
+        db = solver.MakePhase(search_vars, Solver::CHOOSE_MAX_SIZE,
             Solver::SPLIT_LOWER_HALF);
         const bool balance = config.get("balance.solver_balance", 1);
         const double low_thr = config.get("balance.general_low", 0.1);
         const double high_thr = config.get("balance.general_high", 0.5);
         if (balance) {
-            mons.push_back(sl_solver.CreateBalancingMonitor(all_vars, low_thr,
-                    high_thr));
+            mons.push_back(sl_solver.CreateBalancingMonitor(search_vars,
+                    low_thr, high_thr));
         }
     } else if (search_heuristic == "sl") {
         if (time_limit != 0) {
@@ -216,7 +219,7 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
         }
         db = sl_solver.CreateDefaultHeuristic(coords, lens);
     } else {
-        db = solver.MakePhase(all_vars, Solver::CHOOSE_FIRST_UNBOUND,
+        db = solver.MakePhase(search_vars, Solver::CHOOSE_FIRST_UNBOUND,
             Solver::ASSIGN_MIN_VALUE);
     }
 
