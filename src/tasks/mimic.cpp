@@ -217,7 +217,7 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
         if (time_limit != 0) {
             mons.push_back(MakeCumulativeTimeLimit(solver, time_limit * 1000));
         }
-        db = sl_solver.CreateDefaultHeuristic(coords, lens);
+        db = sl_solver.CreateDefaultHeuristic(coords, {lens[1]});
     } else {
         db = solver.MakePhase(search_vars, Solver::CHOOSE_FIRST_UNBOUND,
             Solver::ASSIGN_MIN_VALUE);
