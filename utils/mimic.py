@@ -192,6 +192,14 @@ class PatientRecord(object):
                 # No header? Just consider the corresponding segment empty.
                 print "Cannot find %s, assume the segment is empty..." % header_name
 
+    def record_length(self):
+        """Return the total length of the record."""
+        if not self._segments:
+            return 0
+        else:
+            last_segment = self._segments[-1]
+            return last_segment['StartTick'] + last_segment['Ticks']
+
     def store_to_file(self, record_mat_dir, writer_data, writer_segments, req_signals):
         """Store all segments signals to the specified writer.
 
@@ -430,6 +438,7 @@ def _main():
 
     # iterate over groups of records
     if opts.show_catalog:
+        max_record_length = 0
         all_signals = set()
         for patient in mimic:
             print "Found following groups for patient %s:" % patient.id
@@ -439,6 +448,8 @@ def _main():
                 rec.print_segments()
                 for seg in rec:
                     all_signals.update(seg['Signals'])
+                max_record_length = max(max_record_length, rec.record_length())
+        print 'Maximum record length: %d' % max_record_length
 
         # check if we're missing some in the _SIGNALS
         missing_signals = set(all_signals) - set(_SIGNALS)
