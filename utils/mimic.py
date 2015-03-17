@@ -402,6 +402,8 @@ def _main():
     parser.add_argument('--signals', metavar='signals', nargs='*', default=_SIGNALS, help="Signals to process")
     parser.add_argument('--filter', metavar='patients file', help="File containing patient ids to load")
     parser.add_argument('--binary', action='store_true', help='Write in the SciDB binary format')
+    parser.add_argument('--show-catalog', action='store_true', help='Output the catalog to stdout')
+    parser.add_argument('--single-binary', action='store_true', help='Store data in a single binary')
     parser.add_argument('mimic_mat_dir', help='Directory with MIMIC waveform MATLAB files')
     parser.add_argument('mimic_orig_dir', help='Directory with MIMIC original data/header files')
 
@@ -427,22 +429,23 @@ def _main():
             pickle.dump(mimic, mimic_cache)
 
     # iterate over groups of records
-    all_signals = set()
-    for patient  in mimic:
-        print "Found following groups for patient %s:" % patient.id
-        for rec in patient:
-            print str(rec)
-            print "Segments:"
-            rec.print_segments()
-            for seg in rec:
-                all_signals.update(seg['Signals'])
+    if opts.show_catalog:
+        all_signals = set()
+        for patient in mimic:
+            print "Found following groups for patient %s:" % patient.id
+            for rec in patient:
+                print str(rec)
+                print "Segments:"
+                rec.print_segments()
+                for seg in rec:
+                    all_signals.update(seg['Signals'])
 
-    # check if we're missing some in the _SIGNALS
-    missing_signals = set(all_signals) - set(_SIGNALS)
-    if missing_signals:
-        print 'Signals missing from _SIGNALS:', ', '.join(missing_signals)
-    else:
-        print 'No signals are missing from _SIGNALS'
+        # check if we're missing some in the _SIGNALS
+        missing_signals = set(all_signals) - set(_SIGNALS)
+        if missing_signals:
+            print 'Signals missing from _SIGNALS:', ', '.join(missing_signals)
+        else:
+            print 'No signals are missing from _SIGNALS'
 
     # check if we need to save the signals
     if opts.store:
@@ -450,7 +453,18 @@ def _main():
         if opts.filter:
             with open(opts.filter, 'r') as filter_file:
                 patients = set([l.strip() for l in filter_file if l.strip()])
-        mimic.store_to_file(opts.store, opts.signals, patients, opts.binary)
+        if patients and not opts.single_binary:
+            # store each patient in its own dir
+            for patient in patients:
+                store_path = os.path.join(opts.store, str(patient))
+                if not os.path.exists(store_path):
+                    os.mkdir(store_path)
+                else:
+                    print "'%s' already exists. It will be rewritten..." % store_path
+                print 'Dumping data for %s into %s...' % (patient, store_path)
+                mimic.store_to_file(store_path, opts.signals, [patient], opts.binary)
+        else:
+            mimic.store_to_file(opts.store, opts.signals, patients, opts.binary)
     return 0
 
 if __name__ == '__main__':
