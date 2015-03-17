@@ -251,7 +251,7 @@ class PatientRecord(object):
 
     def __str__(self):
         """Create string representation."""
-        return "Record %s with %d segments" % (self.name, len(self._segments))
+        return "Record %s[%d] with %d segments" % (self.name, self.global_id, len(self._segments))
 
     def __iter__(self):
         """Iterate over the record's segments."""
@@ -267,7 +267,7 @@ class Patient(object):
 
     Users can iterate over groups via the groups() generator.
     """
-    def __init__(self, patient_id, records, orig_patient_dir):
+    def __init__(self, patient_id, records, orig_patient_dir, first_record_id):
         self.id = patient_id
         self._records = []
         # parse records into groups
@@ -293,7 +293,7 @@ class Patient(object):
                 else:
                     break
             # Create another record
-            self._records.append(PatientRecord(group_name, len(self._records), group_ord,
+            self._records.append(PatientRecord(group_name, first_record_id + len(self._records), group_ord,
                                                os.path.join(orig_patient_dir, self.id)))
 
     def store_to_file(self, patient_mat_dir, writer_data, writer_records, writer_segments, req_signals):
@@ -322,6 +322,10 @@ class Patient(object):
         for rec in self._records:
             yield rec
 
+    def records_num(self):
+        """Return the number of records for the patient."""
+        return len(self._records)
+
 
 class MIMICWaveformData(object):
     """Contains all patients with their records."""
@@ -339,6 +343,7 @@ class MIMICWaveformData(object):
 
         # Assume a directory per patient
         print "Parsing MIMIC catalog..."
+        global_record_id = 0
         for patient_id in patient_dirs:
             patient_dir = os.path.join(self._mimic_mat_dir, patient_id)
             if not os.path.isdir(patient_dir):
@@ -349,7 +354,8 @@ class MIMICWaveformData(object):
                 print 'No record files for: %s, skipping...' % patient_id
                 continue
             # Create a new patient
-            self._patients[patient_id] = Patient(patient_id, record_files, mimic_orig_dir)
+            self._patients[patient_id] = Patient(patient_id, record_files, mimic_orig_dir, global_record_id)
+            global_record_id += self._patients[patient_id]
 
     def store_to_file(self, output_path, req_signals, patients_filter, binary):
         """Store all segments for all patients into a file.
