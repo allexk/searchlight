@@ -8,6 +8,7 @@ import scipy.io as sio
 import csv
 from collections import OrderedDict
 import struct
+import cPickle as pickle
 
 # Signals that can be found in MIMIC
 _SIGNALS = ['I', 'II', 'III', 'V', 'PAP', 'MCL1', 'ABP', 'AVF', 'MCL', 'ART', 'AOBP', 'UAP', 'RESP', 'L', 'CVP', 'AVL',
@@ -407,12 +408,23 @@ def _main():
     # parse
     opts = parser.parse_args()
 
-    # Create the catalog
-    try:
-        mimic = MIMICWaveformData(opts.mimic_mat_dir, opts.mimic_orig_dir)
-    except ValueError:
-        print "Error when parsing MIMIC directory tree:", sys.exc_info()
-        return 1
+    # check if we have cache
+    if os.path.isfile('mimic.cache'):
+        print 'Found cached catalog in mimic.cache...'
+        with open('mimic.cache', 'rb') as mimic_cache:
+            mimic = pickle.load(mimic_cache)
+    else:
+        # Create the catalog
+        print 'Creating MIMIC catalog...'
+        try:
+            mimic = MIMICWaveformData(opts.mimic_mat_dir, opts.mimic_orig_dir)
+        except ValueError:
+            print "Error when parsing MIMIC directory tree:", sys.exc_info()
+            return 1
+        # Create cache
+        print 'Caching the catalog in mimic.cache...'
+        with open('mimic.cache', 'wb') as mimic_cache:
+            pickle.dump(mimic, mimic_cache)
 
     # iterate over groups of records
     all_signals = set()
@@ -432,7 +444,7 @@ def _main():
     else:
         print 'No signals are missing from _SIGNALS'
 
-    # check if we need to save the CSV
+    # check if we need to save the signals
     if opts.store:
         patients = None
         if opts.filter:
