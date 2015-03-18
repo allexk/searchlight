@@ -355,7 +355,7 @@ class MIMICWaveformData(object):
                 continue
             # Create a new patient
             self._patients[patient_id] = Patient(patient_id, record_files, mimic_orig_dir, global_record_id)
-            global_record_id += self._patients[patient_id]
+            global_record_id += self._patients[patient_id].records_num()
 
     def store_to_file(self, output_path, req_signals, patients_filter, binary):
         """Store all segments for all patients into a file.
