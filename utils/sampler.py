@@ -4,16 +4,16 @@ import argparse
 import csv
 import cStringIO as StringIO
 import os
-import subprocess
 
-def get_meta(iquery, array, what):
+
+def get_meta(scidb_connection, array, what):
     """Retrieves metadata from a SciDb array.
 
     The metadata is presented as an array of dicts, one dict per
     object (attribute, dimension, etc.)
 
     Parameters:
-        iquery -- path to the iquery program
+        scidb_connection -- SciDB connection
         array  -- the name of the array to query
         what   -- what to query: dims, attrs
     """
@@ -23,34 +23,29 @@ def get_meta(iquery, array, what):
         array_nover = array[:ver_pos]
     else:
         array_nover = array
-
-    # we want AFL and CSV output with a header
-    args = [iquery, '-a', '-o', 'csv+']
+    # define query
     if what == 'dims':
         query = 'dimensions(%s)' % array_nover
     elif what == 'attrs':
         query = 'attributes(%s)' % array_nover
     else:
         raise ValueError, 'Unknown type of metadata: %s' % what
-    args.extend(['-q', query])
-
-    # the output (should be CSV with a header)
-    out = StringIO.StringIO(subprocess.check_output(args,
-        stderr=subprocess.STDOUT))
-    csv_reader = csv.DictReader(out, quotechar="'")
+    # run via the connection
+    query_id = scidb_connection.query(query, True, 'csv+')
+    res_file = StringIO.StringIO(scidb_connection.get_result(query_id))
+    csv_reader = csv.DictReader(res_file, quotechar="'")
     res = []
     for row in csv_reader:
         res.append(row)
-
     return res
 
-def sample_attribute(iquery, array, chunks, attr, region):
+def sample_attribute(scidb_connection, array, chunks, attr, region):
     """ Samples the specified attribute from the array.
 
     The result is returned as a StringIO object.
 
     Parameters:
-        iquery       -- path to the iquery program
+        scidb_connection -- SciDB connection
         array        -- the name of the array to query
         chunks       -- a list of chunk sizes to use
         attr         -- the attribute to sample
@@ -58,25 +53,20 @@ def sample_attribute(iquery, array, chunks, attr, region):
         total_chunks -- the total number of sample chunks
         region      -- particular region to sample
     """
-    args = [iquery, '-a', '-o', 'csv+', '-q']
     array_spec = array
     if region:
         region_lbs = ', '.join([str(i) for i in region[0]])
         region_rbs = ', '.join([str(i) for i in region[1]])
         array_spec = 'between(%s, %s, %s)' % (array, region_lbs, region_rbs)
-
     chunks_spec = ', '.join([str(i) for i in chunks])
     regrid_cmd = 'regrid(%s, %s, ' % (array_spec, chunks_spec)
     regrid_cmd += 'min(%s) as min, max(%s) as max, sum(%s) as sum, '\
         'count(%s) as count)' % ((attr, ) * 4)
     print 'Sampling with the command: %s' % regrid_cmd
-
-    # the full command
-    args.append(regrid_cmd)
-    out = StringIO.StringIO(subprocess.check_output(args,
-        stderr=subprocess.STDOUT))
-
-    return out
+    # run via the connection
+    query_id = scidb_connection.query(regrid_cmd, True, 'csv+')
+    res_file = StringIO.StringIO(scidb_connection.get_result(query_id))
+    return res_file
 
 
 # command line parser
@@ -84,10 +74,15 @@ parser = argparse.ArgumentParser(description='''Samples the specified SciDb
     array, dumps the sample into a CSV file and creates a script for loading''')
 
 # command line parameters
-parser.add_argument('--chunks', metavar='N N...', nargs='+', type=int,
-    help='Sample chunk sizes')
+parser.add_argument('--method', metavar='http/iquery', default='iquery,', help='Method to connect.')
+parser.add_argument('--port', metavar='N', type=int, default=8080, help='Port to connect to')
+parser.add_argument('--user', metavar='name', default='SciDBUser', help='User to connect as')
+parser.add_argument('--password', metavar='path', help='Path to a file with the password')
 parser.add_argument('--bindir', metavar='path', default=os.getcwd(),
     help='Path to the SciDb binaries')
+
+parser.add_argument('--chunks', metavar='N N...', nargs='+', type=int,
+    help='Sample chunk sizes')
 parser.add_argument('--outcsv', metavar='filepath', default=None,
     help='File to write the sample CSV')
 parser.add_argument('--outsh', metavar='filepath', default=None,
@@ -101,12 +96,23 @@ parser.add_argument('attr', help='Attribute to sample')
 # parse
 opts = parser.parse_args()
 
-# full iquery path
-iquery_path = os.path.join(opts.bindir, 'iquery')
+# create a connection
+if opts.method == 'http':
+    from scidb_http import SciDBConnection
+    if not opts.password:
+        raise ValueError('--password is mandatory for the http method')
+    with open(opts.password, 'r') as passw_file:
+        password = passw_file.read().strip()
+    connection = SciDBConnection(opts.host, opts.port, opts.user, password)
+    connection.connect()
+elif opts.method == 'iquery':
+    from scidb_iquery import SciDBConnection
+    connection = SciDBConnection(opts.bindir)
+else:
+    raise ValueError('Unknown connection method: %s' % opts.method)
 
 # get dimensions and attributes
-dims = get_meta(iquery_path, opts.array, 'dims')
-attrs = get_meta(iquery_path, opts.array, 'attrs')
+dims = get_meta(connection, opts.array, 'dims')
 
 # one chunk size per dimension
 if len(dims) != len(opts.chunks):
@@ -121,10 +127,10 @@ if opts.region:
     for i in range(0, len(opts.region), 2 * len(dims)):
         region_lbs = opts.region[i:i + len(dims)]
         region_rbs = opts.region[i + len(dims):i + 2 * len(dims)]
-        for i in range(len(region_lbs)):
-            chunk_i = opts.chunks[i]
-            len_i = region_rbs[i] - region_lbs[i] + 1
-            if region_lbs[i] % chunk_i != 0 or len_i % chunk_i != 0:
+        for j in range(len(region_lbs)):
+            chunk_j = opts.chunks[j]
+            len_j = region_rbs[j] - region_lbs[j] + 1
+            if region_lbs[j] % chunk_j != 0 or len_j % chunk_j != 0:
                 raise ValueError, 'Area bounds must be aligned with the chunk!'
         regions.append((region_lbs, region_rbs))
     print 'Detected the following sample regions: %s' % str(regions)
@@ -137,9 +143,11 @@ for (i, chunk) in enumerate(opts.chunks):
     if i != 0:
         sample_array_name += 'x'
     sample_array_name += str(chunk)
-
-    array_origin.append(int(dims[i]['start']))
-    sample_array_end.append((int(dims[i]['length']) - 1) / chunk)
+    low_boundary = int(dims[i]['low'])
+    high_boundary = int(dims[i]['high'])
+    array_origin.append(low_boundary)
+    curr_length = high_boundary - low_boundary + 1
+    sample_array_end.append((curr_length - 1) / chunk)
 
 # sample each attribute into the file
 csv_file_name = opts.outcsv
@@ -153,14 +161,14 @@ samples = []
 header = None
 if regions:
     for r in regions:
-        sample = sample_attribute(iquery_path, opts.array, opts.chunks,
-                                 opts.attr, r)
+        sample = sample_attribute(connection, opts.array, opts.chunks,
+                                  opts.attr, r)
         # header is the same and we remove it from every StringIO "file"
         header = sample.readline().strip()
         samples.append(sample)
 else:
-    sample = sample_attribute(iquery_path, opts.array, opts.chunks,
-                             opts.attr, None)
+    sample = sample_attribute(connection, opts.array, opts.chunks,
+                              opts.attr, None)
     header = sample.readline().strip()
     samples.append(sample)
 
