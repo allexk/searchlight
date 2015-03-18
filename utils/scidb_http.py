@@ -58,17 +58,13 @@ class SciDBConnection(object):
             return None
 
     def connect(self):
-        """Connect to SciDB and create a new session.
-
-        Return:
-            session_id -- string
-        """
+        """Connect to SciDB and create a new session."""
         print 'Connecting to %s...' % self._base_url
         body = self._get('/new_session', {})
         self._session.params['id'] = body.strip()
         print 'Success, session_id=%s' % self.session_id()
 
-    def query(self, query_str, need_result=True):
+    def query(self, query_str, need_result=True, res_format='dcsv'):
         """Execute a SciDB query.
 
         A session must be already opened by connect(). Note, this function does not return th result.
@@ -77,6 +73,7 @@ class SciDBConnection(object):
         Params:
             query_str -- SciDB query string
             need_result -- True, if the result is needed later; False, otherwise.
+            res_format -- format of the result
         Return:
             query_id -- string
         """
@@ -85,7 +82,7 @@ class SciDBConnection(object):
         if not need_result:
             save_format = None
         else:
-            save_format = 'dcsv'
+            save_format = res_format
         print "Executing query '%s'..." % query_str
         body = self._get('/execute_query', {'query': query_str, 'save': save_format})
         query_id = body.strip()
@@ -166,6 +163,10 @@ class SciDBConnection(object):
                 error_string += '\n%s' % body_text
             raise requests.HTTPError(error_string)
         return body_text
+
+    def __del__(self):
+        """Close the connection on deletion."""
+        self.close()
 
 
 def _main():
