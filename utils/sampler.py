@@ -74,10 +74,16 @@ parser = argparse.ArgumentParser(description='''Samples the specified SciDb
     array, dumps the sample into a CSV file and creates a script for loading''')
 
 # command line parameters
-parser.add_argument('--method', metavar='http/iquery', default='iquery,', help='Method to connect.')
-parser.add_argument('--port', metavar='N', type=int, default=8080, help='Port to connect to')
-parser.add_argument('--user', metavar='name', default='SciDBUser', help='User to connect as')
-parser.add_argument('--password', metavar='path', help='Path to a file with the password')
+parser.add_argument('--method', metavar='http/iquery', default='iquery,',
+                    help='Method to connect.')
+parser.add_argument('--host', metavar='hostname', defalult='localhost',
+                    help='Host to connect to')
+parser.add_argument('--port', metavar='port', type=int, default=8080,
+                    help='Port to connect to')
+parser.add_argument('--user', metavar='name', default='SciDBUser',
+                    help='User to connect as')
+parser.add_argument('--password', metavar='path',
+                    help='Path to a file with the password')
 parser.add_argument('--bindir', metavar='path', default=os.getcwd(),
                     help='Path to the SciDb binaries')
 parser.add_argument('--chunks', metavar='N N...', nargs='+', type=int,
@@ -89,7 +95,8 @@ parser.add_argument('--outscript', metavar='filepath', default=None,
 parser.add_argument('--region', metavar='N', default=None, nargs='+', type=int,
     help='Specific region to sample: [lbs1, lbs2, ... rbs1, rbs2, ...], ...'
         '(inclusive, must be aligned with the chunks)')
-parser.add_argument('--binary', action='store_true', help='Write in the SciDB binary format')
+parser.add_argument('--binary', action='store_true',
+                    help='Write in the SciDB binary format')
 parser.add_argument('array', help='Array to sample')
 parser.add_argument('attr', help='Attribute to sample')
 
