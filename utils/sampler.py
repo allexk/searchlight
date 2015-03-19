@@ -196,11 +196,11 @@ for s in samples:
         if opts.binary:
             row[0] = long(row[0])
             row[1] = long(row[1])
-            if row[2]:
+            if row[2] != 'null':
                 row[2] = float(row[2])
             else:
                 row[2] = None
-            if row[3]:
+            if row[3] != 'null':
                 row[3] = float(row[3])
             else:
                 row[3] = None
