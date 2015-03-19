@@ -61,7 +61,7 @@ class BinarySciDBWriter(object):
     For the format description see the documentation. This class uses Python struct module to
     produce correct binary strings.
     """
-    TYPE_STRUCT_MAP = {'int64': 'q', 'double': 'd', 'string': 's'}
+    TYPE_STRUCT_MAP = {'int64': 'q', 'double': 'd', 'string': 's', 'uint64': 'Q'}
 
     def __init__(self, file_, row_format):
         """Create a new binary writer according to the format.
