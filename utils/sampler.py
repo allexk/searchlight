@@ -234,11 +234,11 @@ for d in dims:
 script_file.write("min: double null, max: double null, sum: double, count: uint64>\
 [i=0:*,10000,0]'\n\n")
 
-sdb_file_name = os.path.join(os.path.dirname(csv_file_name),
+sdb_file_name = os.path.join(os.path.dirname(out_file_name),
         '%s.sdb' % sample_array_name)
 script_file.write('# Converting to scidb format\n')
 script_file.write("csv2scidb -i %s -o %s -c 10000 -f 0 -p NNNNNN -s 1\n\n" % \
-    (csv_file_name, sdb_file_name))
+    (out_file_name, sdb_file_name))
 
 script_file.write('# Loading the CSV into the raw array\n')
 script_file.write("iquery -n -q 'load %s from '\\''%s'\\'\n\n" % \
