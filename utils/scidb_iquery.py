@@ -88,7 +88,7 @@ class SciDBConnection(object):
         if query_id not in self._query_results:
             raise ValueError('There is no result available for: %d' % query_id)
         print 'Retrieving result for query %s...' % query_id
-        return self._query_results[query_id].getvalue()
+        return self._query_results[query_id]
 
     def close(self):
         """Close current session.
