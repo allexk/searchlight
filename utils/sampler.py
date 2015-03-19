@@ -79,17 +79,17 @@ parser.add_argument('--port', metavar='N', type=int, default=8080, help='Port to
 parser.add_argument('--user', metavar='name', default='SciDBUser', help='User to connect as')
 parser.add_argument('--password', metavar='path', help='Path to a file with the password')
 parser.add_argument('--bindir', metavar='path', default=os.getcwd(),
-    help='Path to the SciDb binaries')
-
+                    help='Path to the SciDb binaries')
 parser.add_argument('--chunks', metavar='N N...', nargs='+', type=int,
-    help='Sample chunk sizes')
-parser.add_argument('--outcsv', metavar='filepath', default=None,
-    help='File to write the sample CSV')
+                    help='Sample chunk sizes')
+parser.add_argument('--outfile', metavar='filepath', default=None,
+    help='File to write the sample')
 parser.add_argument('--outsh', metavar='filepath', default=None,
     help='File to write the shell script for loading the sample from CSV')
 parser.add_argument('--region', metavar='N', default=None, nargs='+', type=int,
     help='Specific region to sample: [lbs1, lbs2, ... rbs1, rbs2, ...], ...'
         '(inclusive, must be aligned with the chunks)')
+parser.add_argument('--binary', action='store_true', help='Write in the SciDB binary format')
 parser.add_argument('array', help='Array to sample')
 parser.add_argument('attr', help='Attribute to sample')
 
@@ -150,12 +150,15 @@ for (i, chunk) in enumerate(opts.chunks):
     sample_array_end.append((curr_length - 1) / chunk)
 
 # sample each attribute into the file
-csv_file_name = opts.outcsv
-if not csv_file_name:
-    csv_file_name = '%s.csv' % sample_array_name
+out_file_name = opts.outfile
+if not out_file_name:
+    if opts.binary:
+        out_file_name = '%s.dat' % sample_array_name
+    else:
+        out_file_name = '%s.csv' % sample_array_name
 # let's get the full name for the load script later
-csv_file_name = os.path.abspath(csv_file_name)
-csv_file = open(csv_file_name, 'w')
+out_file_name = os.path.abspath(out_file_name)
+out_file = open(out_file_name, 'wb')
 
 samples = []
 header = None
@@ -173,18 +176,40 @@ else:
     samples.append(sample)
 
 # write to the file
-csv_file.write(header)
+if opts.binary:
+    import mimic
+    binary_writer = mimic.BinarySciDBWriter(out_file, ['int64', 'int64',
+                                                       'double null',
+                                                       'double null',
+                                                       'double', 'uint64'])
+else:
+    out_file.write(header)
 for s in samples:
-    for l in s:
+    for row in s:
         # We need to convert coordinates to the synopsis one here.
         # The way regrid() works is by setting the first coordinate
         # equivalent to the original coordinate and then incrementing them
         # when going to the next chunk.
-        l = l.strip().split(',')
+        row = row.strip().split(',')
         for i in range(len(dims)):
-            l[i] = str(int(l[i]) - array_origin[i])
-        csv_file.write('\n%s' % ','.join(l))
-csv_file.close()
+            row[i] = str(long(row[i]) - array_origin[i])
+            if opts.binary:
+                row[0] = long(row[0])
+                row[1] = long(row[1])
+                if row[2]:
+                    row[2] = float(row[2])
+                else:
+                    row[2] = None
+                if row[3]:
+                    row[3] = float(row[3])
+                else:
+                    row[3] = None
+                row[4] = float(row[4])
+                row[5] = long(row[5])
+                binary_writer.writerow(row)
+            else:
+                out_file.write('\n%s' % ','.join(row))
+out_file.close()
 
 # create the script
 script_file_name = opts.outsh
