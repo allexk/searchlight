@@ -76,7 +76,7 @@ parser = argparse.ArgumentParser(description='''Samples the specified SciDb
 # command line parameters
 parser.add_argument('--method', metavar='http/iquery', default='iquery,',
                     help='Method to connect.')
-parser.add_argument('--host', metavar='hostname', defalult='localhost',
+parser.add_argument('--host', metavar='hostname', default='localhost',
                     help='Host to connect to')
 parser.add_argument('--port', metavar='port', type=int, default=8080,
                     help='Port to connect to')
