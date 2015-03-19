@@ -85,8 +85,6 @@ class SciDBConnection(object):
         Return:
             the entire result in a single string
         """
-        if not query_id:
-            raise ValueError('No query id specified to retrieve the result')
         if query_id not in self._query_results:
             raise ValueError('There is no result available for: %d' % query_id)
         print 'Retrieving result for query %s...' % query_id

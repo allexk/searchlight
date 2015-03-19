@@ -102,8 +102,6 @@ class SciDBConnection(object):
         """
         if not self.session_id():
             raise RuntimeError('Cannot query SciDB without connecting first')
-        if not query_id:
-            raise RuntimeError('No query id specified to retrieve the result')
         # Actually, it seems query_id is not required for the result, but it enforces the user to run query() first
         print 'Retrieving result for query %s...' % query_id
         body = self._get('/read_lines', {'n': '0'})  # n means the number of lines (0 -- all lines)
