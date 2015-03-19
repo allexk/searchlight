@@ -143,7 +143,8 @@ for (i, chunk) in enumerate(opts.chunks):
     if i != 0:
         sample_array_name += 'x'
     sample_array_name += str(chunk)
-    low_boundary = int(dims[i]['low'])
+    # use start as total left boundary; needed for proper origin
+    low_boundary = int(dims[i]['start'])
     high_boundary = int(dims[i]['high'])
     array_origin.append(low_boundary)
     curr_length = high_boundary - low_boundary + 1

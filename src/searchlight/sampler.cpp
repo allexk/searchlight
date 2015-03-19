@@ -495,14 +495,19 @@ Sampler::Synopsis::Synopsis(const ArrayDesc &data_desc,
     for (size_t i = 0; i < dims_num; i++) {
         // Metadata is filled from the data descriptor
         const DimensionDesc &data_dim = data_desc.getDimensions()[i];
-        if (data_dim.getStartMin() == scidb::MIN_COORDINATE ||
-                data_dim.getEndMax() == scidb::MAX_COORDINATE) {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << "Unbounded arrays are not supported by the sampler!";
-        }
+        /*
+         * Cannot use low/high boundary, since SciDB aligns them by the
+         * chunk, so high_boundary might not be equal to current_end.
+         *
+         * See trim() in ArrayDesc.
+         *
+         * Use StartMin() here since it determines the total left boundary,
+         * which we need for proper origin.
+         */
         synopsis_origin_[i] = data_dim.getStartMin();
-        synopsis_end_[i] = data_dim.getEndMax();
-        cell_nums_[i] = (data_dim.getLength() - 1) / cell_size_[i] + 1;
+        synopsis_end_[i] = data_dim.getCurrEnd();
+        const uint64_t curr_length = synopsis_end_[i] - synopsis_origin_[i] + 1;
+        cell_nums_[i] = (curr_length - 1) / cell_size_[i] + 1;
 
         // Synopsis correctness checking
         const DimensionDesc &dim = synopsis_desc.getDimensions()[i];
@@ -510,10 +515,13 @@ Sampler::Synopsis::Synopsis(const ArrayDesc &data_desc,
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                     << "Synopsis coordinates must start from 0";
         }
-        if (dim.getLength() != cell_nums_[i]) {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << "Synopsis must have " << cell_nums_[i] << "cells"
+        if (dim.getCurrEnd() + 1 < cell_nums_[i]) { // StartMin() == 0
+            std::ostringstream err_msg;
+            err_msg << "Synopsis must have at least "
+                    << cell_nums_[i] << "cells"
                     << " in the dimension " << dim.getBaseName();
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                    << err_msg.str();
         }
     }
 

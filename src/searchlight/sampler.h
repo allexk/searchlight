@@ -648,7 +648,9 @@ private:
                  * The point must be aligned with the leftmost corner of the
                  * cell + the region must cover it fully.
                  */
-                if (pos_[i] % chunk_size != 0 ||
+                const Coordinate pos_offset =
+                        pos_[i] - synopsis_.synopsis_origin_[i];
+                if (pos_offset % chunk_size != 0 ||
                         region_high_[i] - pos_[i] + 1 < chunk_size) {
                     res = false;
                     break;
