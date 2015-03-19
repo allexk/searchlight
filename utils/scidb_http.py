@@ -17,6 +17,7 @@ import sys
 import subprocess
 import requests
 from requests.auth import HTTPDigestAuth
+from scidb4py import Connection as SciDBBinaryConnection
 
 
 class SciDBConnection(object):
@@ -43,9 +44,11 @@ class SciDBConnection(object):
         # connection params
         self._user = user
         self._password = password
+        self._host = host
         self._base_url = 'http://%s:%d' % (host, port)
         self._session = requests.Session()
         self._session.auth = HTTPDigestAuth(user, password)
+        self._binary_connection = None
 
     def session_id(self):
         """Return SciDB session id.
@@ -89,6 +92,26 @@ class SciDBConnection(object):
         print 'Success, query_id=%s' % query_id
         return query_id
 
+    def query_interactive(self, query_str):
+        """Execute SciDB query with interactive result fetching.
+
+        The main difference between this function and query() is the mode
+        of connection and result retrieval. This function creates an additional
+        connection directly to SciDB (i.e., as iquery would do) and retrieves
+        results by chunks.
+
+        Returns:
+            result array that can be iterated over(see scidb4py)
+        """
+        if not self.session_id():
+            raise RuntimeError('Cannot query SciDB without connecting first')
+        self._binary_connection = SciDBBinaryConnection(self._host)
+        print "Connecting to SciDB via binary on port 1239..."
+        self._binary_connection.open()
+        print "Executing query '%s' via the binary connection..." % query_str
+        res_array = self._binary_connection.execute(query_str, afl=True)
+        return res_array
+
     def get_result(self, query_id):
         """Retrieve result for a previously executed query.
 
@@ -115,6 +138,10 @@ class SciDBConnection(object):
         """
         if not self.session_id():
             return
+        if self._binary_connection:
+            print 'Closing SciDB binary connection...'
+            self._binary_connection.close()
+            self._binary_connection = None
         print 'Closing SciDB session %s...' % self.session_id()
         try:
             self._get('/release_session', {})
@@ -227,6 +254,11 @@ def _main():
                         command = command.replace('%upload%', "'%s'" % uploaded_files[-1])
                     query_id = scidb.query(command, need_result)
                     query_ids.append(query_id)
+                elif action == 'query_int':
+                    res_array = scidb.query_interactive(command)
+                    for pos, val in res_array:
+                        # in this example assume single coordinate/attribute
+                        print '%d - %s' % (pos[0], str(val[0]))
                 elif action == 'upload':
                     file_name = scidb.upload(command)
                     uploaded_files.append(file_name)
