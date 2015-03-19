@@ -221,8 +221,8 @@ out_file.close()
 
 # create the script
 # sample array schema
-sample_array_schema = """<min: double null, max: double null, sum: double,
-count: uint64>["""
+sample_array_schema = "<min: double null, max: double null, sum: double," \
+                      "count: uint64>["
 for (i, d) in enumerate(dims):
     if i > 0:
         sample_array_schema += ', '
@@ -232,8 +232,8 @@ sample_array_schema += ']'
 raw_array_schema = '<'
 for d in dims:
     raw_array_schema += '%s: int64, ' % d['name']
-raw_array_schema += """min: double null, max: double null, sum: double,
-count: uint64>[i=0:*,10000,0]"""
+raw_array_schema += "min: double null, max: double null, sum: double," \
+                    "count: uint64>[i=0:*,10000,0]"
 # binary tuple format
 binary_tuple_schema = '(' + ', '.join(['int64'] * len(dims))
 binary_tuple_schema += ', double null, double null, double, uint64)'
@@ -247,14 +247,14 @@ if not script_file_name:
         script_file_name = 'load_%s.sh' % sample_array_name
 with open(script_file_name, 'w') as script_file:
     if opts.method == 'http':
-        script_file.write('# create array (not needed if exists)')
+        script_file.write('# create array (not needed if exists)\n')
         script_file.write('query:create array %s%s\n' %
                           (sample_array_name, sample_array_schema))
 
-        script_file.write("# upload the binary to SciDB")
-        script_file.write("upload:%s" % out_file_name)
+        script_file.write("# upload the binary to SciDB\n")
+        script_file.write("upload:%s\n" % out_file_name)
 
-        script_file.write("# load the sample (update if exists)")
+        script_file.write("# load the sample (update if exists)\n")
         script_file.write("query:insert(redimension(input(%s, %%upload%%, 0,"
                           "'%s'), %s), %s)\n" %
                           (raw_array_schema, binary_tuple_schema,
