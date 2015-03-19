@@ -84,8 +84,8 @@ parser.add_argument('--chunks', metavar='N N...', nargs='+', type=int,
                     help='Sample chunk sizes')
 parser.add_argument('--outfile', metavar='filepath', default=None,
     help='File to write the sample')
-parser.add_argument('--outsh', metavar='filepath', default=None,
-    help='File to write the shell script for loading the sample from CSV')
+parser.add_argument('--outscript', metavar='filepath', default=None,
+    help='File to write the script for binary sample load')
 parser.add_argument('--region', metavar='N', default=None, nargs='+', type=int,
     help='Specific region to sample: [lbs1, lbs2, ... rbs1, rbs2, ...], ...'
         '(inclusive, must be aligned with the chunks)')
@@ -213,49 +213,53 @@ for s in samples:
 out_file.close()
 
 # create the script
-script_file_name = opts.outsh
-if not script_file_name:
-    script_file_name = 'load_%s.sh' % sample_array_name
-script_file = open(script_file_name, 'w')
-
-raw_sample_array_name = 'raw_' + sample_array_name
-script_file.write('#!/bin/bash\n\n')
-
-script_file.write('# Exit on error\nset -e\n\n')
-
-script_file.write('# Set the proper PATH\n')
-script_file.write("PATH=%s:$PATH\n\n" % opts.bindir)
-
-script_file.write('# Remove old and create a new raw array\n')
-script_file.write("iquery --ignore-errors -a -q 'remove(%s)'\n" % \
-    raw_sample_array_name)
-script_file.write("iquery -q 'create array %s <" % raw_sample_array_name)
-for d in dims:
-    script_file.write('%s: int64, ' % d['name'])
-script_file.write("min: double null, max: double null, sum: double, count: uint64>\
-[i=0:*,10000,0]'\n\n")
-
-sdb_file_name = os.path.join(os.path.dirname(out_file_name),
-        '%s.sdb' % sample_array_name)
-script_file.write('# Converting to scidb format\n')
-script_file.write("csv2scidb -i %s -o %s -c 10000 -f 0 -p NNNNNN -s 1\n\n" % \
-    (out_file_name, sdb_file_name))
-
-script_file.write('# Loading the CSV into the raw array\n')
-script_file.write("iquery -n -q 'load %s from '\\''%s'\\'\n\n" % \
-    (raw_sample_array_name, sdb_file_name))
-
-script_file.write('# Creating the sample array\n')
-script_file.write("iquery -q 'create array %s <min: double null, max: double null, \
-sum: double, count: uint64>[" % sample_array_name)
+# sample array schema
+sample_array_schema = """<min: double null, max: double null, sum: double,
+count: uint64>["""
 for (i, d) in enumerate(dims):
     if i > 0:
-        script_file.write(', ')
-    script_file.write('%s=0:%d,1000,0' % (d['name'], sample_array_end[i]))
-script_file.write("]'\n\n")
+        sample_array_schema += ', '
+    sample_array_schema += '%s=0:*,1000,0' % (d['name'])
+sample_array_schema += ']'
+# raw array schema (for input)
+raw_array_schema = '<'
+for d in dims:
+    raw_array_schema += '%s: int64, ' % d['name']
+raw_array_schema += """min: double null, max: double null, sum: double,
+count: uint64>[i=0:*,10000,0]"""
+# binary tuple format
+binary_tuple_schema = '(' + ', '.join(['int64'] * len(dims))
+binary_tuple_schema += ', double null, double null, double, uint64)'
 
-script_file.write('# Converting raw to sample\n')
-script_file.write("iquery -n -a -q 'store(redimension(%s, %s), %s)'\n" % \
-    (raw_sample_array_name, sample_array_name, sample_array_name))
+# create the script
+script_file_name = opts.outscript
+if not script_file_name:
+    if opts.method == 'http':
+        script_file_name = 'load_%s.script' % sample_array_name
+    else:
+        script_file_name = 'load_%s.sh' % sample_array_name
+with open(script_file_name, 'w') as script_file:
+    if opts.method == 'http':
+        script_file.write('# create array (not needed if exists)')
+        script_file.write('query:create array %s%s\n' %
+                          (sample_array_name, sample_array_schema))
 
-script_file.close()
+        script_file.write("# upload the binary to SciDB")
+        script_file.write("upload:%s" % out_file_name)
+
+        script_file.write("# load the sample (update if exists)")
+        script_file.write("query:insert(redimension(input(%s, \%upload\%, 0,"
+                          "'%s'), %s), %s)\n" %
+                          (raw_array_schema, binary_tuple_schema,
+                           sample_array_name, sample_array_name))
+    else:
+        script_file.write('#!/bin/bash\n\n')
+        script_file.write('# Exit on error\nset -e\n\n')
+        script_file.write('# Set the proper PATH\n')
+        script_file.write("PATH=%s:$PATH\n\n" % opts.bindir)
+        script_file.write("iquery -q 'create array %s%s'\n" %
+                          (sample_array_name, sample_array_schema))
+        script_file.write("iquery -an insert(redimension(input(%s, '%s'"
+                          ", 0, '%s'), %s), %s)\n" %
+                          (raw_array_schema, out_file_name, binary_tuple_schema,
+                           sample_array_name, sample_array_name))
