@@ -255,7 +255,7 @@ with open(script_file_name, 'w') as script_file:
         script_file.write("upload:%s" % out_file_name)
 
         script_file.write("# load the sample (update if exists)")
-        script_file.write("query:insert(redimension(input(%s, \%upload\%, 0,"
+        script_file.write("query:insert(redimension(input(%s, %%upload%%, 0,"
                           "'%s'), %s), %s)\n" %
                           (raw_array_schema, binary_tuple_schema,
                            sample_array_name, sample_array_name))
