@@ -193,22 +193,22 @@ for s in samples:
         row = row.strip().split(',')
         for i in range(len(dims)):
             row[i] = str(long(row[i]) - array_origin[i])
-            if opts.binary:
-                row[0] = long(row[0])
-                row[1] = long(row[1])
-                if row[2]:
-                    row[2] = float(row[2])
-                else:
-                    row[2] = None
-                if row[3]:
-                    row[3] = float(row[3])
-                else:
-                    row[3] = None
-                row[4] = float(row[4])
-                row[5] = long(row[5])
-                binary_writer.writerow(row)
+        if opts.binary:
+            row[0] = long(row[0])
+            row[1] = long(row[1])
+            if row[2]:
+                row[2] = float(row[2])
             else:
-                out_file.write('\n%s' % ','.join(row))
+                row[2] = None
+            if row[3]:
+                row[3] = float(row[3])
+            else:
+                row[3] = None
+            row[4] = float(row[4])
+            row[5] = long(row[5])
+            binary_writer.writerow(row)
+        else:
+            out_file.write('\n%s' % ','.join(row))
 out_file.close()
 
 # create the script
