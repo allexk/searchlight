@@ -306,15 +306,15 @@ public:
      *
      * @param query caller's query context
      * @param cands candidates to forward
-     * @param coords candidates coordinates
+     * @param zones candidates zones
      * @param dest destination validator
      * @param forw_id id of this forward
      */
     void ForwardCandidates(const boost::shared_ptr<Query> &query,
             const LiteAssignmentVector &cands,
-            const std::vector<std::vector<int64_t>> &coords,
+            const std::vector<int64_t> &zones,
             InstanceID dest,
-            int forw_id) const;
+            uint64_t forw_id) const;
 
     /**
      * Sends result of the balancing.
@@ -325,7 +325,7 @@ public:
      * @param result result status of the load
      */
     void SendBalanceResult(const boost::shared_ptr<Query> &query,
-            InstanceID dest, int id, bool result) const;
+            InstanceID dest, uint64_t id, bool result) const;
 
     /**
      * Determines instances on which specified chunks currently reside.
@@ -545,7 +545,7 @@ private:
     // Helpers to fill in a balance message
     static void FillBalanceMessage(SearchlightBalance &msg,
             const LiteAssignmentVector &asgns,
-            const std::vector<std::vector<int64_t>> &aux);
+            const std::vector<int64_t> &aux);
     static void FillBalanceMessage(SearchlightBalance &msg,
             const LiteAssignmentVector &asgns);
 

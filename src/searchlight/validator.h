@@ -77,11 +77,11 @@ public:
      * @param cands candidates to validate
      * @param src source validator
      * @param forw_id remote forward id of the first candidate
-     * @param coords relevant coordinates to determine forwards zones
+     * @param zones candidates zones
      */
     void AddRemoteCandidates(LiteAssignmentVector &cands,
-            const std::vector<std::vector<Coordinates1D>> &coords,
-            InstanceID src, int forw_id);
+            const Int64Vector &zones,
+            InstanceID src, uint64_t forw_id);
 
     /**
      * Handles the result of the forwarder validation.
@@ -89,7 +89,7 @@ public:
      * @param id forward id
      * @param result true, if the candidate is valid; false, otherwise
      */
-    void HandleForwardResult(int id, bool result);
+    void HandleForwardResult(uint64_t id, bool result);
 
     /**
      * Blocks until the validor clears the validator queue. This allows the
@@ -173,7 +173,7 @@ private:
         LiteVarAssignment var_asgn_;
 
         // Id >= 0, the candidate is remote; -1, needs simulation; -2, local
-        int forw_id_;
+        int64_t forw_id_;
     };
     using CandidateVector = std::vector<CandidateAssignment>;
 
@@ -302,7 +302,8 @@ private:
     /*
      *  Returns true if this validator finished locally:
      *    1) No local candidate solutions
-     *    2) No outstanding forwards
+     *    2) No outstanding forwards/re-forwards
+     *    3) All helpers are finished
      */
     bool FinishedLocally() const {
         /*
@@ -310,12 +311,13 @@ private:
          *  which takes care of that.
          */
         return to_validate_total_.load(std::memory_order_relaxed) == 0 &&
-                forwarded_candidates_.empty() &&
-                free_validator_helpers_.size() == validator_helpers_.size();
+               forwarded_candidates_.empty() &&
+               reforwarded_candidates_.empty() &&
+               free_validator_helpers_.size() == validator_helpers_.size();
     }
 
     // Sends back the result of the forward
-    void SendForwardResult(int forw_id, bool result);
+    void SendForwardResult(int64_t forw_id, bool result);
 
     // Checks if we want to forward (returns true) and forwards if we can.
     bool CheckForward(const CoordinateSet &chunks, const Assignment *asgn);
@@ -325,7 +327,7 @@ private:
 
     // Determine the local zone to use
     template <typename CoordinatesSequence>
-    size_t DetermineLocalZone(const CoordinatesSequence &chunks) const;
+    int DetermineLocalZone(const CoordinatesSequence &chunks) const;
 
     // Pushes candidate to to_validate_
     void PushCandidate(CandidateAssignment &&asgn, size_t zone);
@@ -341,6 +343,31 @@ private:
         // one "zone" for new, non-simulated, candidates
         return to_validate_.size() - 1;
     }
+
+    // Checks if the id corresponds to reforwarding
+    static bool IsReforward(uint64_t forw_id) {
+        return forw_id & UINT64_C(0x8000000000000000);
+    }
+
+    // Determine a validator for reforwarding or -1, if everybody is busy
+    int FindValidatorForReforwards();
+
+    // Count the number of non-simulated candidates
+    size_t CountNonSimulatedCandidates() const {
+        return to_validate_.back().empty() ? 0 :
+                (to_validate_.back().size() - 1) * helper_workload_ +
+                to_validate_.back().back().size();
+    }
+
+    // Fills is candidates lists to send to another validator for rebalancing
+    void FillInRebalnaceTransfer(size_t cands,
+            LiteAssignmentVector &reforwards,
+            Int64Vector &reforwards_zones,
+            LiteAssignmentVector &forwards,
+            Int64Vector &forwards_zones);
+
+    // Rebalance count candidates to the validator
+    void RebalanceAndSend(size_t cands, int validator);
 
     // Searchlight instance
     Searchlight &sl_;
@@ -364,17 +391,22 @@ private:
     std::size_t last_sent_cands_num_ = 0;
     std::vector<size_t> validators_cands_info_;
 
-    // Info about remote candidates (local id -> (instance, remote id))
-    std::unordered_map<int, std::pair<InstanceID, int>> remote_candidates_;
+    // Contains MRU list of validators to which we reforwarded stuff
+    std::vector<int> validators_mru_reforw_;
 
-    // Local ids for remote candidates
-    int remote_cand_id_ = 0;
+    // Info about remote candidates (local id -> (instance, remote id))
+    std::unordered_map<int64_t, std::pair<InstanceID, uint64_t>> remote_candidates_;
+    // Local ids for remote candidates (int64_t, since we need negative values)
+    int64_t remote_cand_id_ = 0;
 
     // Contains information about forwarded candidates (local_id -> solution)
-    std::unordered_map<int, LiteVarAssignment> forwarded_candidates_;
-
+    std::unordered_map<uint64_t, LiteVarAssignment> forwarded_candidates_;
     // Forward ids for candidates
-    int forw_id_ = 0;
+    uint64_t forw_id_ = 0;
+
+    // Re-forwarded candidates due to re-balancing (local_id -> remote_id)
+    std::unordered_map<uint64_t, int64_t> reforwarded_candidates_;
+    uint64_t reforw_id_ = UINT64_C(0x8000000000000000); // MSB on to distinguish
 
     // The duplicate solver for validation
     Solver solver_;
@@ -429,7 +461,7 @@ private:
     size_t helper_workload_;
 
     // Low- and high-watermark to determine the necessity of help
-    size_t low_watermark_, high_watermark_;
+    size_t low_watermark_, high_watermark_, rebal_watermark_;
 
     // Do we use dynamic helper scheduling?
     bool dynamic_helper_scheduling_;

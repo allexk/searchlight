@@ -75,6 +75,11 @@ typedef std::vector<std::string> StringVector;
 typedef std::set<std::string> StringSet;
 
 /**
+ * Vector of int64
+ */
+typedef std::vector<int64_t> Int64Vector;
+
+/**
  * An assignment to a variable.
  *
  * It is called "lite" to contrast the full-feature or-tools Assignment,

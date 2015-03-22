@@ -891,9 +891,9 @@ void SearchlightMessenger::AcceptHelp(const boost::shared_ptr<Query> &query,
 void SearchlightMessenger::ForwardCandidates(
         const boost::shared_ptr<Query> &query,
         const LiteAssignmentVector &cands,
-        const std::vector<std::vector<int64_t>> &coords,
+        const std::vector<int64_t> &zones,
         InstanceID dest,
-        int forw_id) const {
+        uint64_t forw_id) const {
     // prepare the message
     boost::shared_ptr<scidb::MessageDesc> msg =
             PrepareMessage(query->getQueryID(), mtSLBalance);
@@ -902,7 +902,7 @@ void SearchlightMessenger::ForwardCandidates(
 
     // fill the record
     record->set_type(SearchlightBalance::CANDIDATE_FORWARD);
-    FillBalanceMessage(*record, cands, coords);
+    FillBalanceMessage(*record, cands, zones);
     record->add_id(forw_id);
     {
         std::lock_guard<std::mutex> lock{mtx_};
@@ -950,7 +950,7 @@ void SearchlightMessenger::BroadcastDistrUpdate(
 
 void SearchlightMessenger::SendBalanceResult(
         const boost::shared_ptr<Query> &query,
-        InstanceID dest, int forw_id, bool result) const {
+        InstanceID dest, uint64_t forw_id, bool result) const {
 
     // prepare the message
     boost::shared_ptr<scidb::MessageDesc> msg =
@@ -1113,20 +1113,23 @@ void SearchlightMessenger::PackAssignment(const LiteVarAssignment &asgn,
 
 void SearchlightMessenger::FillBalanceMessage(SearchlightBalance &msg,
         const LiteAssignmentVector &asgns,
-        const std::vector<std::vector<int64_t>> &aux) {
+        const std::vector<int64_t> &aux) {
+    if (aux.empty()) {
+        FillBalanceMessage(msg, asgns);
+    }
+    std::vector<int64_t> aux_info(1);
     for (size_t i = 0; i < asgns.size(); ++i) {
         VarAssignment *var_asgn = msg.add_load();
-        PackAssignment(asgns[i], *var_asgn,
-                aux.empty() ? std::vector<int64_t>{} : aux[i]);
+        aux_info[0] = aux[i];
+        PackAssignment(asgns[i], *var_asgn, aux_info);
     }
 }
 
 void SearchlightMessenger::FillBalanceMessage(SearchlightBalance &msg,
         const LiteAssignmentVector &asgns) {
-    const std::vector<int64_t> aux;
     for (size_t i = 0; i < asgns.size(); ++i) {
         VarAssignment *var_asgn = msg.add_load();
-        PackAssignment(asgns[i], *var_asgn, aux);
+        PackAssignment(asgns[i], *var_asgn, {});
     }
 }
 

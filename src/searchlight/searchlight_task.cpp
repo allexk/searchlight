@@ -651,17 +651,15 @@ void SearchlightTask::HandleForwards(const SearchlightBalance &msg,
         InstanceID src) {
     // Prepare the load
     LiteAssignmentVector load(msg.load_size());
-    std::vector<std::vector<Coordinates1D>> coords(msg.load_size());
+    Int64Vector zones(msg.load_size()); // 0 is the default zone
     for (int i = 0; i < msg.load_size(); i++) {
         const auto &load_i = msg.load(i);
         SearchlightMessenger::UnpackAssignment(load_i, load[i]);
-        coords[i].resize(load_i.aux_info_size());
-        for (int j = 0; j < load_i.aux_info_size(); j++) {
-            coords[i][j][0] = load_i.aux_info(j);
+        if (load_i.aux_info_size()) {
+            zones[i] = load_i.aux_info(0);
         }
     }
-
-    searchlight_.GetValidator().AddRemoteCandidates(load, coords, src,
+    searchlight_.GetValidator().AddRemoteCandidates(load, zones, src,
             msg.id(0));
 }
 
@@ -826,15 +824,15 @@ void SearchlightTask::DispatchOrStoreLoad(LiteAssignmentVector &load,
 }
 
 void SearchlightTask::ForwardCandidates(const LiteAssignmentVector &cands,
-        const std::vector<std::vector<int64_t>> &coords,
-        InstanceID dest, int forw_id) const {
+        const std::vector<int64_t> &zones,
+        InstanceID dest, uint64_t forw_id) const {
     // For now a helper is always a remote instance.
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     SearchlightMessenger::getInstance()->ForwardCandidates(query, cands,
-            coords, dest, forw_id);
+            zones, dest, forw_id);
 }
 
-void SearchlightTask::SendBalanceResult(InstanceID dest, int id,
+void SearchlightTask::SendBalanceResult(InstanceID dest, uint64_t id,
         bool result) const {
     // For now a helper is always a remote instance.
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);

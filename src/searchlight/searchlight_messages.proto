@@ -46,7 +46,7 @@ message SearchlightBalance {
 
     required Type type          = 1; // Type of the message
     repeated VarAssignment load = 2; // Load for the helper or validator
-    repeated int64 id     = 3 [packed=true]; // ids (solvers, forwards)
+    repeated uint64 id     = 3 [packed=true]; // ids (solvers, forwards)
     optional bool result        = 4; // Result of the request (e.g., true if the validation succedeed)
 }
 

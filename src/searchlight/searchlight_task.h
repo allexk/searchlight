@@ -190,13 +190,13 @@ public:
      * The destination validator will reply with the same id when it's done.
      *
      * @param cands candidates to forward
-     * @param coords candidates coordinates
+     * @param zones candidate zones
      * @param dest destination validator
      * @param forw_id id of the forward
      */
     void ForwardCandidates(const LiteAssignmentVector &cands,
-            const std::vector<std::vector<int64_t>> &coords,
-            InstanceID dest, int forw_id) const;
+            const std::vector<int64_t> &zones,
+            InstanceID dest, uint64_t forw_id) const;
 
     /**
      * Sends result of the balancing.
@@ -205,7 +205,7 @@ public:
      * @param id id of the balancing load
      * @param result result status of the load
      */
-    void SendBalanceResult(InstanceID dest, int id, bool result) const;
+    void SendBalanceResult(InstanceID dest, uint64_t id, bool result) const;
 
     /**
      * Broadcast validator's info.

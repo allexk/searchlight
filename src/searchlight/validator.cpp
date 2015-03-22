@@ -123,7 +123,7 @@ private:
         Type type_ = Type::NOP;
 
         // Forward id for remote solutions
-        int forward_id_;
+        int64_t forward_id_;
     };
 public:
 
@@ -236,7 +236,7 @@ public:
         }
 
         // Prepare assignment
-        const int forw_id = asgns_.back().forw_id_;
+        const int64_t forw_id = asgns_.back().forw_id_;
         LiteToFullAssignment(*last_asgn_, asgns_.back().var_asgn_);
         asgns_.pop_back();
 
@@ -425,6 +425,8 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
     low_watermark_ = sl_config.get("searchlight.validator.low_watermark", 500);
     high_watermark_ =
             sl_config.get("searchlight.validator.high_watermark", 1000);
+    rebal_watermark_ =
+            sl_config.get("searchlight.validator.rebal_watermark", 10000);
 
     // Determine forwarding type
     const std::string &forw_type =
@@ -547,7 +549,8 @@ void Validator::PushCandidate(CandidateAssignment &&asgn, size_t zone) {
             // Active validator: check if we want to send the info update
             const size_t cands_diff = std::abs(int64_t(local_cands) -
                     int64_t(last_sent_cands_num_));
-            if (cands_diff >= send_info_period_) {
+            if (cands_diff >= send_info_period_ || local_cands == 0) {
+                // Send if the diff is high or we're finished
                 last_sent_cands_num_ = local_cands;
                 sl_task_.BroadcastValidatorInfo(local_cands);
             }
@@ -556,36 +559,47 @@ void Validator::PushCandidate(CandidateAssignment &&asgn, size_t zone) {
 }
 
 void Validator::AddRemoteCandidates(LiteAssignmentVector &cands,
-        const std::vector<std::vector<Coordinates1D>> &coords,
-        InstanceID src, int forw_id) {
-    assert(LocalZonesNumber() == 1 || cands.size() == coords.size());
+        const Int64Vector &zones,
+        InstanceID src, uint64_t forw_id) {
+    assert(cands.size() == zones.size());
 
-    auto coords_rit = coords.rbegin();
     std::lock_guard<std::mutex> validate_lock(to_validate_mtx_);
-    while (!cands.empty()) {
-        const size_t zone = LocalZonesNumber() == 1 ? 0 :
-                DetermineLocalZone(*(coords_rit++));
-        const int cand_id = remote_cand_id_++;
-        PushCandidate({std::move(cands.back()), cand_id}, zone);
-        cands.pop_back();
+    for (size_t i = 0; i < cands.size(); i++) {
+        const int64_t cand_id = remote_cand_id_++;
+        PushCandidate({std::move(cands[i]), cand_id}, zones[i]);
         remote_candidates_.emplace(cand_id, std::make_pair(src, forw_id++));
     }
     validate_cond_.notify_all();
 }
 
-void Validator::HandleForwardResult(int id, bool result) {
-    std::lock_guard<std::mutex> validate_lock{to_validate_mtx_};
-    assert(forwarded_candidates_.find(id) != forwarded_candidates_.end());
-    if (result) {
-        sl_task_.ReportSolution(forwarded_candidates_[id].mins_);
-    }
-    forwarded_candidates_.erase(id);
-    if (forwarded_candidates_.empty()) {
-        validate_cond_.notify_all();
+void Validator::HandleForwardResult(uint64_t id, bool result) {
+    if (IsReforward(id)) {
+        // Forward to the original sender
+        std::unique_lock<std::mutex> validate_lock{to_validate_mtx_};
+        assert(reforwarded_candidates_.find(id) !=
+                reforwarded_candidates_.end());
+        const int64_t original_id = reforwarded_candidates_[id];
+        reforwarded_candidates_.erase(id);
+        if (reforwarded_candidates_.empty()) {
+            validate_cond_.notify_all();
+        }
+        validate_lock.unlock();
+        SendForwardResult(original_id, result);
+    } else {
+        std::lock_guard<std::mutex> validate_lock{to_validate_mtx_};
+        assert(forwarded_candidates_.find(id) != forwarded_candidates_.end());
+        if (result) {
+            sl_task_.ReportSolution(forwarded_candidates_[id].mins_);
+        }
+        forwarded_candidates_.erase(id);
+        if (forwarded_candidates_.empty()) {
+            validate_cond_.notify_all();
+        }
     }
 }
 
-void Validator::SendForwardResult(int forw_id, bool result) {
+void Validator::SendForwardResult(int64_t forw_id, bool result) {
+    assert(forw_id >= 0);
     std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
     const auto forw_info = remote_candidates_[forw_id];
     remote_candidates_.erase(forw_id);
@@ -595,7 +609,7 @@ void Validator::SendForwardResult(int forw_id, bool result) {
 }
 
 template <typename CoordinatesSequence>
-size_t Validator::DetermineLocalZone(const CoordinatesSequence &chunks) const {
+int Validator::DetermineLocalZone(const CoordinatesSequence &chunks) const {
     if (LocalZonesNumber() == 1) {
         return 0;
     }
@@ -603,7 +617,9 @@ size_t Validator::DetermineLocalZone(const CoordinatesSequence &chunks) const {
     size_t max_zone = 0;
     adapter_->GetSearchArrayDesc().GetStripesChunkDistribution(
             chunks, zone_counts, max_zone, chunk_zones_.zones_[1]);
-    return max_zone;
+
+    // Narrowing cast here, since zone number are ints.
+    return static_cast<int>(max_zone);
 }
 
 void Validator::PushToLocalZone(const CoordinateSet &chunks,
@@ -685,25 +701,34 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
         // forward
         LiteAssignmentVector asgns(1);
         FullAssignmentToLite(*asgn, asgns[0]);
-        const int cand_id = forw_id_++;
+        uint64_t cand_id;
         {
             std::lock_guard<std::mutex> lock{to_validate_mtx_};
+            cand_id = forw_id_++;
             forwarded_candidates_.emplace(cand_id, asgns[0]);
         }
 
-        // Prepare coordinates
-        std::vector<std::vector<int64_t>> coords;
-        if (LocalZonesNumber() > 1) {
-            // Need coordinate de-suplication
-            std::unordered_set<int64_t> dedup_coords;
-            const size_t coord_ord = chunk_zones_.zones_[1].dim_num_;
-            for (const auto &c: chunks) {
-                dedup_coords.insert(c[coord_ord]);
-            }
-            coords.emplace_back(dedup_coords.begin(), dedup_coords.end());
-        }
+        /*
+         * Compute the candidate's zone. Use int64 to conform
+         * to the message's format.
+         */
+        const Int64Vector zones{DetermineLocalZone(chunks)};
 
-        sl_task_.ForwardCandidates(asgns, coords, active_validators[max_inst],
+        // Prepare coordinates
+        // FIXME: I'm leaving this code for now for future reference (AK)
+//        std::vector<std::vector<int64_t>> coords;
+//        if (LocalZonesNumber() > 1) {
+//            // Need coordinate de-duplication
+//            // Don't send coordinates in case of the single zone
+//            std::unordered_set<int64_t> dedup_coords;
+//            const size_t coord_ord = chunk_zones_.zones_[1].dim_num_;
+//            for (const auto &c: chunks) {
+//                dedup_coords.insert(c[coord_ord]);
+//            }
+//            coords.emplace_back(dedup_coords.begin(), dedup_coords.end());
+//        }
+
+        sl_task_.ForwardCandidates(asgns, zones, active_validators[max_inst],
                 cand_id);
         return true;
     }
@@ -711,6 +736,55 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
     // This validator must be active here!
     assert(my_logical_id_ != -1);
     return false;
+}
+
+int Validator::FindValidatorForReforwards() {
+    assert(my_logical_id_ >= 0);
+
+    // Threshold for determining an idle validator (some small value)
+    const size_t BUSY_THRESHOLD = 100;
+
+    // First, check recent validators
+    for (auto rit = validators_mru_reforw_.rbegin();
+            rit != validators_mru_reforw_.rend(); ++rit) {
+        const int val_id = *rit;
+        if (validators_cands_info_[val_id] < BUSY_THRESHOLD) {
+            if (rit != validators_mru_reforw_.rbegin()) {
+                validators_mru_reforw_.erase((++rit).base());
+                validators_mru_reforw_.push_back(val_id);
+            }
+            return val_id;
+        }
+    }
+
+    // Then, check left and right neighbors (since they overlap)
+    if (my_logical_id_ > 0) {
+        // left
+        const int val_id = my_logical_id_ - 1;
+        if (validators_cands_info_[val_id] < BUSY_THRESHOLD) {
+            validators_mru_reforw_.push_back(val_id);
+            return val_id;
+        }
+    }
+    if (my_logical_id_ < validators_cands_info_.size() - 1) {
+        // right
+        const int val_id = my_logical_id_ + 1;
+        if (validators_cands_info_[val_id] < BUSY_THRESHOLD) {
+            validators_mru_reforw_.push_back(val_id);
+            return val_id;
+        }
+    }
+
+    // Then, just try to find anybody...
+    for (int i = 0; i < validators_cands_info_.size(); ++i) {
+        if (i != my_logical_id_ && validators_cands_info_[i] < BUSY_THRESHOLD) {
+            validators_mru_reforw_.push_back(i);
+            return i;
+        }
+    }
+
+    // No idle validators
+    return -1;
 }
 
 void Validator::Synchronize() const {
@@ -798,6 +872,23 @@ Validator::CandidateVector *Validator::GetNextAssignments() {
     CandidateVector *res = new CandidateVector;
     *res = GetWorkload();
 
+    // Check if we need to rebalance
+    const size_t non_sim_cands = CountNonSimulatedCandidates();
+    if (non_sim_cands > rebal_watermark_) {
+        const int val_rebal = FindValidatorForReforwards();
+        if (val_rebal >= 0) {
+            /*
+             * How many candidates? Rule-of-thumb. We don't want to overload
+             * the other validator and at the same time leave this one with
+             * too few candidates.
+             */
+            const size_t cands_rebal = std::min(
+                    non_sim_cands / 2,
+                    rebal_watermark_);
+            RebalanceAndSend(cands_rebal, val_rebal);
+        }
+    }
+
     // Try to off-load the rest to helpers
     bool should_run_helpers =
             to_validate_total_.load(std::memory_order_relaxed) > 0;
@@ -816,14 +907,98 @@ Validator::CandidateVector *Validator::GetNextAssignments() {
     return res;
 }
 
+void Validator::RebalanceAndSend(size_t cands, int validator) {
+    // Sanity checks
+    assert(cands > 0);
+    const auto &active_validators = sl_task_.GetActiveValidators();
+    assert(validator >= 0 && validator < active_validators.size() &&
+            validator != my_logical_id_);
+
+    /*
+     * Prepare info. The main reason we need two lists is that we have
+     * different id ranges for forwards and re-forwards. So, we send them
+     * as two different batches.
+     */
+    LiteAssignmentVector reforwards, forwards;
+    Int64Vector reforwards_zones, forwards_zones;
+    reforwards.reserve(cands);
+    forwards.reserve(cands);
+    reforwards_zones.reserve(cands);
+    forwards_zones.reserve(cands);
+    const uint64_t start_forw_id = forw_id_;
+    const uint64_t start_reforw_id = reforw_id_;
+
+    // Rebalance
+    FillInRebalnaceTransfer(cands, reforwards, reforwards_zones,
+            forwards, forwards_zones);
+    assert(!reforwards.empty() || !forwards.empty());
+
+    // Send
+    LOG4CXX_INFO(logger, "Rebalancing: sending " <<
+            reforwards.size() + forwards.size() <<
+            " candidates to validator " << validator);
+    if (!reforwards.empty()) {
+        sl_task_.ForwardCandidates(reforwards, reforwards_zones,
+                active_validators[validator], start_reforw_id);
+    }
+    if (!forwards.empty()) {
+        sl_task_.ForwardCandidates(forwards, forwards_zones,
+                active_validators[validator], start_forw_id);
+    }
+}
+
+void Validator::FillInRebalnaceTransfer(size_t cands,
+        LiteAssignmentVector &reforwards,
+        Int64Vector &reforwards_zones,
+        LiteAssignmentVector &forwards,
+        Int64Vector &forwards_zones) {
+    // Sanity checks
+    assert(cands < CountNonSimulatedCandidates() && my_logical_id_ != -1);
+
+    // We go through zones in the LRU order (from old to new ones)
+    for (auto zone: zones_mru_) {
+        auto &zone_cands = to_validate_[zone];
+        if (!zone_cands.empty()) {
+            assert(!zone_cands.front().empty());
+            while (!zone_cands.empty() && cands > 0) {
+                auto &cands_batch = zone_cands.front();
+                for (auto &cand: cands_batch) {
+                    if (cand.forw_id_ >= 0) {
+                        // Reforward
+                        reforwards.emplace_back(std::move(cand.var_asgn_));
+                        reforwards_zones.push_back(zone);
+                        reforwarded_candidates_.emplace(
+                                reforw_id_++, cand.forw_id_);
+                    } else {
+                        // Local
+                        assert(cand.forw_id_ == -2);
+                        forwarded_candidates_.emplace(
+                                forw_id_++, cand.var_asgn_);
+                        forwards.emplace_back(std::move(cand.var_asgn_));
+                        forwards_zones.push_back(zone);
+                    }
+                }
+                cands -= std::min(cands_batch.size(), cands);
+                zone_cands.pop_front();
+            }
+            if (cands == 0) break;
+        }
+    }
+
+    // Accounting
+    const size_t total_rebalanced = reforwards.size() + forwards.size();
+    assert(total_rebalanced < to_validate_total_);
+    to_validate_total_.fetch_sub(total_rebalanced, std::memory_order_relaxed);
+    assert(total_rebalanced < validators_cands_info_[my_logical_id_]);
+    validators_cands_info_[my_logical_id_] -= total_rebalanced;
+}
+
 Validator::CandidateVector Validator::GetWorkload() {
     assert(to_validate_total_.load(std::memory_order_relaxed));
 
     CandidateVector res;
     // First, we need to find a normal zone
-    const size_t non_sim_count = to_validate_.back().empty() ? 0 :
-            (to_validate_.back().size() - 1) * helper_workload_ +
-            to_validate_.back().back().size();
+    const size_t non_sim_count = CountNonSimulatedCandidates();
     if (to_validate_total_.load(std::memory_order_relaxed) > non_sim_count) {
         for (auto rit = zones_mru_.rbegin(); rit != zones_mru_.rend(); ++rit) {
             const size_t zone = *rit;
