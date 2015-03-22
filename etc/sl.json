@@ -22,12 +22,13 @@
         "validator": {
             "max_validations": 1000000,
             "restart_period": 1024,
-            "send_info_period": 200,
+            "send_info_period": 1000,
             "max_helpers": 0,
             "helper_workload": 100,
             "zones": 0,
             "low_watermark": 500,
-            "high_watermark": 1000
+            "high_watermark": 1000,
+            "rebal_watermark": 10000
         },
 
         "sampler": {
