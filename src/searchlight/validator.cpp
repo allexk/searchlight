@@ -544,16 +544,20 @@ void Validator::PushCandidate(CandidateAssignment &&asgn, size_t zone) {
          * and don't matter.
          */
         validators_cands_info_[my_logical_id_]++;
-        if (send_info_period_ > 0) {
-            const size_t local_cands = validators_cands_info_[my_logical_id_];
-            // Active validator: check if we want to send the info update
-            const size_t cands_diff = std::abs(int64_t(local_cands) -
-                    int64_t(last_sent_cands_num_));
-            if (cands_diff >= send_info_period_ || local_cands == 0) {
-                // Send if the diff is high or we're finished
-                last_sent_cands_num_ = local_cands;
-                sl_task_.BroadcastValidatorInfo(local_cands);
-            }
+        BroadcastCandidatesCount();
+    }
+}
+
+void Validator::BroadcastCandidatesCount() {
+    if (send_info_period_ > 0) {
+        const size_t local_cands = validators_cands_info_[my_logical_id_];
+        // Active validator: check if we want to send the info update
+        const size_t cands_diff = std::abs(int64_t(local_cands) -
+                int64_t(last_sent_cands_num_));
+        if (cands_diff >= send_info_period_ || local_cands == 0) {
+            // Send if the diff is high or we're finished
+            last_sent_cands_num_ = local_cands;
+            sl_task_.BroadcastValidatorInfo(local_cands);
         }
     }
 }
@@ -1043,6 +1047,7 @@ Validator::CandidateVector Validator::GetWorkload() {
             to_validate_total_.load(std::memory_order_relaxed));
     }
 
+    BroadcastCandidatesCount();
     return res;
 }
 

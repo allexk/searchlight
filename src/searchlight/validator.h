@@ -369,6 +369,9 @@ private:
     // Rebalance count candidates to the validator
     void RebalanceAndSend(size_t cands, int validator);
 
+    // Broadcast candidates count
+    void BroadcastCandidatesCount();
+
     // Searchlight instance
     Searchlight &sl_;
 
