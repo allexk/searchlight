@@ -598,11 +598,6 @@ public:
         status_(Status::ACTIVE) {}
 
     /**
-     * The destructor.
-     */
-    ~Searchlight();
-
-    /**
      * Registers a data array and the corresponding sample for the search.
      *
      * We do not check the correspondence of the array and the sample, since
@@ -849,12 +844,16 @@ public:
         return *solvers_[id];
     }
 
+    /**
+     * Cleanup Searchlight.
+     *
+     * This function should be called before the destructor.
+     */
+    void Cleanup();
+
 private:
 
     friend class SearchlightSolver;
-
-    // Signals validator to end, waits and then destroys it
-    void EndAndDestroyValidator();
 
     // Solvers on this instance
     std::vector<std::unique_ptr<SearchlightSolver>> solvers_;

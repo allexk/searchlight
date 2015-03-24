@@ -72,6 +72,13 @@ public:
             const boost::shared_ptr<Query> &query);
 
     /**
+     * Destructor.
+     */
+    ~SearchlightTask() {
+        searchlight_.Cleanup();
+    }
+
+    /**
      * Returns the next solution if any. Note, it might block for a
      * considrable period of time waiting for a solution.
      *
@@ -544,7 +551,7 @@ private:
     // Current query
     const boost::weak_ptr<Query> query_;
 
-    // SL instance (should be last since it's often destroyed in dtor)
+    // SL instance
     Searchlight searchlight_;
 };
 

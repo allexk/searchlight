@@ -39,9 +39,21 @@ namespace searchlight {
 static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.searchlight"));
 
-Searchlight::~Searchlight() {
-    // First destroy validator (SL still has all its structures intact)
-    EndAndDestroyValidator();
+void Searchlight::Cleanup() {
+    // Wait for the solvers
+    solvers_.clear();
+
+    // Finally, destroy the validator
+    if (validator_) {
+        if (validator_thread_) {
+            LOG4CXX_INFO(logger, "Waiting for the validator");
+            validator_->WakeupIfIdle();
+            validator_thread_->join();
+            delete validator_thread_;
+        }
+
+        delete validator_;
+    }
 }
 
 SearchlightSolver::~SearchlightSolver() {
@@ -441,22 +453,6 @@ void SearchlightSolver::Solve() {
      *  If we're terminated, we don't have to clean up:
      *  the system will go down anyway without blocking.
      */
-}
-
-void Searchlight::EndAndDestroyValidator() {
-    if (validator_) {
-        if (validator_thread_) {
-            if (status_ != Status::COMMITTED) {
-                status_ = Status::TERMINATED;
-            }
-            LOG4CXX_INFO(logger, "Waiting for the validator");
-            validator_->WakeupIfIdle();
-            validator_thread_->join();
-            delete validator_thread_;
-        }
-
-        delete validator_;
-    }
 }
 
 bool ValidatorMonitor::AtSolution() {
