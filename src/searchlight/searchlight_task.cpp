@@ -127,8 +127,8 @@ SearchlightTask::SearchlightTask(const std::string &library_name,
         const boost::shared_ptr<Query> &query) :
             query_instance_count_(query->getInstancesCount()),
             my_instance_id_(query->getInstanceID()),
-            searchlight_(*this, dll_handler_),
-            query_(query) {
+            query_(query),
+            searchlight_(*this, dll_handler_) {
 
     // Read the config
     ReadConfig(config_file_name);

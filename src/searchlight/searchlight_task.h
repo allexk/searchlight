@@ -507,9 +507,6 @@ private:
     // Are we using dynamic scheduling for validator helpers/solvers?
     bool dynamic_scheduling_;
 
-    // The main sl instance
-    Searchlight searchlight_;
-
     // Task config
     SearchlightConfig config_;
 
@@ -546,6 +543,9 @@ private:
 
     // Current query
     const boost::weak_ptr<Query> query_;
+
+    // SL instance (should be last since it's often destroyed in dtor)
+    Searchlight searchlight_;
 };
 
 /**
