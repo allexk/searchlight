@@ -102,12 +102,7 @@ public:
      *
      * @param error error causing termination
      */
-    void HandleSearchlightError(const scidb::Exception::Pointer &error) {
-        std::lock_guard<std::mutex> lock{mtx_};
-        sl_error_ = error;
-        Terminate();
-        queue_cond_.notify_one();
-    }
+    void HandleSearchlightError(const scidb::Exception::Pointer &error);
 
     /**
      * Determines if the task terminated erroneously.
@@ -441,8 +436,9 @@ private:
 
     // Are we expecting more results?
     bool ExpectingResults() const {
-        assert(distr_search_info_);
-        return distr_search_info_->busy_validators_count_ > 0;
+        const auto sl_status = searchlight_.GetStatus();
+        return sl_status != Searchlight::Status::TERMINATED &&
+                sl_status != Searchlight::Status::COMMITTED;
     }
 
     // Adds solution from a remote instance into the queue

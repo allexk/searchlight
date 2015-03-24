@@ -60,6 +60,7 @@ namespace scidb {
 #include <network/NetworkManager.h>
 #include <util/Network.h>
 #include <network/proto/scidb_msg.pb.h>
+#include <network/MessageUtils.h>
 
 #include <unordered_set>
 

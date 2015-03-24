@@ -627,8 +627,9 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
                     std::find(active_validators_.begin(),
                             active_validators_.end(), inst));
             if (InstanceActive(my_instance_id_)) {
-                LOG4CXX_DEBUG(logger, "Validator broadcasted cands number: "
-                        "val=" << val_ord << ", cands=" << cands_num);
+                LOG4CXX_DEBUG(logger, "Validator broadcasted non-simulated "
+                        "candidates number: val=" << val_ord <<
+                        ", cands=" << cands_num);
                 searchlight_.GetValidator().UpdateCandsInfo(cands_num, val_ord);
             }
             break;
@@ -718,7 +719,14 @@ void SearchlightTask::ReportSolution(const std::vector<int64_t> &values) {
 std::string SearchlightTask::GetNextSolution() {
     std::unique_lock<std::mutex> lock(mtx_);
     while (solutions_queue_.empty() && ExpectingResults() && !sl_error_) {
-        queue_cond_.wait(lock);
+        queue_cond_.wait_for(lock, std::chrono::seconds(10));
+        /*
+         * We wait for 10 seconds to check errors one in a while. Such
+         * errors might occur when a worker sends mtError, but the
+         * coordinator doesn't do anything except sitting here and
+         * answering messages.
+         */
+        Query::getValidQueryPtr(query_);
     }
 
     // Terminated on error? Throw it in the main thread.
@@ -844,6 +852,33 @@ void SearchlightTask::BroadcastValidatorInfo(size_t cands_num) const {
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     SearchlightMessenger::getInstance()->BroadcastValidatorInfo(query,
             cands_num);
+}
+
+void SearchlightTask::HandleSearchlightError(
+        const scidb::Exception::Pointer &error) {
+    std::lock_guard<std::mutex> lock{mtx_};
+    if (!sl_error_) {
+        sl_error_ = error;
+        Terminate();
+        try {
+            // We should try to notify the query
+            const auto query = Query::getValidQueryPtr(query_);
+            query->handleError(error);
+            if (query->getCoordinatorID() != scidb::COORDINATOR_INSTANCE) {
+                // Send to the coordinator
+                auto error_msg = scidb::makeErrorMessageFromException(
+                        *sl_error_, query->getQueryID());
+                NetworkManager::getInstance()->sendMessage(
+                        query->getPhysicalCoordinatorID(), error_msg);
+                LOG4CXX_INFO(logger, "Notified coordinator about the error");
+            }
+        } catch (const scidb::Exception &) {
+            // Query might have already been deallocated
+            LOG4CXX_INFO(logger, "Reported error, but query is already "
+                    "deallocating...");
+        }
+        queue_cond_.notify_one();
+    }
 }
 
 const ConstChunk *SearchlightResultsArray::nextChunk(AttributeID attId,

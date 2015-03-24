@@ -808,7 +808,13 @@ void Validator::operator()() {
             solver_.RevAlloc(new RestoreAssignmentBuilder(*this, adapter_,
                     &solver_, restart_period_, &search_vars_prototype_, {},
                     false));
-    solver_status_ = solver_.Solve(db);
+    try {
+        solver_status_ = solver_.Solve(db);
+    } catch (const scidb::Exception &ex) {
+        // Might catch an exception from SearchlightTask
+        LOG4CXX_INFO(logger, "Validator caught an exception");
+        sl_task_.HandleSearchlightError(ex.copy());
+    }
 
     // Check if Solve() ended because of the false model
     const Searchlight::Status sl_status = sl_.GetStatus();
@@ -820,7 +826,11 @@ void Validator::operator()() {
          */
         GetNextAssignments();
     }
-
+    // Should wait for helpers
+    if (!validator_helpers_.empty()) {
+        LOG4CXX_INFO(logger, "Validator waiting for helpers to finish...");
+        validator_helpers_.clear();
+    }
     LOG4CXX_INFO(logger, "Validator exited solve()");
 }
 
@@ -1092,9 +1102,19 @@ Validator::ValidatorHelper *Validator::DispatchValidatorHelper() {
     } else if (dynamic_helper_scheduling_ ||
             validator_helpers_.size() < max_helpers_allowed_) {
         const int id = validator_helpers_.size();
-        ValidatorHelper *helper =
-                new ValidatorHelper{id, *this, search_vars_prototype_};
-        validator_helpers_.emplace(id, ValidatorHelper::UniquePtr{helper});
+        ValidatorHelper *helper = nullptr;
+        try {
+            helper = new ValidatorHelper{id, *this, search_vars_prototype_};
+            validator_helpers_.emplace(id, ValidatorHelper::UniquePtr{helper});
+        } catch (const scidb::Exception &) {
+            // Cannot create a helper. This is not fatal.
+            LOG4CXX_ERROR(logger, "Cannot create a validator helper. "
+                    "Possibly an error during cloning the model.");
+        } catch (...) {
+            // Cannot create a helper. This is not fatal.
+            LOG4CXX_ERROR(logger, "Cannot create a validator helper. "
+                    "Reason unknown.");
+        }
         return helper;
     }
 
@@ -1160,12 +1180,23 @@ void Validator::ValidatorHelper::operator()() {
                         &solver_, 0, &prototype_,
                         std::move(workload_), true)};
         adapter_->SetAdapterMode(Adapter::DUMB); // Will be switched in Next()
-        solver_.Solve(db.get());
+        try {
+            solver_.Solve(db.get());
+        } catch (const scidb::Exception &ex) {
+            // Might catch an exception from SearchlightTask
+            parent_.sl_task_.HandleSearchlightError(ex.copy());
+            LOG4CXX_INFO(logger, "Helper caught an exception");
+            break;
+        }
         workload_.clear();
         LOG4CXX_INFO(logger, "Validator helper finished workload");
 
         // Need to determine if we want to continue
         bool should_stop = false;
+        if (parent_.CheckTerminate()) {
+            LOG4CXX_INFO(logger, "Terminating validator helper by force!");
+            break;
+        }
         if (parent_.dynamic_helper_scheduling_) {
             const size_t cands_num =
                     parent_.to_validate_total_.load(std::memory_order_relaxed);

@@ -433,6 +433,7 @@ private:
         // response data (type depends on the caller, e.g., ChunkRequestData)
         void *data_ = nullptr;
         bool data_ready_ = false; // is data ready?
+        bool error_ = false; // has an error occured?
     };
     std::deque<MessageSlot> slots_;
 
@@ -521,6 +522,9 @@ private:
         std::unordered_map<MessageID, UserMessageHandler>
             message_handlers_;
 
+        // Slots being used by the query
+        std::unordered_set<size_t> slots_used_;
+
         QueryContext(const boost::shared_ptr<Query> &query) :
             query_(query) {}
     };
@@ -559,7 +563,7 @@ private:
     uint32_t GetMessageSlot();
 
     // Returns a message slot
-    void ReturnMessageSlot(size_t slot);
+    void ReturnMessageSlot(size_t slot, QueryContextPtr &ctx);
 
     // Broadcasts dynamic distribution updates
     void BroadcastDistrUpdate(const boost::shared_ptr<Query> &query,

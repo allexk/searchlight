@@ -811,7 +811,9 @@ public:
      */
     void PrepareHelper(LiteAssignmentVector &load, uint32_t solver) {
         assert(solver < solvers_.size());
-        solvers_[solver]->PrepareHelper(load);
+        if (status_ != Status::TERMINATED) {
+            solvers_[solver]->PrepareHelper(load);
+        }
     }
 
     /**

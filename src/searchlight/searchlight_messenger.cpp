@@ -208,11 +208,22 @@ void SearchlightMessenger::deactivate(const boost::shared_ptr<Query> &query) {
     const auto &iter = served_queries_.find(query_id);
     assert(iter != served_queries_.end());
 
+    // Stats
     std::ostringstream os;
     os << "Query statistics follows (id=" << query_id << "):\n";
     iter->second->stats_.print(os);
     logger->info(os.str(), LOG4CXX_LOCATION);
 
+    // Unblock slots waiting for requests (with error)
+    for (auto slot_id: iter->second->slots_used_) {
+        auto &slot = slots_[slot_id];
+        std::lock_guard<std::mutex> slot_lock{slot.mtx_};
+        slot.error_ = true;
+        slot.cond_.notify_one();
+    }
+    iter->second->slots_used_.clear();
+
+    // Get rid of the context
     served_queries_.erase(iter);
     LOG4CXX_DEBUG(logger, "Removed query, id=" << query_id);
 
@@ -304,12 +315,15 @@ uint32_t SearchlightMessenger::GetMessageSlot() {
     return slots_.size() - 1;
 }
 
-void SearchlightMessenger::ReturnMessageSlot(size_t slot) {
+void SearchlightMessenger::ReturnMessageSlot(size_t slot,
+        QueryContextPtr &ctx) {
     std::lock_guard<std::mutex> lock(mtx_);
     assert(slots_[slot].used_);
     slots_[slot].used_ = false;
     slots_[slot].data_ready_ = false;
     slots_[slot].data_ = nullptr;
+    slots_[slot].error_ = false;
+    ctx->slots_used_.erase(slot);
 }
 
 void SearchlightMessenger::RegisterHandlers(bool init) {
@@ -377,6 +391,10 @@ bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
     const bool confirm_only = (chunk == nullptr);
     const size_t slot_num = GetMessageSlot();
     MessageSlot &msg_slot = slots_[slot_num];
+    {
+        std::lock_guard<std::mutex> lock{mtx_};
+        query_ctx->slots_used_.insert(slot_num);
+    }
 
     std::shared_ptr<ChunkRequestData> chunk_req =
             std::make_shared<ChunkRequestData>();
@@ -420,7 +438,7 @@ bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
         const auto wait_start_time = std::chrono::steady_clock::now();
 
         std::unique_lock<std::mutex> slot_lock(msg_slot.mtx_);
-        while (!msg_slot.data_ready_) {
+        while (!msg_slot.data_ready_ && !msg_slot.error_) {
             msg_slot.cond_.wait(slot_lock);
         }
 
@@ -428,6 +446,13 @@ bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
         query_ctx->stats_.total_wait_time_ +=
                 std::chrono::duration_cast<std::chrono::microseconds>(
                         wait_end_time - wait_start_time);
+
+        // Check for error
+        if (msg_slot.error_) {
+            ReturnMessageSlot(slot_num, query_ctx);
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                    << "Error during chunk request, possible query abort";
+        }
 
         // If we requested data, the chunk is local now (empty or nor)
         if (!confirm_only) {
@@ -447,7 +472,7 @@ bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
 
     // got the data
     const bool chunk_empty = chunk_req->empty_;
-    ReturnMessageSlot(slot_num);
+    ReturnMessageSlot(slot_num, query_ctx);
 
     return !chunk_empty;
 }
