@@ -42,12 +42,10 @@ static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.array_access"));
 
 ArrayAccess::~ArrayAccess() {
-    const auto secs = std::chrono::duration_cast<std::chrono::seconds>(
-            total_agg_time_).count();
-    const auto usecs = std::chrono::duration_cast<std::chrono::milliseconds>(
+    const auto secs = std::chrono::duration_cast<std::chrono::duration<double>>(
             total_agg_time_).count();
     LOG4CXX_INFO(logger, "Total aggregates CPU time: " <<
-            secs << '.' << usecs << 's');
+            secs << 's');
 }
 
 TypedValueVector ArrayAccess::ComputeAggreagate(const Coordinates &low,

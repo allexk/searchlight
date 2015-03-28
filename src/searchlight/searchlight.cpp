@@ -63,13 +63,10 @@ SearchlightSolver::~SearchlightSolver() {
     }
 
     // Time stats
-    const auto secs = std::chrono::duration_cast<std::chrono::seconds>(
-            total_solve_time_).count();
-    const auto usecs = std::chrono::duration_cast<std::chrono::milliseconds>(
+    const auto secs = std::chrono::duration_cast<std::chrono::duration<double>>(
             total_solve_time_).count();
     LOG4CXX_INFO(logger, "Solver (0x" << std::hex << id_ << std::dec <<
-            ") total time: " << secs << '.' <<
-            usecs << 's');
+            ") total time: " << secs << 's');
 
     /*
      * Search stats.

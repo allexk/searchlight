@@ -38,12 +38,10 @@ static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.adapter"));
 
 Adapter::~Adapter() {
-    const auto secs = std::chrono::duration_cast<std::chrono::seconds>(
-            total_req_time_).count();
-    const auto usecs = std::chrono::duration_cast<std::chrono::milliseconds>(
+    const float secs = std::chrono::duration_cast<std::chrono::duration<double>>(
             total_req_time_).count();
     LOG4CXX_INFO(logger, "Adapter(" << name_ << "), total requests time: " <<
-            secs << '.' << usecs << 's');
+            secs << 's');
 }
 
 void Adapter::UpdateStatsWithRegion(

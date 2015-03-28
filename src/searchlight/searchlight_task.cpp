@@ -627,7 +627,7 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
                     std::find(active_validators_.begin(),
                             active_validators_.end(), inst));
             if (InstanceActive(my_instance_id_)) {
-                LOG4CXX_DEBUG(logger, "Validator broadcasted non-simulated "
+                LOG4CXX_DEBUG(logger, "Validator broadcasted ready "
                         "candidates number: val=" << val_ord <<
                         ", cands=" << cands_num);
                 searchlight_.GetValidator().UpdateCandsInfo(cands_num, val_ord);

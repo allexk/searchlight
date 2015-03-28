@@ -500,13 +500,9 @@ private:
 
                 // Waiting time stats
                 const auto wait_secs =
-                        std::chrono::duration_cast<std::chrono::seconds>(
+                        std::chrono::duration_cast<std::chrono::duration<double>>(
                         total_wait_time_).count();
-                const auto wait_usecs =
-                        std::chrono::duration_cast<std::chrono::milliseconds>(
-                        total_wait_time_).count();
-                os << "\n\tWaiting time=" << wait_secs << '.' <<
-                        wait_usecs << 's';
+                os << "\n\tWaiting time=" << wait_secs << 's';
                 os << '\n';
             }
         };
