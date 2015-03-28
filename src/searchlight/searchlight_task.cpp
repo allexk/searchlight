@@ -617,7 +617,7 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
             }
             break;
         case SearchlightBalance::VALIDATOR_INFO:
-            assert(balance_msg->id_size() && balance_msg->id(0) >= 0);
+            assert(balance_msg->id_size());
             assert(std::find(active_validators_.begin(),
                     active_validators_.end(), inst) !=
                             active_validators_.end());

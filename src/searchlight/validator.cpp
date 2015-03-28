@@ -888,8 +888,10 @@ Validator::CandidateVector *Validator::GetNextAssignments() {
     *res = GetWorkload();
 
     // Check if we need to rebalance
-    const size_t non_sim_cands = CountNonSimulatedCandidates();
-    if (non_sim_cands > rebal_watermark_) {
+    const size_t total_cands =
+            to_validate_total_.load(std::memory_order_relaxed);
+    const size_t cands_ready = total_cands - CountNonSimulatedCandidates();
+    if (cands_ready > rebal_watermark_) {
         const int val_rebal = FindValidatorForReforwards();
         if (val_rebal >= 0) {
             /*
@@ -898,7 +900,7 @@ Validator::CandidateVector *Validator::GetNextAssignments() {
              * too few candidates.
              */
             const size_t cands_rebal = std::min(
-                    non_sim_cands / 2,
+                    cands_ready / 2,
                     rebal_watermark_);
             RebalanceAndSend(cands_rebal, val_rebal);
         }
