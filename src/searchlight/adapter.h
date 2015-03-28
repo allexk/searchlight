@@ -339,7 +339,7 @@ private:
     const std::string name_;
 
     // Total time spent for requests
-    mutable std::chrono::microseconds total_req_time_;
+    mutable std::chrono::microseconds total_req_time_{0};
 
     // Accesses statistics collected in stats mode
     mutable AccessStats stats_;

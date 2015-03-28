@@ -485,7 +485,7 @@ private:
 
             std::vector<uint64_t> forwards_sent_;
 
-            std::chrono::microseconds total_wait_time_;
+            std::chrono::microseconds total_wait_time_{0};
 
             void print(std::ostream &os) const {
                 os << "\n\tMessages sent=" << msgs_sent_;

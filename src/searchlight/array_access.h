@@ -173,7 +173,7 @@ private:
     mutable AttributeID last_attr_;
 
     // Total time of aggregate requests (without disk I/O)
-    mutable std::chrono::microseconds total_agg_time_;
+    mutable std::chrono::microseconds total_agg_time_{0};
 };
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_ARRAY_ACCESS_H_ */

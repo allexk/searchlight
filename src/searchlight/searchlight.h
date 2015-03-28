@@ -520,7 +520,7 @@ private:
     SearchMonitors search_monitors_;
 
     // Total time spent on solving
-    std::chrono::microseconds total_solve_time_;
+    std::chrono::microseconds total_solve_time_{0};
 
     // Searchlight status
     std::atomic<Status> status_;
