@@ -134,7 +134,52 @@ public:
     }
 };
 
-// Register the operator
+/**
+ * The Logical Operator object for searchlight.
+ */
+class LogicalSearchlightControl : public LogicalOperator {
+public:
+    /**
+     * Searchlight control operator constructor.
+     *
+     * @param logicalName used internally by scidb
+     * @param alias used internally by scidb
+     */
+    LogicalSearchlightControl(const std::string& logicalName,
+            const std::string& alias) :
+        LogicalOperator(logicalName, alias) {
+
+        _properties.ddl = true; // This is a DDL operator
+        ADD_PARAM_CONSTANT(TID_STRING);
+    }
+
+    /**
+     * Returns the descriptor of the result.
+     *
+     * @param schemas all of the schemas of the input arrays
+     *  (if the operator accepts any)
+     * @param query the query context
+     * @return the schema of the output
+     */
+    virtual ArrayDesc inferSchema(std::vector<ArrayDesc> schemas,
+            boost::shared_ptr<Query> query) override {
+
+        const std::string action{evaluate(
+                boost::dynamic_pointer_cast<OperatorParamLogicalExpression>(
+            _parameters[0])->getExpression(), query, TID_STRING).getString()};
+        if (action != "clear_cache") {
+            const boost::shared_ptr<ParsingContext> &pc =
+                    _parameters[0]->getParsingContext();
+            throw USER_QUERY_EXCEPTION(SCIDB_SE_INFER_SCHEMA,
+                    SCIDB_LE_ILLEGAL_OPERATION, pc) <<
+                            "Unknown option for Searchlight control";
+        }
+        return ArrayDesc();
+    }
+};
+
+// Register the operators
 REGISTER_LOGICAL_OPERATOR_FACTORY(LogicalSearchlight, "searchlight");
+REGISTER_LOGICAL_OPERATOR_FACTORY(LogicalSearchlightControl, "searchlight_control");
 
 } /* namespace scidb */

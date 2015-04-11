@@ -30,6 +30,7 @@
  */
 
 #include "../searchlight_task.h"
+#include "DepartArray.h"
 
 #include <query/Operator.h>
 #include <boost/tokenizer.hpp>
@@ -115,10 +116,54 @@ public:
     }
 };
 
+class PhysicalSearchlightControl : public PhysicalOperator
+{
+public:
+    /**
+     * Constructs a new physical part of the Searchlight control operator.
+     *
+     * @param logicalName the name of the logical part
+     * @param physicalName the name of the physical part
+     * @param parameters params (parsed in the logical part)
+     * @param schema the schema of the result
+     */
+    PhysicalSearchlightControl(const std::string &logicalName,
+            const std::string &physicalName, const Parameters &parameters,
+            const ArrayDesc &schema) :
+        PhysicalOperator(logicalName, physicalName, parameters, schema) {}
+
+    /**
+     * Execute the operator and return the output array.
+     *
+     * We just execte simple actions here.
+     *
+     * @param inputArrays the input array arguments
+     * @param query the query context
+     * @return the output array object
+     */
+    boost::shared_ptr<Array> execute(
+            std::vector<boost::shared_ptr<Array>> &inputArrays,
+            boost::shared_ptr<Query> query) {
+        // action param (valididry checked in the logical part)
+        const std::string action{
+                ((boost::shared_ptr<OperatorParamPhysicalExpression> &)
+                        _parameters[0])->getExpression()->
+                        evaluate().getString()};
+        if (action == "clear_cache") {
+            searchlight::DepartArray::ClearPersistentCache();
+        }
+
+        // sync messengers (barrier)
+        searchlight::SearchlightMessenger::getInstance()->Synchronize(query);
+        return boost::shared_ptr<Array>();
+    }
+};
+
 /*
- * Register the operator.
+ * Register the operators.
  */
 REGISTER_PHYSICAL_OPERATOR_FACTORY(PhysicalSearchlight, "searchlight",
         "PhysicalSearchlight");
-
+REGISTER_PHYSICAL_OPERATOR_FACTORY(PhysicalSearchlightControl, "searchlight_control",
+        "PhysicalSearchlightControl");
 } /* namespace scidb */

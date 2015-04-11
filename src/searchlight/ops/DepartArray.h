@@ -37,6 +37,7 @@
 
 #include "../searchlight_messenger.h"
 #include "../scidb_inc.h"
+#include "../cache.h"
 
 #include <unordered_set>
 
@@ -61,16 +62,7 @@ public:
      */
     DepartArray(const ArrayDesc &desc, const ArrayPtr &input,
             const ArrayDistribution &input_distr,
-            const boost::shared_ptr<Query> &query) :
-        DelegateArray(desc, input, false),
-        messenger_(SearchlightMessenger::getInstance()),
-        cache_(desc, query),
-        query_(query),
-        input_distr_(input_distr) {
-
-        // Set input partitioning schema (at delegate array)
-        this->desc.setPartitioningSchema(input_distr_.getPartitioningSchema());
-    }
+            const boost::shared_ptr<Query> &query);
 
     /**
      * Creates a new const departitioning array iterator.
@@ -81,9 +73,23 @@ public:
     virtual boost::shared_ptr<ConstArrayIterator>
         getConstIterator(AttributeID attr) const override;
 
+    /**
+     * Clears the persistent array cache.
+     *
+     * Note, all current clients using arrays previously cached won't be
+     * affected. However, when they release their arrays, those will be lost
+     * until created again. This is expected functionality.
+     */
+    static void ClearPersistentCache() {
+        cache_cache_.Clear();
+    }
+
 private:
     // Cache part of the array
     struct CacheMemArray {
+        // Fake query for the array, since it exists across real queries
+        const boost::shared_ptr<Query> query_;
+
         // Cache for remote chunks
         MemArray array_;
 
@@ -99,9 +105,17 @@ private:
 
         // Init the cache via the provided schema and context
         CacheMemArray(const ArrayDesc &array,
-                const boost::shared_ptr<Query> &query) :
-                    array_(array, query) {}
+                const boost::shared_ptr<Query> &fake_query) :
+                    query_(fake_query),
+                    array_(array, fake_query) {}
+
+        // Destructor.
+        ~CacheMemArray() {
+            scidb::Query::destroyFakeQuery(query_.get());
+        }
     };
+    typedef std::shared_ptr<CacheMemArray> CacheMemArraySharedPtr;
+    typedef SearchlightCache<std::string, CacheMemArray> CacheMemArrayCache;
 
     // To access cache and other info
     friend class DepartArrayIterator;
@@ -110,13 +124,16 @@ private:
     SearchlightMessenger * const messenger_;
 
     // Cache for fetched chunks
-    mutable CacheMemArray cache_;
+    CacheMemArraySharedPtr cache_;
 
     // The current query
     const boost::weak_ptr<Query> query_;
 
     // Input distribution
     const ArrayDistribution input_distr_;
+
+    // Cache for the CacheArray
+    static CacheMemArrayCache cache_cache_;
 };
 
 }

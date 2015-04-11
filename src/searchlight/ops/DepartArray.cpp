@@ -32,13 +32,17 @@
 
 namespace searchlight {
 
+// The logger
+static log4cxx::LoggerPtr logger(
+        log4cxx::Logger::getLogger("searchlight.depart_array"));
+
 class DepartArrayIterator : public ConstArrayIterator {
 public:
     DepartArrayIterator(const DepartArray &array, AttributeID attr) :
         array_(array),
-        cache_(array.cache_),
+        cache_(*array.cache_.get()),
         input_iter_(array.inputArray->getConstIterator(attr)),
-        cache_iter_(array.cache_.array_.getIterator(attr)),
+        cache_iter_(array.cache_->array_.getIterator(attr)),
         attr_(attr),
         positioned_(false) {
 
@@ -218,6 +222,40 @@ private:
     // Is it positioned?
     bool positioned_;
 };
+
+DepartArray::DepartArray(const ArrayDesc &desc, const ArrayPtr &input,
+        const ArrayDistribution &input_distr,
+        const boost::shared_ptr<Query> &query) :
+    DelegateArray(desc, input, false),
+    messenger_(SearchlightMessenger::getInstance()),
+    query_(query),
+    input_distr_(input_distr) {
+
+    /*
+     * We need atomic cache check and creation of the array if it's not
+     * in the cache. For this we need to create a fake query. If the
+     * array already exists, we dismiss the fake query. While this might
+     * create some overhead, destroying a fake query is not that
+     * cumbersome and is done only once per DepartArray creation.
+     */
+    const std::string &array_name = desc.getName();
+    const boost::shared_ptr<Query> fake_query =
+            Query::createFakeQuery(
+                    query->mapLogicalToPhysical(query->getCoordinatorID()),
+                    query->mapLogicalToPhysical(query->getInstanceID()),
+                    query->getCoordinatorLiveness());
+    const auto emplaced = cache_cache_.emplace(array_name, desc, fake_query);
+    if (!emplaced.second) {
+        // The array already existed in the cache
+        Query::destroyFakeQuery(fake_query.get());
+        LOG4CXX_DEBUG(logger, "Array " << array_name <<
+                " was found in the cache");
+    }
+    cache_ = emplaced.first;
+
+    // Set input partitioning schema (at delegate array)
+    this->desc.setPartitioningSchema(input_distr_.getPartitioningSchema());
+}
 
 boost::shared_ptr<ConstArrayIterator>
     DepartArray::getConstIterator(AttributeID attr) const {
@@ -421,4 +459,6 @@ void DepartArrayIterator::FetchBitmapFromRemote(const Coordinates &pos) const {
     }
 }
 
+// Cache of cache arrays (shared between all DepartArray clients)
+DepartArray::CacheMemArrayCache DepartArray::cache_cache_;
 }
