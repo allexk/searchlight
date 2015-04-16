@@ -99,6 +99,15 @@ private:
         // Current requests
         std::unordered_set<Address, AddressHash> current_requests_;
 
+        /*
+         * Repeat requests. If a client fails (e.g., because of the query
+         * cancellation), its outstanding request remains unfulfilled.
+         * Other clients might be waiting at the same time. Using this
+         * set they can check if the request needs to be fulfilled by
+         * another client.
+         */
+        std::unordered_set<Address, AddressHash> repeat_requests_;
+
         // For synchronization
         std::mutex mtx_;
         std::condition_variable cond_;

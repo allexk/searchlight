@@ -285,30 +285,48 @@ bool DepartArrayIterator::CheckPosition(const Coordinates &pos) {
         if (!chunk_fetched) {
             // Have to go to the remote; check if there's a request
             auto req = cache_.current_requests_.find(addr);
-            if (req != cache_.current_requests_.end()) {
-                // Already have a request -- wait
-                while (req != cache_.current_requests_.end()) {
-                    cache_.cond_.wait(lock);
-                    req = cache_.current_requests_.find(addr);
+            bool repeat_request = true;
+            while (repeat_request) {
+                if (req != cache_.current_requests_.end()) {
+                    // Already have a request -- wait
+                    while (req != cache_.current_requests_.end()) {
+                        cache_.cond_.wait(lock);
+                        req = cache_.current_requests_.find(addr);
+                    }
+                    // Check if we need to repeat the request
+                    repeat_request =
+                            cache_.repeat_requests_.find(addr) !=
+                                    cache_.repeat_requests_.end();
+                } else {
+                    // No request yet or repeat -- we're going to fetch
+                    cache_.current_requests_.insert(addr);
+                    cache_.repeat_requests_.erase(addr);
+                    lock.unlock();
+
+                    // check the chunk via the messenger (no chunk data!)
+                    bool chunk_exists;
+                    try {
+                        chunk_exists = array_.messenger_->RequestChunk(
+                            query, chunk_instance, array_.desc.getName(), pos,
+                            attr_, nullptr);
+                    } catch (...) {
+                        LOG4CXX_DEBUG(logger, "Cannot fulfill the current "
+                                "non-data chunk request. Another will repeat.");
+                        cache_.repeat_requests_.insert(addr);
+                        cache_.current_requests_.erase(addr);
+                        cache_.cond_.notify_all();
+                        throw;
+                    }
+
+                    // Working with structures again
+                    lock.lock();
+                    cache_.remote_chunks_.emplace(addr, chunk_exists);
+
+                    // erase via addr, not req, since req might've been invalidated
+                    cache_.current_requests_.erase(addr);
+                    cache_.cond_.notify_all();
+                    return chunk_exists;
                 }
-            } else {
-                // No request yet -- we're going to fetch
-                cache_.current_requests_.insert(addr);
-                lock.unlock();
-
-                // check the chunk via the messenger (no chunk data!)
-                const bool chunk_exists = array_.messenger_->RequestChunk(
-                        query, chunk_instance, array_.desc.getName(), pos,
-                        attr_, nullptr);
-
-                // Working with structures again
-                lock.lock();
-                cache_.remote_chunks_.emplace(addr, chunk_exists);
-
-                // erase via addr, not req, since req might've been invalidated
-                cache_.current_requests_.erase(addr);
-                cache_.cond_.notify_all();
-                return chunk_exists;
             }
         }
 
@@ -339,66 +357,111 @@ const ConstChunk &DepartArrayIterator::GetChunk() const {
         assert(CheckRemoteCache(Address(attr_, current_)));
         assert(cache_.remote_chunks_[Address(attr_, current_)]);
 
-        const bool chunk_fetched = cache_iter_->setPosition(current_);
+        const Address addr(attr_, current_);
+        auto req = cache_.current_requests_.find(addr);
+        /*
+         * A chunk is fetched only when it's in the cache array already and
+         * there are no current or repeat requests.
+         */
+        const bool chunk_fetched = cache_iter_->setPosition(current_) &&
+                req == cache_.current_requests_.end() &&
+                cache_.repeat_requests_.find(addr) ==
+                        cache_.repeat_requests_.end();
         if (chunk_fetched) {
             // have already fetched the data
             return cache_iter_->getChunk();
         } else {
             // have to fetch from the remote
-            const Address addr(attr_, current_);
-            auto req = cache_.current_requests_.find(addr);
-            if (req != cache_.current_requests_.end()) {
-                // Already have a request -- wait
-                while (req != cache_.current_requests_.end()) {
-                    cache_.cond_.wait(lock);
-                    req = cache_.current_requests_.find(addr);
+            while (true) {
+                if (req != cache_.current_requests_.end()) {
+                    // Already have a request -- wait
+                    while (req != cache_.current_requests_.end()) {
+                        cache_.cond_.wait(lock);
+                        req = cache_.current_requests_.find(addr);
+                    }
+                    // Check if we need to repeat the request
+                    const bool repeat_request =
+                            cache_.repeat_requests_.find(addr) !=
+                                    cache_.repeat_requests_.end();
+                    if (!repeat_request) {
+                        // chunk should be fetched by now
+                        cache_iter_->setPosition(current_);
+                        return cache_iter_->getChunk();
+                    }
+                } else {
+                    // No request yet or repeat -- we're going to fetch
+                    cache_.current_requests_.insert(addr);
+                    cache_.repeat_requests_.erase(addr);
+
+                    /*
+                     * We might already have the chunk initialized here, if one
+                     * of the previous requests failed and we're doing a repeat.
+                     * newChunk() should still work for this situation, though.
+                     *
+                     * Conversion is safe here since we explicitly use MemArray.
+                     */
+                    MemChunk *new_chunk = dynamic_cast<MemChunk *>(
+                                &(cache_iter_->newChunk(current_)));
+                    assert(new_chunk);
+                    const ConstChunk *bitmap_chunk = new_chunk->getBitmapChunk();
+                    const bool need_bitmap =
+                            bitmap_chunk && bitmap_chunk->getSize() == 0;
+                    lock.unlock();
+
+                    // get the chunk from messenger
+                    try {
+                        array_.messenger_->RequestChunk(
+                            query, chunk_instance, array_.desc.getName(),
+                            current_, attr_, new_chunk);
+                    } catch (...) {
+                        LOG4CXX_DEBUG(logger, "Cannot fulfill the current "
+                                "chunk fetch. Another will repeat.");
+                        cache_.repeat_requests_.insert(addr);
+                        cache_.current_requests_.erase(addr);
+                        cache_.cond_.notify_all();
+                        throw;
+                    }
+
+                    /*
+                     * Okay, here we want to retrieve the bitmap chunk if our
+                     * new chunk is not RLE (rare). If it's not, it does not
+                     * contain a bitmap attached.
+                     */
+                    if (!new_chunk->isRLE() && need_bitmap) {
+                        try {
+                            /*
+                             *  Fetching bitmap might be interrupted as well.
+                             *  While the corresponding repeat request will
+                             *  be created, we still need to notify this
+                             *  chunk's clients.
+                             *
+                             *  This, however, might result in refetching the
+                             *  current chunk.
+                             */
+                            FetchBitmapFromRemote(current_);
+                        } catch (...) {
+                            LOG4CXX_DEBUG(logger, "Cannot fulfill the current "
+                                  "chunk's bitmap fetch. Another will repeat.");
+                            cache_.repeat_requests_.insert(addr);
+                            cache_.current_requests_.erase(addr);
+                            cache_.cond_.notify_all();
+                            throw;
+                        }
+                    }
+
+                    // Working with structures again
+                    lock.lock();
+                    if (new_chunk->isRLE() &&
+                            !new_chunk->getAttributeDesc().isEmptyIndicator()) {
+                        CheckAndSetBitmapRLE(new_chunk);
+                    }
+                    new_chunk->write(query); // this will un-pin it
+
+                    // erase via addr, not req, since req might've been invalidated
+                    cache_.current_requests_.erase(addr);
+                    cache_.cond_.notify_all();
+                    return *new_chunk;
                 }
-                // chunk should exist now
-                cache_iter_->setPosition(current_);
-                return cache_iter_->getChunk();
-            } else {
-                // No request yet -- we're going to fetch
-                cache_.current_requests_.insert(addr);
-
-                // Conversion is safe here since we explicitly use MemArray
-                MemChunk *new_chunk = dynamic_cast<MemChunk *>(
-                        &(cache_iter_->newChunk(current_)));
-                assert(new_chunk);
-                const ConstChunk *bitmap_chunk = new_chunk->getBitmapChunk();
-                const bool need_bitmap =
-                        bitmap_chunk && bitmap_chunk->getSize() == 0;
-                lock.unlock();
-
-                // get the chunk from messenger
-                if (!array_.messenger_->RequestChunk(
-                        query, chunk_instance, array_.desc.getName(), current_,
-                        attr_, new_chunk)) {
-                    // make it system exception -- we checked the chunk before!
-                    throw SYSTEM_EXCEPTION(SCIDB_SE_EXECUTION,
-                            SCIDB_LE_NO_CURRENT_CHUNK);
-                }
-
-                /*
-                 * Okay, here we want to retrieve the bitmap chunk if our
-                 * new chunk is not RLE (rare). If it's not, it does not
-                 * contain a bitmap attached.
-                 */
-                if (!new_chunk->isRLE() && need_bitmap) {
-                    FetchBitmapFromRemote(current_);
-                }
-
-                // Working with structures again
-                lock.lock();
-                if (new_chunk->isRLE() &&
-                        !new_chunk->getAttributeDesc().isEmptyIndicator()) {
-                    CheckAndSetBitmapRLE(new_chunk);
-                }
-                new_chunk->write(query); // this will un-pin it
-
-                // erase via addr, not req, since req might've been invalidated
-                cache_.current_requests_.erase(addr);
-                cache_.cond_.notify_all();
-                return *new_chunk;
             }
         }
     }
@@ -424,8 +487,8 @@ void DepartArrayIterator::CheckAndSetBitmapRLE(MemChunk *chunk) const {
          *  Put it in the bitmap chunk. There is a potential for a data race
          *  here. Since somebody else might be doing bitmap request. In this
          *  case the request and this write will be served by different threads.
-         *  However, these theads are going to write the same data. So, this
-         *  shoudl be safe.
+         *  However, these threads are going to write the same data. So, this
+         *  should be safe.
          *
          *  FIXME: Check for the bitmap request in GetChunk() and either create
          *  the request for the bitmap chunk and fulfill it or wait until
