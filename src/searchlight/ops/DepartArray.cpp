@@ -522,6 +522,12 @@ void DepartArrayIterator::FetchBitmapFromRemote(const Coordinates &pos) const {
     }
 }
 
+void DepartArray::ClearPersistentCache() {
+    LOG4CXX_INFO(logger, "Clearing cache for DepartArray...");
+    cache_cache_.Clear();
+}
+
+
 // Cache of cache arrays (shared between all DepartArray clients)
 DepartArray::CacheMemArrayCache DepartArray::cache_cache_;
 }

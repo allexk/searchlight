@@ -102,10 +102,8 @@ public:
         std::lock_guard<std::mutex> lock{mtx_};
         auto iter = cache_.find(key);
         if (iter == cache_.end()) {
-            auto emp_iter = cache_.emplace(std::piecewise_construct,
-                    std::forward_as_tuple(key),
-                    std::forward_as_tuple(std::make_shared<Val>(
-                            std::forward<Args>(args)...)));
+            auto emp_iter = cache_.emplace(key,
+                    std::make_shared<Val>(std::forward<Args>(args)...));
             return std::make_pair(emp_iter.first->second, emp_iter.second);
         } else {
             return std::make_pair(iter->second, false);

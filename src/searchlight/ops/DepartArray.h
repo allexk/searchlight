@@ -80,9 +80,7 @@ public:
      * affected. However, when they release their arrays, those will be lost
      * until created again. This is expected functionality.
      */
-    static void ClearPersistentCache() {
-        cache_cache_.Clear();
-    }
+    static void ClearPersistentCache();
 
 private:
     // Cache part of the array
