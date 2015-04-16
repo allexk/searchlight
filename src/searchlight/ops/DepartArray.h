@@ -86,7 +86,7 @@ private:
     // Cache part of the array
     struct CacheMemArray {
         // Fake query for the array, since it exists across real queries
-        const boost::shared_ptr<Query> query_;
+        boost::shared_ptr<Query> query_;
 
         // Cache for remote chunks
         MemArray array_;

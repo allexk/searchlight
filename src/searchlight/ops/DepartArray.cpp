@@ -455,7 +455,12 @@ const ConstChunk &DepartArrayIterator::GetChunk() const {
                             !new_chunk->getAttributeDesc().isEmptyIndicator()) {
                         CheckAndSetBitmapRLE(new_chunk);
                     }
-                    new_chunk->write(query); // this will un-pin it
+                    /*
+                     * Use the cache's (fake) query for writing.
+                     *
+                     * This will also un-pin the chunk, which it fine.
+                     */
+                    new_chunk->write(array_.cache_->query_);
 
                     // erase via addr, not req, since req might've been invalidated
                     cache_.current_requests_.erase(addr);
