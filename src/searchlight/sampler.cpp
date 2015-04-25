@@ -492,6 +492,8 @@ Sampler::Synopsis::Synopsis(const ArrayDesc &data_desc,
     synopsis_origin_.resize(dims_num);
     synopsis_end_.resize(dims_num);
     cell_nums_.resize(dims_num);
+    chunk_nums_.resize(dims_num);
+    chunk_sizes_.resize(dims_num);
     for (size_t i = 0; i < dims_num; i++) {
         // Metadata is filled from the data descriptor
         const DimensionDesc &data_dim = data_desc.getDimensions()[i];
@@ -499,15 +501,21 @@ Sampler::Synopsis::Synopsis(const ArrayDesc &data_desc,
          * Cannot use low/high boundary, since SciDB aligns them by the
          * chunk, so high_boundary might not be equal to current_end.
          *
-         * See trim() in ArrayDesc.
+         * See trim() in ArrayDesc for unbounded arrays.
          *
          * Use StartMin() here since it determines the total left boundary,
          * which we need for proper origin.
          */
         synopsis_origin_[i] = data_dim.getStartMin();
         synopsis_end_[i] = data_dim.getCurrEnd();
+
+        // Number of cells (cell sizes are read from the array's name)
         const uint64_t curr_length = synopsis_end_[i] - synopsis_origin_[i] + 1;
         cell_nums_[i] = (curr_length - 1) / cell_size_[i] + 1;
+
+        // Sizes and number of chunks
+        chunk_sizes_[i] = data_dim.getChunkInterval();
+        chunk_nums_[i] = (curr_length - 1) / chunk_sizes_[i] + 1;
 
         // Synopsis correctness checking
         const DimensionDesc &dim = synopsis_desc.getDimensions()[i];
@@ -542,25 +550,49 @@ Sampler::Synopsis::Synopsis(const ArrayDesc &data_desc,
     }
 }
 
-void Sampler::Synopsis::SetCacheMode(bool mode) {
-    cache_cells_ = mode;
-    if (mode) {
+void Sampler::Synopsis::FillChunkCellCoordsFromCellCoords(
+        ChunkCellCoordinates &coords) const {
+    const size_t dims = coords.cell_.size();
+    assert(dims);
+    coords.chunk_.resize(dims);
+
+    coords.chunk_linear_ = coords.cell_chunk_linear_ = 0;
+    for (size_t i = 0; i < dims; ++i) {
+        // Chunk coords
+        coords.chunk_[i] = coords.cell_[i] - coords.cell_[i] % chunk_sizes_[i];
+        coords.chunk_linear_ *= chunk_nums_[i];
+        coords.chunk_linear_ += coords.chunk_[i] / chunk_sizes_[i];
+
+        // Cell coords
+        coords.cell_chunk_linear_ *= chunk_sizes_[i];
+        coords.cell_chunk_linear_ += coords.cell_[i] - coords.chunk_[i];
+    }
+}
+
+void Sampler::Synopsis::SetCacheType(CachingType mode) {
+    cache_type_ = mode;
+    if (mode == CachingType::EAGER) {
         /*
          * Create the entire cell cache right now to simplify concurrency
          * later. The cells are invalid and will be loaded from the synopsis
          * later in lazy fashion.
          */
-        cells_.clear();
-        cells_.resize(GetTotalCellCount());
+        chunks_ = Chunks({true});
+        chunks_[0].cells_ = Cells(GetTotalCellCount());
+    } else if (mode == CachingType::LAZY) {
+        /*
+         * Reserve space for array chunks. All chunks are invalid at the
+         * beginning.
+         */
+        chunks_ = Chunks(GetTotalChunksCount());
     } else {
-        cells_.clear();
-        cells_.shrink_to_fit();
+        chunks_ = Chunks(); // make it empty
     }
 }
 
 void Sampler::Synopsis::Preload() {
-    if (!cache_cells_) {
-        LOG4CXX_WARN(logger, "Attempting to preload non-cached synopsis.");
+    if (cache_type_ != CachingType::EAGER) {
+        LOG4CXX_WARN(logger, "Attempting to preload non-eager synopsis.");
         return;
     }
 
@@ -597,9 +629,10 @@ size_t Sampler::Synopsis::GetRegionCost(const Region &reg) const {
 
 Sampler::Cell &Sampler::Synopsis::GetCell(
         const RegionIterator &iter, AccessContext &ctx) {
-    if (cache_cells_) {
-        assert(iter.GetCellLinear() < cells_.size());
-        Cell &cell = cells_[iter.GetCellLinear()];
+    if (cache_type_ == CachingType::EAGER) {
+        assert(chunks_.size() == 1 &&
+                iter.GetCellLinear() < chunks_[0].cells_.size());
+        Cell &cell = chunks_[0].cells_[iter.GetCellLinear()];
 
         // Load cell if needed (cannot check validity here -- concurrency issues)
         if (!preloaded_) {
@@ -624,6 +657,26 @@ Sampler::Cell &Sampler::Synopsis::GetCell(
         }
         assert(cell.valid_);
         return cell;
+    } else if (cache_type_ == CachingType::LAZY) {
+        // Determine position
+        ChunkCellCoordinates pos{iter.GetCurrentSynopsisPosition(), *this};
+        SynopsisChunk &chunk = chunks_[pos.chunk_linear_];
+
+        // Fetch (see the double-checked locking comment above)
+        bool valid = chunk.valid_.load(std::memory_order_acquire);
+        if (!valid) {
+            std::lock_guard<std::mutex> lock{mtx_};
+            valid = chunk.valid_.load(std::memory_order_relaxed);
+            if (!valid) {
+                LOG4CXX_DEBUG(logger, "Lazy-loading chunk " << pos.chunk_linear_);
+                FillCellsFromChunk(pos, ctx.iters_);
+                chunk.valid_.store(true, std::memory_order_release);
+            }
+        }
+
+        // The cell
+        assert(chunk.cells_[pos.cell_chunk_linear_].valid_);
+        return chunk.cells_[pos.cell_chunk_linear_];
     } else {
         FillCellFromArray(iter.GetCurrentSynopsisPosition(), ctx.iters_,
                 ctx.cell_);
@@ -643,6 +696,52 @@ void Sampler::Synopsis::InitIterators(ArrayIterators &iters) const {
     iters.max_it_ = synopsis_array_->getItemIterator(max_id_);
     iters.sum_it_ = synopsis_array_->getItemIterator(sum_id_);
     iters.count_it_ = synopsis_array_->getItemIterator(count_id_);
+}
+
+void Sampler::Synopsis::FillCellsFromChunk(const ChunkCellCoordinates &pos,
+        ArrayIterators &iters) const {
+    const size_t chunk_index = pos.chunk_linear_;
+    assert(chunk_index < chunks_.size() && !chunks_[chunk_index].valid_);
+    SynopsisChunk &chunk = chunks_[chunk_index];
+
+    // The number of cells in a chunk
+    size_t total_cells_per_chunk = 1;
+    for (auto cs: chunk_sizes_) {
+        total_cells_per_chunk *= cs;
+    }
+    // Will make it valid later (see GetCell()).
+    chunk.cells_ = Cells(total_cells_per_chunk);
+
+    // Start and end chunk positions
+    const Coordinates &chunk_start = pos.chunk_;
+    Coordinates chunk_end(chunk_start);
+    for (size_t i = 0; i < chunk_start.size(); ++i) {
+        chunk_end[i] += chunk_sizes_[i] - 1;
+    }
+
+    // Retrieve the chunk's cells
+    ChunkCellCoordinates current_pos{pos};
+    current_pos.cell_ = pos.chunk_; // from the beginning of the chunk
+    bool cell_is_valid = true;
+    while (cell_is_valid) {
+        // Get the cell and make it valid
+        FillChunkCellCoordsFromCellCoords(current_pos);
+        Cell &cell = chunk.cells_[current_pos.cell_chunk_linear_];
+        FillCellFromArray(current_pos.cell_, iters, cell);
+        // Make it valid. Relaxed is fine, everything is locked for LAZY.
+        cell.valid_.store(true, std::memory_order_relaxed);
+
+        // increment the position
+        size_t i = current_pos.cell_.size() - 1;
+        while (++current_pos.cell_[i] > chunk_end[i]) {
+            current_pos.cell_[i] = chunk_start[i];
+            if (i == 0) {
+                cell_is_valid = false;
+                break;
+            }
+            --i;
+        }
+    }
 }
 
 void Sampler::Synopsis::FillCellFromArray(const Coordinates &pos,
@@ -855,6 +954,18 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
         loaded_synopses.emplace_back(new Synopsis{data_desc_, syn});
     }
 
+    // Cache type
+    const std::string cache_type_string =
+            sl_config_.get("searchlight.sampler.cache", "eager");
+    Synopsis::CachingType cache_type = Synopsis::CachingType::NONE;
+    if (cache_type_string == "eager") {
+        cache_type = Synopsis::CachingType::EAGER;
+    } else if (cache_type_string == "lazy") {
+        cache_type = Synopsis::CachingType::LAZY;
+    } else {
+        LOG4CXX_WARN(logger, "Unknown cache type: " << cache_type_string);
+    }
+
     if (!loaded_synopses.empty()) {
         /*
          *  Sort the vector of synopses by the cell size, preserving user's
@@ -866,24 +977,26 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
         });
 
         // Enable caching for some of the synopses
-        size_t memory_limit_mb =
-                sl_config_.get("searchlight.sampler.memory_per_attr", 1024);
-        const bool preload_syns =
-                sl_config_.get("searchlight.sampler.preload", 1);
-        for (const auto &syn: loaded_synopses) {
-            const size_t syn_mem_mb = syn->MemorySize() / 1024 / 1024; // in MB
-            if (syn_mem_mb <= memory_limit_mb) {
-                // Cache the synopsis
-                syn->SetCacheMode(true);
-                // .. and preload it if needed
-                if (preload_syns) {
-                    LOG4CXX_INFO(logger, "Preloading synopsis: "
-                            << syn->GetName());
-                    syn->Preload();
+        if (cache_type != Synopsis::CachingType::NONE) {
+            size_t memory_limit_mb =
+                    sl_config_.get("searchlight.sampler.memory_per_attr", 1024);
+            const bool preload_syns =
+                    sl_config_.get("searchlight.sampler.preload", 0);
+            for (const auto &syn: loaded_synopses) {
+                const size_t syn_mem_mb = syn->MemorySize() / 1024 / 1024; // in MB
+                if (syn_mem_mb <= memory_limit_mb) {
+                    // Cache the synopsis
+                    syn->SetCacheType(cache_type);
+                    // .. and preload it if needed
+                    if (preload_syns) {
+                        LOG4CXX_INFO(logger, "Preloading synopsis: "
+                                << syn->GetName());
+                        syn->Preload();
+                    }
+                    memory_limit_mb -= syn_mem_mb;
+                } else {
+                    break;
                 }
-                memory_limit_mb -= syn_mem_mb;
-            } else {
-                break;
             }
         }
 
@@ -899,11 +1012,29 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
             msg << "Synopses loaded for attribute " << attr_name
                     << '(' << attr_search_id << "): ";
             for (const auto &syn: loaded_synopses) {
-                msg << syn->GetName() << "(cached: " << syn->IsCached()
+                msg << syn->GetName() << "(cached: " << int(syn->GetCachingType())
                         << "), ";
             }
             logger->debug(msg.str());
         }
+    }
+}
+
+size_t Sampler::Synopsis::ComputeMemoryFootprint() const {
+    if (cache_type_ == CachingType::EAGER) {
+        return GetTotalCellCount() * sizeof(Cell) + sizeof(SynopsisChunk);
+    } else if (cache_type_ == CachingType::LAZY) {
+        size_t res = GetTotalChunksCount() * sizeof(SynopsisChunk);
+        // Count valid chunks' cells.
+        for (const auto &c: chunks_) {
+            if (c.valid_.load(std::memory_order_relaxed)) {
+                res += c.cells_.size() * sizeof(Cell);
+            }
+        }
+        return res;
+    } else {
+        // None
+        return 0;
     }
 }
 
@@ -966,37 +1097,6 @@ bool Sampler::Synopsis::RegionValidForSample(const Coordinates &low,
         }
     }
     return true;
-}
-
-const Sampler::Cell &Sampler::Synopsis::CacheCell(
-        const RegionIterator &iter, ArrayIterators &iters) {
-    assert(iter.GetCellLinear() < cells_.size());
-    Cell &cell = cells_[iter.GetCellLinear()];
-
-    // Load cell if needed (cannot check validity here -- concurrency issues)
-    if (!preloaded_) {
-        /*
-         * Need a lock here. For efficiency reasons this has been
-         * implemented as a double-checked locking with fences and atomics.
-         *
-         * This used to be a separate function, but later it was inlined
-         * to avoid a huge overhead on non-preloaded synopses. This is a
-         * critical code path!
-         */
-        bool valid = cell.valid_.load(std::memory_order_acquire);
-        if (!valid) {
-            std::lock_guard<std::mutex> lock{mtx_};
-            valid = cell.valid_.load(std::memory_order_relaxed);
-            if (!valid) {
-                FillCellFromArray(iter.GetCurrentSynopsisPosition(), iters,
-                        cell);
-                cell.valid_.store(true, std::memory_order_release);
-            }
-        }
-    }
-    assert(cell.valid_);
-
-    return cell;
 }
 
 void Sampler::Synopsis::ComputeAggregate(const Coordinates &low,

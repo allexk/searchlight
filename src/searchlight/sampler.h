@@ -219,8 +219,6 @@ public:
     typedef std::vector<Cell> Cells;
 
 private:
-    class RegionIterator;
-
     /**
      * Convenience struct for storing a region: a pair of coordinate vectors.
      */
@@ -243,7 +241,7 @@ private:
         /**
          * Return the ratio of this region's area to the other's.
          *
-         * @param other othe region
+         * @param other other region
          * @return areas ratio
          */
         double AreaRatio(const Region &other) const {
@@ -270,6 +268,15 @@ private:
     class Synopsis : private boost::noncopyable {
     public:
         /**
+         * Type of caching for the synopsis.
+         */
+        enum class CachingType {
+            EAGER, /** All cells are in a linear array, high footprint. */
+            LAZY,  /** All _requested_ chunks are in a set of arrays. */
+            NONE   /** No caching. Each cell is read via array iterators.*/
+        };
+
+        /**
          * Create a new synopsis.
          *
          * No cells are loaded at this point. Only meta-data is initialized.
@@ -280,11 +287,11 @@ private:
         Synopsis(const ArrayDesc &data_desc, const ArrayPtr &array);
 
         /**
-         * Enable or disable caching of cells.
+         * Set caching type for the synopsis.
          *
-         * @param mode true, enable caching; false, disable caching
+         * @param mode see CachingType
          */
-        void SetCacheMode(bool mode);
+        void SetCacheType(CachingType mode);
 
         /**
          * Check if this synopsis is cached.
@@ -292,7 +299,16 @@ private:
          * @return true, if the cells are cached; false, otherwise
          */
         bool IsCached() const {
-            return cache_cells_;
+            return cache_type_ != CachingType::NONE;
+        }
+
+        /**
+         * Return cahing type for the synopsis.
+         *
+         * @return synopsis caching type
+         */
+        CachingType GetCachingType() const {
+            return cache_type_;
         }
 
         /**
@@ -412,9 +428,11 @@ private:
          * @param str stream for output
          */
         void OutputStats(std::ostream &str) const {
-            str << "Synopsis " << GetName() << ": \n";
+            str << "Synopsis " << GetName() << ":\n";
             str << "\tCells accessed: "
                     << cells_accessed_.load(std::memory_order_relaxed);
+            str << "\n\tMemory footprint (MB): "
+                    << ComputeMemoryFootprint() / 1024 / 1024;
         }
 
         /**
@@ -438,7 +456,46 @@ private:
          * Make RegionIterator a friend since it requires frequent access
          * to meta-data.
          */
-        friend class RegionIterator;
+        class RegionIterator;
+
+        // Synopsis chunks
+        struct SynopsisChunk {
+            std::atomic<bool> valid_;
+            Cells cells_;
+
+            // Default validity constructor
+            SynopsisChunk(bool valid = false) : valid_{valid} {}
+
+            // Copy constructor (needed to copy atomic)
+            SynopsisChunk(const SynopsisChunk &other) :
+                valid_{other.valid_.load(std::memory_order_relaxed)},
+                cells_{other.cells_} {}
+        };
+
+        // Synopsis chunks
+        typedef std::vector<SynopsisChunk> Chunks;
+
+        /*
+         * Structure to hold synopsis cell coordinates, where the synopsis is
+         * divided into chunks. Thus, cell coordinates, both vector and linear,
+         * are respective to the chunk's origin.
+         */
+        struct ChunkCellCoordinates {
+            Coordinates chunk_;
+            size_t chunk_linear_ = 0;
+            Coordinates cell_;
+            size_t cell_chunk_linear_ = 0;
+
+            /*
+             * Init coordinates from cell coordinates.
+             *
+             * Synposis needed to compute other coordinates
+             */
+            ChunkCellCoordinates(const Coordinates &cell_coords,
+                    const Synopsis &syn) : cell_{cell_coords} {
+                syn.FillChunkCellCoordsFromCellCoords(*this);
+            }
+        };
 
         /**
          * Contains iterators needed to access the synopsis array.
@@ -486,25 +543,53 @@ private:
             return total_cell_count;
         }
 
+        /**
+         * Return total number of synopsis array chunks.
+         *
+         * @return total number of synopsis array chunks
+         */
+        size_t GetTotalChunksCount() const {
+            size_t total_chunks_count = 1;
+            for (auto cn: chunk_nums_) {
+                total_chunks_count *= cn;
+            }
+            return total_chunks_count;
+        }
+
         /*
          * Retrieves the synopsis cell from the specified position.
          */
         void FillCellFromArray(const Coordinates &pos,
                 ArrayIterators &iters, Cell &cell) const;
 
+        /*
+         * Fill all cells from the specified chunk.
+         */
+        void FillCellsFromChunk(const ChunkCellCoordinates &pos,
+                ArrayIterators &iters) const;
+
         // Init synopsis iterators.
         void InitIterators(ArrayIterators &iters) const;
 
         /*
-         *  Load and cache the cell iterator is pointing to.
+         * Fills in the remaining chunk-cell coordinates, assuming the
+         * cell coordinates (vector) are defined.
          */
-        const Cell &CacheCell(const RegionIterator &iter, ArrayIterators &iters);
+        void FillChunkCellCoordsFromCellCoords(ChunkCellCoordinates &coords) const;
 
-        // Synopsis cells (linearized)
-        Cells cells_;
+        // Retun memory footprint for the synopsis
+        size_t ComputeMemoryFootprint() const;
+
+        /*
+         *  Synopsis cache. Usage depends on the caching type:
+         *
+         *  EAGER: there is one entry [0] for all synopsis cells.
+         *  LAZY: entries correspond to synopsis array chunks.
+         */
+        mutable Chunks chunks_;  // Synopsis chunks with linearized cells
 
         // Do we cache cells in memory?
-        bool cache_cells_ = false;
+        CachingType cache_type_ = CachingType::NONE;
 
         // Is this synopses preloaded? No cell validation required, if it is.
         bool preloaded_ = false;
@@ -526,6 +611,12 @@ private:
 
         // The number of cells per each dimension
         Coordinates cell_nums_;
+
+        // Number of synopsis array chunks in each dimension
+        SizeVector chunk_nums_;
+
+        // Size of the synopsis array chunks for each dimension
+        SizeVector chunk_sizes_;
 
         // Stats: total number of cell accessed
         std::atomic<uint64_t> cells_accessed_{0};
@@ -554,7 +645,7 @@ private:
      *  laid in the row-major order for the purpose of returning the
      *  linear number of the current cell the iterator points to.
      */
-    class RegionIterator {
+    class Synopsis::RegionIterator {
     public:
         /*
          * Creates an iterator over the region, specified by low and
@@ -686,7 +777,7 @@ private:
         }
 
         /**
-         * Return current position in synopsis coordinates.
+         * Return current position in synopsis array coordinates.
          *
          * Synopsis coordinates means the position is scaled down by
          * using the cell size. These coordinates are suitable to

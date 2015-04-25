@@ -32,7 +32,8 @@
         },
 
         "sampler": {
-            "preload": 1,
+            "preload": 0,
+            "cache": "eager",
             "memory_per_attr": 1024,
             "cell_thr": 0.75,
             "mbr_thr": 0.75,

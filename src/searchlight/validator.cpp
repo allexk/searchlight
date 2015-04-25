@@ -429,7 +429,7 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
             sl_config.get("searchlight.validator.rebal_watermark", 10000);
 
     // Determine forwarding type
-    const std::string &forw_type =
+    const std::string forw_type =
             sl_config.get("balance.validator_balance", "none");
     if (forw_type == "stripes") {
         forw_type_ = Forwarding::STRIPES;
