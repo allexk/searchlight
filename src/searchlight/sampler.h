@@ -492,8 +492,18 @@ private:
              * Synposis needed to compute other coordinates
              */
             ChunkCellCoordinates(const Coordinates &cell_coords,
-                    const Synopsis &syn) : cell_{cell_coords} {
-                syn.FillChunkCellCoordsFromCellCoords(*this);
+                    const Synopsis &syn) :
+                        chunk_(cell_coords.size()),
+                        cell_{cell_coords} {
+                for (size_t i = 0; i < cell_.size(); ++i) {
+                    // Chunk coords
+                    chunk_[i] = cell_[i] - cell_[i] % syn.chunk_sizes_[i];
+                    chunk_linear_ *= syn.chunk_nums_[i];
+                    chunk_linear_ += chunk_[i] / syn.chunk_sizes_[i];
+                    // Cell coords
+                    cell_chunk_linear_ *= syn.chunk_sizes_[i];
+                    cell_chunk_linear_ += cell_[i] - chunk_[i];
+                }
             }
         };
 
@@ -570,12 +580,6 @@ private:
 
         // Init synopsis iterators.
         void InitIterators(ArrayIterators &iters) const;
-
-        /*
-         * Fills in the remaining chunk-cell coordinates, assuming the
-         * cell coordinates (vector) are defined.
-         */
-        void FillChunkCellCoordsFromCellCoords(ChunkCellCoordinates &coords) const;
 
         // Retun memory footprint for the synopsis
         size_t ComputeMemoryFootprint() const;

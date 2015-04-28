@@ -550,25 +550,6 @@ Sampler::Synopsis::Synopsis(const ArrayDesc &data_desc,
     }
 }
 
-void Sampler::Synopsis::FillChunkCellCoordsFromCellCoords(
-        ChunkCellCoordinates &coords) const {
-    const size_t dims = coords.cell_.size();
-    assert(dims);
-    coords.chunk_.resize(dims);
-
-    coords.chunk_linear_ = coords.cell_chunk_linear_ = 0;
-    for (size_t i = 0; i < dims; ++i) {
-        // Chunk coords
-        coords.chunk_[i] = coords.cell_[i] - coords.cell_[i] % chunk_sizes_[i];
-        coords.chunk_linear_ *= chunk_nums_[i];
-        coords.chunk_linear_ += coords.chunk_[i] / chunk_sizes_[i];
-
-        // Cell coords
-        coords.cell_chunk_linear_ *= chunk_sizes_[i];
-        coords.cell_chunk_linear_ += coords.cell_[i] - coords.chunk_[i];
-    }
-}
-
 void Sampler::Synopsis::SetCacheType(CachingType mode) {
     cache_type_ = mode;
     if (mode == CachingType::EAGER) {
@@ -720,21 +701,20 @@ void Sampler::Synopsis::FillCellsFromChunk(const ChunkCellCoordinates &pos,
     }
 
     // Retrieve the chunk's cells
-    ChunkCellCoordinates current_pos{pos};
-    current_pos.cell_ = pos.chunk_; // from the beginning of the chunk
+    Coordinates current_pos{pos.chunk_};
     bool cell_is_valid = true;
     while (cell_is_valid) {
         // Get the cell and make it valid
-        FillChunkCellCoordsFromCellCoords(current_pos);
-        Cell &cell = chunk.cells_[current_pos.cell_chunk_linear_];
-        FillCellFromArray(current_pos.cell_, iters, cell);
+        ChunkCellCoordinates chunk_cell_pos{current_pos, *this};
+        Cell &cell = chunk.cells_[chunk_cell_pos.cell_chunk_linear_];
+        FillCellFromArray(chunk_cell_pos.cell_, iters, cell);
         // Make it valid. Relaxed is fine, everything is locked for LAZY.
         cell.valid_.store(true, std::memory_order_relaxed);
 
         // increment the position
-        size_t i = current_pos.cell_.size() - 1;
-        while (++current_pos.cell_[i] > chunk_end[i]) {
-            current_pos.cell_[i] = chunk_start[i];
+        size_t i = current_pos.size() - 1;
+        while (++current_pos[i] > chunk_end[i]) {
+            current_pos[i] = chunk_start[i];
             if (i == 0) {
                 cell_is_valid = false;
                 break;
