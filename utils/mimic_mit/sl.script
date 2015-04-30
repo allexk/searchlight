@@ -1,0 +1,3 @@
+upload:/home/gridsan/akalinin/mimic/sl.json
+query_int:searchlight(depart(mimic), depart(mimic_ABP_1x1000), depart(mimic_ABP_1x100), 'searchlight_mimic:MimicAvg:%upload%')
+#query_int:scan(mimic_ABP_1x1000)

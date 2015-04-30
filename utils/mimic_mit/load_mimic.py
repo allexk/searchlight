@@ -3,6 +3,7 @@ from __future__ import print_function
 
 import os
 import argparse
+import glob
 from scidb_http import SciDBConnection
 
 # The insert command
@@ -37,14 +38,16 @@ try:
                 continue
             print("Loading waveform for patient ", patient)
             # load the corresponding data
-            wave_file = os.path.join(patient, 'mimic_wave.dat')
-            wave_file_size = os.stat(wave_file).st_size
-            if not wave_file_size:
-                print('File ', wave_file, ' is empty, skipping...')
-                continue
-            remote_file_name = scidb.upload(wave_file)
-            # then, insert the data
-            query = INSERT_AFL.replace('%upload%', "'%s'" % remote_file_name)
-            scidb.query(query, False)
+            wave_files = glob.glob(os.path.join(patient, 'mimic_wave*.dat'))
+            wave_files.sort()
+            for wave_file in wave_files:
+                wave_file_size = os.stat(wave_file).st_size
+                if not wave_file_size:
+                    print('File ', wave_file, ' is empty, skipping...')
+                    continue
+                remote_file_name = scidb.upload(wave_file)
+                # then, insert the data
+                query = INSERT_AFL.replace('%upload%', "'%s'" % remote_file_name)
+                scidb.query(query, False)
 finally:
     scidb.close()

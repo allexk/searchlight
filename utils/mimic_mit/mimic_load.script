@@ -1,0 +1,8 @@
+# create array (not needed, if exists)
+query:create array mimic<ABP: double null, MCL1: double null, PAP: double null>[record=0:*,1,0, tick=0:*,1000000,0]
+# upload the data
+upload:s00177/mimic_wave.dat
+# insert
+query:insert(redimension(input(<record: int64, tick: int64, ABP: double null, MCL1: double null, PAP: double null>[i=0:*,10000,0], %upload%, 0, '(int64, int64, double null, double null, double null)'), mimic), mimic)
+#query_res:scan(test)
+#result:res.txt

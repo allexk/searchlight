@@ -1,0 +1,8 @@
+# to convert mimic waveforms into our binary format
+python ~/src/searchlight/utils/mimic.py --store ~/mimic/ --signal ABP MCL1 PAP --filter patients.filter --binary /home/gridsan/groups/MIMIC/pipeline/Step1_Parse/waveform_parsed/ /home/gridsan/groups/MIMIC/pipeline/Step0_Raw/waveform/database/mimic2wdb/matched/
+
+# to sample the mimic array
+python ~/src/searchlight/utils/sampler.py --method http --host scidb06.cloud.llgrid.txe1.mit.edu --password ~/tools/groups/databases/scidb06/scidb_shim_password.txt --chunks 1 100 --outfile mimic_sample.dat --binary --outscript mimic_sample.script mimic ABP
+
+# perform a script (load, query, etc.)
+python ~/src/searchlight/utils/scidb_http.py scidb06 sl.script

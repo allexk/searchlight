@@ -1,0 +1,6 @@
+# create array (not needed if exists)
+query:create array mimic_ABP_1x100<min: double null, max: double null, sum: double,count: uint64>[record=0:*,1,0, tick=0:*,1000000,0]
+# upload the binary to SciDB
+upload:/home/gridsan/akalinin/mimic/mimic_sample.dat
+# load the sample (update if exists)
+query:insert(redimension(input(<record: int64, tick: int64, min: double null, max: double null, sum: double,count: uint64>[i=0:*,10000,0], %upload%, 0,'(int64, int64, double null, double null, double, uint64)'), mimic_ABP_1x100), mimic_ABP_1x100)
