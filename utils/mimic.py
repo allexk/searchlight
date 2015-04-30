@@ -55,6 +55,52 @@ def _ticks_to_timedelta(ticks):
     return datetime.timedelta(seconds=secs, milliseconds=milli_secs)
 
 
+class SplitFileWriter(object):
+    """Class for writing data to a series of files, with a limit per file.
+
+    This class is used when the user needs to dump some data to a file, but the file size
+    must be limited at the same time. In this case, this class create a series of files instead.
+    """
+    def __init__(self, prefix, suffix, limit=1024):
+        """
+        Create a new split file writer.
+
+        :param prefix: prefix for files to be created
+        :param suffix: suffix for files to be created
+        :param limit: limit per file in MB
+        :return: split file object suitable for using write()
+        """
+        self._file_counter = 0
+        self._prefix = prefix
+        self._suffix = suffix
+        self._limit = long(limit) * 1024 * 1024
+        self._new_file()
+
+    def _new_file(self):
+        "Create a new file with the given prefix."
+        file_name = '%s_%d%s' % (self._prefix, self._file_counter, self._suffix)
+        try:
+            self._current_file = open(file_name, 'wb')
+        except IOError:
+            print 'Cannot create file:', file_name
+            raise
+        self._file_counter += 1
+
+    def write(self, data):
+        """Write data to the current file or a new one if the limit is exceeded."""
+        current_size = self._current_file.tell()
+        if current_size >= self._limit:
+            self._current_file.close()
+            self._new_file()
+        self._current_file.write(data)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self._current_file.close()
+
+
 class BinarySciDBWriter(object):
     """Class for dumping data into SciDB binary format.
 
@@ -357,7 +403,7 @@ class MIMICWaveformData(object):
             self._patients[patient_id] = Patient(patient_id, record_files, mimic_orig_dir, global_record_id)
             global_record_id += self._patients[patient_id].records_num()
 
-    def store_to_file(self, output_path, req_signals, patients_filter, binary):
+    def store_to_file(self, output_path, req_signals, patients_filter, binary, limit):
         """Store all segments for all patients into a file.
 
         For the schema see the PatientRecord's method with the same name. All records are stored one after
@@ -372,7 +418,7 @@ class MIMICWaveformData(object):
             files_ext = '.dat'
         else:
             files_ext = '.csv'
-        with open(os.path.join(output_path, 'mimic_wave%s' % files_ext), 'w') as data_file:
+        with SplitFileWriter(os.path.join(output_path, 'mimic_wave'), files_ext, limit) as data_file:
             if binary:
                 writer_data = BinarySciDBWriter(data_file, ['int64', 'int64'] + ['double null'] * len(req_signals))
             else:
@@ -418,6 +464,7 @@ def _main():
     parser.add_argument('--binary', action='store_true', help='Write in the SciDB binary format')
     parser.add_argument('--show-catalog', action='store_true', help='Output the catalog to stdout')
     parser.add_argument('--single-binary', action='store_true', help='Store data in a single binary')
+    parser.add_argument('--file-limit', metavar='MB', type=int, default=1024, help='File size limit (MB)')
     parser.add_argument('mimic_mat_dir', help='Directory with MIMIC waveform MATLAB files')
     parser.add_argument('mimic_orig_dir', help='Directory with MIMIC original data/header files')
 
@@ -479,9 +526,9 @@ def _main():
                 else:
                     print "'%s' already exists. It will be rewritten..." % store_path
                 print 'Dumping data for %s into %s...' % (patient, store_path)
-                mimic.store_to_file(store_path, opts.signals, [patient], opts.binary)
+                mimic.store_to_file(store_path, opts.signals, [patient], opts.binary, opts.file_limit)
         else:
-            mimic.store_to_file(opts.store, opts.signals, patients, opts.binary)
+            mimic.store_to_file(opts.store, opts.signals, patients, opts.binary, opts.file_limit)
     return 0
 
 if __name__ == '__main__':
