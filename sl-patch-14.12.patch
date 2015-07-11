@@ -1,0 +1,471 @@
+diff --git a/src/searchlight/array_access.cpp b/src/searchlight/array_access.cpp
+index a530161..c3f5d8c 100644
+--- a/src/searchlight/array_access.cpp
++++ b/src/searchlight/array_access.cpp
+@@ -79,8 +79,10 @@ TypedValueVector ArrayAccess::ComputeAggreagate(const Coordinates &low,
+      *
+      * FIXME: Rewrite BetweenArray to use setPosition() instead of ++
+      */
+-    const BetweenArray region(array_desc_, low, high,
+-            data_array_, tile_mode_);
++    scidb::SpatialRangesPtr between_ranges =
++    		boost::make_shared<scidb::SpatialRanges>(low.size());
++    between_ranges->_ranges.push_back(scidb::SpatialRange(low, high));
++    const BetweenArray region(array_desc_, between_ranges, data_array_);
+ 
+     if (tile_mode_) {
+         ComputeGeneralAggregateTile(region, attr, aggrs, need_nulls);
+@@ -124,10 +126,7 @@ void ArrayAccess::ComputeGeneralAggregateTile(const Array &array,
+             if (tile->count()) {
+                 for (size_t i = 0; i < aggrs.size(); i++) {
+                     SmallAggr &agg = aggrs[i];
+-                    if (agg.state_.getMissingReason() == 0) {
+-                        agg.agg_->initializeState(agg.state_);
+-                    }
+-                    agg.agg_->accumulatePayload(agg.state_, tile);
++                    agg.agg_->accumulateIfNeeded(agg.state_, tile);
+                 }
+             }
+             ++(*chunk_iter);
+@@ -173,10 +172,7 @@ void ArrayAccess::ComputeGeneralAggregate(const Array &array,
+                 SmallAggr &agg = aggrs[i];
+                 if (!agg.is_count_ && (agg.needs_nulls_ ||
+                         !v.isNull())) {
+-                    if (agg.state_.getMissingReason() == 0) {
+-                        agg.agg_->initializeState(agg.state_);
+-                    }
+-                    agg.agg_->accumulate(agg.state_, v);
++                    agg.agg_->accumulateIfNeeded(agg.state_, v);
+                 }
+             }
+             ++(*chunk_iter);
+diff --git a/src/searchlight/array_access.h b/src/searchlight/array_access.h
+index 373a24c..3c38e86 100644
+--- a/src/searchlight/array_access.h
++++ b/src/searchlight/array_access.h
+@@ -60,10 +60,7 @@ public:
+          * We use tiles only if the storage uses them, since we work with SciDb
+          * arrays (borrowed from the optimizer).
+          */
+-        tile_mode_ = Config::getInstance()->
+-                        getOption<bool>(scidb::CONFIG_RLE_CHUNK_FORMAT) &&
+-                     Config::getInstance()->
+-                        getOption<int>(scidb::CONFIG_TILE_SIZE) > 1;
++        tile_mode_ = false; // BetweenArray doesn't support tiles in scidb 14.12
+     }
+ 
+     /**
+diff --git a/src/searchlight/array_desc.cpp b/src/searchlight/array_desc.cpp
+index a8e9350..eccebaa 100644
+--- a/src/searchlight/array_desc.cpp
++++ b/src/searchlight/array_desc.cpp
+@@ -101,7 +101,7 @@ SearchArrayDesc::ChunkZones SearchArrayDesc::CreateChunkZones(
+     res.zones_.resize(zones_num);
+     std::vector<std::pair<Coordinate, Coordinate>> current_area(dims.size());
+     for (size_t i = 0; i < dims.size(); ++i) {
+-        current_area[i].first = dims[i].getLowBoundary();
++        current_area[i].first = dims[i].getStartMin();
+         current_area[i].second = dims[i].getCurrLength();
+     }
+ 
+diff --git a/src/searchlight/ops/DepartArray.cpp b/src/searchlight/ops/DepartArray.cpp
+index 20a1849..1cf4213 100644
+--- a/src/searchlight/ops/DepartArray.cpp
++++ b/src/searchlight/ops/DepartArray.cpp
+@@ -158,9 +158,6 @@ private:
+     // Sets the bitmap for the chunk and, optionally, fills the bitmap chunk.
+     void CheckAndSetBitmapRLE(MemChunk *chunk) const;
+ 
+-    // Fetches a bitmap from the one of the remotes
+-    void FetchBitmapFromRemote(const Coordinates &pos) const;
+-
+     // Check if we already have the chunk in cache.
+     bool CheckRemoteCache(const Address &addr) const {
+         const auto &cached_chunk = cache_.remote_chunks_.find(addr);
+@@ -403,9 +400,6 @@ const ConstChunk &DepartArrayIterator::GetChunk() const {
+                     MemChunk *new_chunk = dynamic_cast<MemChunk *>(
+                                 &(cache_iter_->newChunk(current_)));
+                     assert(new_chunk);
+-                    const ConstChunk *bitmap_chunk = new_chunk->getBitmapChunk();
+-                    const bool need_bitmap =
+-                            bitmap_chunk && bitmap_chunk->getSize() == 0;
+                     lock.unlock();
+ 
+                     // get the chunk from messenger
+@@ -422,39 +416,12 @@ const ConstChunk &DepartArrayIterator::GetChunk() const {
+                         throw;
+                     }
+ 
+-                    /*
+-                     * Okay, here we want to retrieve the bitmap chunk if our
+-                     * new chunk is not RLE (rare). If it's not, it does not
+-                     * contain a bitmap attached.
+-                     */
+-                    if (!new_chunk->isRLE() && need_bitmap) {
+-                        try {
+-                            /*
+-                             *  Fetching bitmap might be interrupted as well.
+-                             *  While the corresponding repeat request will
+-                             *  be created, we still need to notify this
+-                             *  chunk's clients.
+-                             *
+-                             *  This, however, might result in refetching the
+-                             *  current chunk.
+-                             */
+-                            FetchBitmapFromRemote(current_);
+-                        } catch (...) {
+-                            LOG4CXX_DEBUG(logger, "Cannot fulfill the current "
+-                                  "chunk's bitmap fetch. Another will repeat.");
+-                            cache_.repeat_requests_.insert(addr);
+-                            cache_.current_requests_.erase(addr);
+-                            cache_.cond_.notify_all();
+-                            throw;
+-                        }
+-                    }
+-
+                     // Working with structures again
+                     lock.lock();
+-                    if (new_chunk->isRLE() &&
+-                            !new_chunk->getAttributeDesc().isEmptyIndicator()) {
++                    if (!new_chunk->getAttributeDesc().isEmptyIndicator()) {
+                         CheckAndSetBitmapRLE(new_chunk);
+                     }
++
+                     /*
+                      * Use the cache's (fake) query for writing.
+                      *
+@@ -473,7 +440,6 @@ const ConstChunk &DepartArrayIterator::GetChunk() const {
+ }
+ 
+ void DepartArrayIterator::CheckAndSetBitmapRLE(MemChunk *chunk) const {
+-    assert(chunk->isRLE());
+     // Removing const from the pointer is safe here
+     ConstChunk * const bitmap_chunk =
+             const_cast<ConstChunk *>(chunk->getBitmapChunk());
+@@ -506,7 +472,6 @@ void DepartArrayIterator::CheckAndSetBitmapRLE(MemChunk *chunk) const {
+         mod_bitmap_chunk->pin();
+         mod_bitmap_chunk->allocate(bitmap_size);
+         bitmap->pack(static_cast<char *>(mod_bitmap_chunk->getDataForLoad()));
+-        mod_bitmap_chunk->setRLE(true);
+         mod_bitmap_chunk->unPin();
+ 
+         // Create fetch record
+@@ -517,16 +482,6 @@ void DepartArrayIterator::CheckAndSetBitmapRLE(MemChunk *chunk) const {
+     }
+ }
+ 
+-void DepartArrayIterator::FetchBitmapFromRemote(const Coordinates &pos) const {
+-    const AttributeDesc *empty_attr = array_.desc.getEmptyBitmapAttribute();
+-    if (empty_attr) {
+-        auto iter = array_.getConstIterator(empty_attr->getId());
+-        if (iter->setPosition(pos)) {
+-            iter->getChunk();
+-        }
+-    }
+-}
+-
+ void DepartArray::ClearPersistentCache() {
+     LOG4CXX_INFO(logger, "Clearing cache for DepartArray...");
+     cache_cache_.Clear();
+diff --git a/src/searchlight/ops/LogicalDepart.cpp b/src/searchlight/ops/LogicalDepart.cpp
+index 5fe954f..4b28e7f 100644
+--- a/src/searchlight/ops/LogicalDepart.cpp
++++ b/src/searchlight/ops/LogicalDepart.cpp
+@@ -136,11 +136,16 @@ public:
+     virtual ArrayDesc inferSchema(std::vector<ArrayDesc> schemas,
+             boost::shared_ptr<Query> query) override {
+         assert(schemas.size() == 1);
+-        const ArrayDesc &array_desc = schemas[0];
+-        if (array_desc.getSize() == scidb::INFINITE_LENGTH) {
+-            throw USER_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+-                    << "Array for departitioning must be finite!";
+-        }
++        ArrayDesc &array_desc = schemas[0];
++
++       /*
++        * Trim the descriptor. We need this for properly functioning
++        * Searchlight code. We probably care only about the finite
++        * lower boundary.
++        *
++        * FIXME: Check if we really need this, especially in the sampler.
++        */
++       array_desc.trim();
+ 
+         if (_parameters.size() > 1) {
+             // Copy should work, but the descriptor pointer will be incorrect.
+@@ -162,19 +167,19 @@ public:
+                 // First, we want to check the boundaries. Note, we cannot
+                 // have a infinite length array here.
+                 const DimensionDesc &dim = dims[i];
+-                if (low < dim.getStart()) {
+-                    low = dim.getStart();
++                if (low < dim.getStartMin()) {
++                    low = dim.getStartMin();
+                 }
+                 if (high > dim.getEndMax()) {
+                     high = dim.getEndMax();
+                 }
+ 
+                 // Then, we want to align the coordinates with the chunks
+-                Coordinate offs = low - dim.getStart();
++                Coordinate offs = low - dim.getStartMin();
+                 if (offs % dim.getChunkInterval()) {
+                     low -= offs % dim.getChunkInterval();
+                 }
+-                offs = high - dim.getStart();
++                offs = high - dim.getStartMin();
+                 if ((offs + 1) % dim.getChunkInterval()) {
+                    high -= offs % dim.getChunkInterval();
+                    high += (dim.getChunkInterval() - 1);
+diff --git a/src/searchlight/sampler.cpp b/src/searchlight/sampler.cpp
+index 792589f..8d17f58 100644
+--- a/src/searchlight/sampler.cpp
++++ b/src/searchlight/sampler.cpp
+@@ -751,9 +751,11 @@ void Sampler::Synopsis::FillCellFromArray(const Coordinates &pos,
+         }
+ 
+         cell.count_ = iters.count_it_->getItem().getUint64();
+-        cell.min_ = iters.min_it_->getItem().getDouble();
+-        cell.max_ = iters.max_it_->getItem().getDouble();
+-        cell.sum_ = iters.sum_it_->getItem().getDouble();
++        if (cell.count_) {
++            cell.min_ = iters.min_it_->getItem().getDouble();
++            cell.max_ = iters.max_it_->getItem().getDouble();
++            cell.sum_ = iters.sum_it_->getItem().getDouble();
++        }
+     }
+ }
+ 
+diff --git a/src/searchlight/searchlight.h b/src/searchlight/searchlight.h
+index 19def81..c539e64 100644
+--- a/src/searchlight/searchlight.h
++++ b/src/searchlight/searchlight.h
+@@ -80,7 +80,7 @@ public:
+      */
+     DLLHandler() :
+         dlls_dir_(scidb::Config::getInstance()->
+-                getOption<std::string>(scidb::CONFIG_PLUGINS)) {}
++                getOption<std::string>(scidb::CONFIG_PLUGINSDIR)) {}
+ 
+     /**
+      * Destructor. Closes all opened DLLs.
+diff --git a/src/searchlight/searchlight_messenger.cpp b/src/searchlight/searchlight_messenger.cpp
+index 0d2592a..6253299 100644
+--- a/src/searchlight/searchlight_messenger.cpp
++++ b/src/searchlight/searchlight_messenger.cpp
+@@ -551,16 +551,13 @@ void SearchlightMessenger::HandleSLChunkRequest(
+     if (attach_binary) {
+         const ConstChunk &chunk = array_iter->getChunk();
+         boost::shared_ptr<ConstRLEEmptyBitmap> empty_bitmap;
+-        if (chunk.isRLE() &&
+-                array->getArrayDesc().getEmptyBitmapAttribute() &&
++        if (array->getArrayDesc().getEmptyBitmapAttribute() &&
+                 !chunk.getAttributeDesc().isEmptyIndicator()) {
+             empty_bitmap = chunk.getEmptyBitmap();
+         }
+         chunk.compress(*buffer, empty_bitmap);
+         empty_bitmap.reset(); // apparently, reset() is mandatory here (bug?)
+ 
+-        reply->set_sparse(chunk.isSparse());
+-        reply->set_rle(chunk.isRLE());
+         reply->set_compression_method(buffer->getCompressionMethod());
+         reply->set_decompressed_size(buffer->getDecompressedSize());
+         reply->set_count(chunk.isCountKnown() ? chunk.count() : 0);
+@@ -572,7 +569,7 @@ void SearchlightMessenger::HandleSLChunkRequest(
+ 
+     // send
+     NetworkManager *network_manager = NetworkManager::getInstance();
+-    network_manager->sendMessage(msg_desc->getSourceInstanceID(), msg);
++    network_manager->sendPhysical(msg_desc->getSourceInstanceID(), msg);
+     query_ctx->stats_.msgs_sent_++;
+ }
+ 
+@@ -616,11 +613,8 @@ void SearchlightMessenger::HandleSLChunk(
+ 
+         Chunk *chunk = chunk_req->chunk_;
+ 
+-        chunk->setSparse(record->sparse());
+-        chunk->setRLE(record->rle());
+         chunk->decompress(*compressed_buffer);
+         chunk->setCount(record->count());
+-        assert(checkChunkMagic(*chunk));
+         /*
+          *  Note, we do not call chunk->write() here, since the caller might
+          *  want to do something else. write() might cause unpin() for some
+@@ -713,7 +707,7 @@ void SearchlightMessenger::SendSolution(const boost::shared_ptr<Query> &query,
+ 
+     // determine the coordinator
+     const InstanceID coord_id = query->getCoordinatorID();
+-    if (coord_id == scidb::COORDINATOR_INSTANCE) {
++    if (coord_id == scidb::INVALID_INSTANCE) {
+         LOG4CXX_ERROR(logger, "Attempting to send a solution"
+                 "from the coordinator");
+         return;
+@@ -747,7 +741,7 @@ void SearchlightMessenger::ReportIdleSolver(
+         const boost::shared_ptr<Query> &query, uint64_t solver_id) const {
+     // determine the coordinator
+     const InstanceID coord_id = query->getCoordinatorID();
+-    if (coord_id == scidb::COORDINATOR_INSTANCE) {
++    if (coord_id == scidb::INVALID_INSTANCE) {
+         LOG4CXX_ERROR(logger, "Attempting to report idle coordinator");
+         return;
+     }
+@@ -780,7 +774,7 @@ void SearchlightMessenger::ReportFinValidator(
+         const boost::shared_ptr<Query> &query) const {
+     // determine the coordinator
+     const InstanceID coord_id = query->getCoordinatorID();
+-    if (coord_id == scidb::COORDINATOR_INSTANCE) {
++    if (coord_id == scidb::INVALID_INSTANCE) {
+         LOG4CXX_ERROR(logger, "Attempting to report idle validator at "
+                 "the coordinator");
+         return;
+@@ -836,7 +830,7 @@ void SearchlightMessenger::RejectHelp(const boost::shared_ptr<Query> &query,
+         const std::vector<InstanceID> &ids, uint64_t src, bool hard) const {
+     // determine the coordinator
+     const InstanceID coord_id = query->getCoordinatorID();
+-    if (coord_id == scidb::COORDINATOR_INSTANCE) {
++    if (coord_id == scidb::INVALID_INSTANCE) {
+         LOG4CXX_ERROR(logger, "Attempting to reject help at the coordinator");
+         return;
+     }
+@@ -890,7 +884,7 @@ void SearchlightMessenger::AcceptHelp(const boost::shared_ptr<Query> &query,
+         uint64_t inst) const {
+     // prepare the message
+     const InstanceID coord_id = query->getCoordinatorID();
+-    if (coord_id == scidb::COORDINATOR_INSTANCE) {
++    if (coord_id == scidb::INVALID_INSTANCE) {
+         LOG4CXX_ERROR(logger, "Attempting to accept help at the coordinator");
+         return;
+     }
+@@ -970,7 +964,7 @@ void SearchlightMessenger::BroadcastDistrUpdate(
+ 
+     // send
+     NetworkManager *network_manager = NetworkManager::getInstance();
+-    network_manager->broadcast(msg);
++    network_manager->broadcastLogical(msg);
+ }
+ 
+ void SearchlightMessenger::SendBalanceResult(
+@@ -1015,7 +1009,7 @@ void SearchlightMessenger::BroadcastFinishSearch(
+ 
+     // send
+     NetworkManager *network_manager = NetworkManager::getInstance();
+-    network_manager->broadcast(msg);
++    network_manager->broadcastLogical(msg);
+ 
+     // stats
+     const QueryContextPtr query_ctx =
+@@ -1041,7 +1035,7 @@ void SearchlightMessenger::BroadcastValidatorInfo(
+ 
+     // send
+     NetworkManager *network_manager = NetworkManager::getInstance();
+-    network_manager->broadcast(msg);
++    network_manager->broadcastLogical(msg);
+ }
+ 
+ void SearchlightMessenger::BroadcastCommit(
+@@ -1062,7 +1056,7 @@ void SearchlightMessenger::BroadcastCommit(
+ 
+     // send
+     NetworkManager *network_manager = NetworkManager::getInstance();
+-    network_manager->broadcast(msg);
++    network_manager->broadcastLogical(msg);
+ 
+     // stats
+     const QueryContextPtr query_ctx =
+diff --git a/src/searchlight/searchlight_task.cpp b/src/searchlight/searchlight_task.cpp
+index 50e3b1e..bd2ead5 100644
+--- a/src/searchlight/searchlight_task.cpp
++++ b/src/searchlight/searchlight_task.cpp
+@@ -134,7 +134,7 @@ SearchlightTask::SearchlightTask(const std::string &library_name,
+     ReadConfig(config_file_name);
+ 
+     // Fill in distributed search info
+-    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
++    if (query->isCoordinator()) {
+         distr_search_info_.reset(new DistributedSearchInfo);
+         for (size_t i = 0; i < active_solver_instances_.size(); i++) {
+             // Each instance might contain several solvers
+@@ -284,7 +284,7 @@ void SearchlightTask::ReportIdleSolver(uint64_t solver_id, bool deferable) {
+         }
+     }
+     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+-    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
++    if (query->isCoordinator()) {
+         // We are at the coordinator -- handle the solver
+         HandleIdleSolver(solver_id);
+     } else {
+@@ -295,7 +295,7 @@ void SearchlightTask::ReportIdleSolver(uint64_t solver_id, bool deferable) {
+ 
+ void SearchlightTask::ReportFinValidator() {
+     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+-    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
++    if (query->isCoordinator()) {
+         // We are at the coordinator -- handle the solver
+         HandleFinValidator(my_instance_id_);
+     } else {
+@@ -692,7 +692,7 @@ void SearchlightTask::HandleRejectHelp(uint64_t src,
+ void SearchlightTask::RejectHelp(const std::vector<uint64_t> &helpers,
+         uint64_t solver_id, bool hard) {
+     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+-    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
++    if (query->isCoordinator()) {
+         HandleRejectHelp(solver_id, helpers, hard);
+     } else {
+         // We are at a common instance -- send helpers back to the coordinator
+@@ -703,7 +703,7 @@ void SearchlightTask::RejectHelp(const std::vector<uint64_t> &helpers,
+ 
+ void SearchlightTask::ReportSolution(const std::vector<int64_t> &values) {
+     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+-    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
++    if (query->isCoordinator()) {
+         // We are at the coordinator -- add the solution to the queue
+         const std::string sol = searchlight_.SolutionToString(values);
+         LOG4CXX_INFO(result_logger, sol);
+@@ -803,7 +803,7 @@ void SearchlightTask::DispatchWork(const LiteAssignmentVector &work,
+     }
+ 
+     // Next, we notify the coordinator about acceptance
+-    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
++    if (query->isCoordinator()) {
+         HandleAcceptHelper(dest_solver);
+     } else {
+         SearchlightMessenger::getInstance()->AcceptHelp(query, dest_solver);
+@@ -864,11 +864,11 @@ void SearchlightTask::HandleSearchlightError(
+             // We should try to notify the query
+             const auto query = Query::getValidQueryPtr(query_);
+             query->handleError(error);
+-            if (query->getCoordinatorID() != scidb::COORDINATOR_INSTANCE) {
++            if (!query->isCoordinator()) {
+                 // Send to the coordinator
+                 auto error_msg = scidb::makeErrorMessageFromException(
+                         *sl_error_, query->getQueryID());
+-                NetworkManager::getInstance()->sendMessage(
++                NetworkManager::getInstance()->sendPhysical(
+                         query->getPhysicalCoordinatorID(), error_msg);
+                 LOG4CXX_INFO(logger, "Notified coordinator about the error");
+             }
+@@ -890,7 +890,7 @@ const ConstChunk *SearchlightResultsArray::nextChunk(AttributeID attId,
+      */
+     {
+         boost::shared_ptr<Query> query(Query::getValidQueryPtr(_query));
+-        if (query->getCoordinatorID() != scidb::COORDINATOR_INSTANCE) {
++        if (!query->isCoordinator()) {
+             return NULL;
+             // The searchlight and validator threads will continue working
+         }
+diff --git a/src/searchlight/validator.cpp b/src/searchlight/validator.cpp
+index cf70158..8aded11 100644
+--- a/src/searchlight/validator.cpp
++++ b/src/searchlight/validator.cpp
+@@ -468,8 +468,8 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
+                 (search_array_desc.GetSearchArraySize() - 1) /
+                 active_validators.size() + 1;
+         const size_t cache_size = size_t(Config::getInstance()->getOption<int>(
+-                scidb::CONFIG_CACHE_SIZE)) * 1024 * 1024;
+-        const size_t tmp_size = size_t(Config::getInstance()->getOption<int>(
++                scidb::CONFIG_SMGR_CACHE_SIZE)) * 1024 * 1024;
++        const size_t tmp_size = size_t(Config::getInstance()->getOption<size_t>(
+                 scidb::CONFIG_MEM_ARRAY_THRESHOLD)) * 1024 * 1024;
+         const size_t inst_count = sl_task_.GetQueryInstanceCount();
+ 
