@@ -1,0 +1,242 @@
+diff --git a/scidb4py/_chunk.py b/scidb4py/_chunk.py
+index 0197156..12732e6 100644
+--- a/scidb4py/_chunk.py
++++ b/scidb4py/_chunk.py
+@@ -43,7 +43,7 @@ def make_chunk(chunk_msg, array):
+     sparse = rec.sparse
+     compression_method = rec.compression_method
+     chunk_data = chunk_msg.binary
+-    rle = rec.rle
++    rle = True
+ 
+     if compression_method != NO_COMPRESSION and len(chunk_data) != rec.decompressed_size:
+         chunk_data = decompress(compression_method, chunk_data)
+diff --git a/scidb4py/_message.py b/scidb4py/_message.py
+index 3dca3ed..c28608b 100644
+--- a/scidb4py/_message.py
++++ b/scidb4py/_message.py
+@@ -54,7 +54,7 @@ class Header(object):
+     _headerSize = calcsize(_fmt)
+ 
+     def __init__(self, message_type=0, record_size=0, binary_size=0, query_id=0):
+-        self._protocol_version = 3
++        self._protocol_version = 4
+         self._source_instance_id = ~0 & 0xFFFFFFFFFFFFFFFF  # equivalent of uint64_t sourceInstanceID = ~0
+         self._message_type = message_type
+         self._record_size = record_size
+@@ -125,4 +125,4 @@ class Message(object):
+ 
+     @property
+     def binary(self):
+-        return self._binary
+\ No newline at end of file
++        return self._binary
+diff --git a/scidb4py/_scidb_msg.proto b/scidb4py/_scidb_msg.proto
+index 632a278..8bf1178 100644
+--- a/scidb4py/_scidb_msg.proto
++++ b/scidb4py/_scidb_msg.proto
+@@ -58,6 +58,8 @@ message Fetch
+     optional bool position_only = 3;
+     optional uint32 obj_type = 4; // 0 - for remote array; 1 - for merged array. Should be copy to Chunk message field.
+     optional string array_name = 5; // a name of mapping array to fetch: result array or mapping array
++    optional uint32 prefetch_size = 6; // the number of chunks/items the sender is willing to accept in response
++    optional uint64 fetch_id = 7; // this message id
+ }
+ 
+ /**
+@@ -78,10 +80,9 @@ message Chunk
+ 	optional uint32 obj_type = 11; // 0 - for remote array; 1 - for merged array. Should be copy from Fetch message field.
+     optional uint32 count  = 12;
+     optional bool tombstone = 13 [default = false]; 
+-
+-    //used when cloning chunk from array A to array B: ID of array A and attID
+-    optional uint64 source_array_id = 14;
+-    optional uint64 source_attribute_id = 15;
++    optional uint64 dest_instance = 14;
++    optional uint64 next_dest_instance = 15;
++    optional uint64 fetch_id = 16; // last fetch_id received by the sender
+ 
+     message Warning
+     {
+@@ -94,7 +95,7 @@ message Chunk
+         required string strings_namespace = 7;
+     }
+ 
+-    repeated Warning warnings = 16;//warnings posted during execution
++    repeated Warning warnings = 17;//warnings posted during execution
+ }
+ 
+ /**
+@@ -120,13 +121,8 @@ message QueryResult
+             required int64 curr_start = 3;
+             required int64 curr_end = 4;
+             required int64 end_max = 5;
+-            required uint32 chunk_interval = 6;
+-            required uint32 chunk_overlap = 7;
+-            required string type_id = 8;
+-            required int32 flags = 9;
+-            required string mapping_array_name = 10;
+-            optional int64 coordinates_mapping_size = 11;
+-            optional bytes coordinates_mapping = 12;
++            required int64 chunk_interval = 6;
++            required int64 chunk_overlap = 7;
+ 	}
+ 
+     message Warning
+@@ -170,6 +166,7 @@ message PhysicalPlan
+         }
+         required InstanceList dead_list = 4;
+         required InstanceList live_list = 5;
++        required string cluster_uuid = 6;
+ } 
+ 
+ /**
+@@ -201,6 +198,7 @@ message Error
+     }
+     
+     optional ParsingContext parsing_context = 11;
++    optional string cluster_uuid = 12;
+ }
+ 
+ /**
+@@ -211,7 +209,8 @@ message Error
+  message DummyQuery
+  {
+     optional uint64  payload_id = 2;
+- }
++     optional string cluster_uuid = 3;
++}
+ 
+ 
+ /**
+diff --git a/scidb4py/array.py b/scidb4py/array.py
+index d83b489..8a1fa95 100644
+--- a/scidb4py/array.py
++++ b/scidb4py/array.py
+@@ -34,39 +34,8 @@ class Array(object):
+         self._attributes_name_id_mapping = {}
+         for a in self.schema.attributes:
+             self._attributes_name_id_mapping[a.name] = a.id
+-
+-        self._nid_mapping = {}
+-        for d in self.schema.dimensions:
+-            if d.type != TID_INT64:
+-                if is_scidb_type(d.type):
+-                    label_attr = 'value'
+-                    attributes = [
+-                        Attribute(0, 'value', d.type, 0),
+-                    ]
+-                else:
+-                    label_attr = 'label'
+-                    attributes = [
+-                        Attribute(0, 'value', TID_VOID, 0),
+-                        Attribute(1, 'label', TID_STRING, 0)
+-                    ]
+-
+-                dimensions = [Dimension('no', TID_INT64, 0, d.start, d.start + d.coordinates_mapping_size - 1, d.coordinates_mapping_size)]
+-                mapping_array = Array(query_id,
+-                                      Schema(d.mapping_array_name,
+-                                             attributes,
+-                                             dimensions
+-                                             ),
+-                                      network)
+-                mapping = []
+-                for dim, att in mapping_array:
+-                    mapping.append({dim['no']: att[label_attr]})
+-                self._nid_mapping[d.name] = mapping
+-
+         self.next_chunk()
+ 
+-    def nid_mapping(self, dimension):
+-        return self._nid_mapping[dimension]
+-
+     def next_chunk(self):
+         """
+         Fetch new chunks for each attribute
+diff --git a/scidb4py/result.py b/scidb4py/result.py
+index c3795ef..c83c259 100644
+--- a/scidb4py/result.py
++++ b/scidb4py/result.py
+@@ -36,14 +36,9 @@ class Result(object):
+                 dimensions.append(
+                     Dimension(
+                         d.name,
+-                        d.type_id,
+-                        d.flags,
+                         d.start_min,
+                         d.end_max,
+-                        d.chunk_interval,
+-                        d.mapping_array_name,
+-                        d.coordinates_mapping_size,
+-                        d.coordinates_mapping
++                        d.chunk_interval
+                     )
+                 )
+             self._schema = Schema(array_name, attributes, dimensions)
+diff --git a/scidb4py/schema.py b/scidb4py/schema.py
+index b4a03d7..bf66673 100644
+--- a/scidb4py/schema.py
++++ b/scidb4py/schema.py
+@@ -15,6 +15,7 @@ Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ Copyright (c) 2013, Artyom Smirnov <artyom_smirnov@icloud.com>
+ """
+ 
++from types import TID_INT64
+ 
+ class Attribute(object):
+     def __init__(self, att_id, name, type_id, flags):
+@@ -74,21 +75,15 @@ class Attribute(object):
+ 
+ 
+ class Dimension(object):
+-    def __init__(self, name, type_id, flags, start, end, chunk_interval,
+-                 mapping_array_name=None, coordinates_mapping_size=0, coordinates_mapping=None):
++    def __init__(self, name, start, end, chunk_interval):
+         """
+         :param name: Dimension name
+         :param type_id: Dimension type
+         """
+         self._name = name
+-        self._type_id = type_id
+-        self._flags = flags
+         self._start = start
+         self._end = end
+         self._chunk_interval = chunk_interval
+-        self._mapping_array_name = mapping_array_name
+-        self._coordinates_mapping_size = coordinates_mapping_size
+-        self._coordinates_mapping = coordinates_mapping
+ 
+     @property
+     def name(self):
+@@ -108,11 +103,7 @@ class Dimension(object):
+         :rtype : str
+         :return: dimension type
+         """
+-        return self._type_id
+-
+-    @property
+-    def flags(self):
+-        return self._flags
++        return TID_INT64
+ 
+     @property
+     def start(self):
+@@ -126,18 +117,6 @@ class Dimension(object):
+     def chunk_interval(self):
+         return self._chunk_interval
+ 
+-    @property
+-    def mapping_array_name(self):
+-        return self._mapping_array_name
+-
+-    @property
+-    def coordinates_mapping_size(self):
+-        return self._coordinates_mapping_size
+-
+-    @property
+-    def coordinates_mapping(self):
+-        return self._coordinates_mapping
+-
+     def __str__(self):
+         return self.name + '(' + self.type + ')'
+ 

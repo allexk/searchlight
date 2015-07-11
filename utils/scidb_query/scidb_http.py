@@ -251,10 +251,12 @@ def _main():
                     else:
                         need_result = True
                     if '%upload%' in command:
-                        command = command.replace('%upload%', "'%s'" % uploaded_files[-1])
+                        command = command.replace('%upload%', "%s" % uploaded_files[-1])
                     query_id = scidb.query(command, need_result)
                     query_ids.append(query_id)
                 elif action == 'query_int':
+                    if '%upload%' in command:
+                        command = command.replace('%upload%', "%s" % uploaded_files[-1])
                     res_array = scidb.query_interactive(command)
                     for pos, val in res_array:
                         # in this example assume single coordinate/attribute
