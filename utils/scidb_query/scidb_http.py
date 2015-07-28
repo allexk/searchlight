@@ -18,6 +18,7 @@ import subprocess
 import requests
 from requests.auth import HTTPDigestAuth
 from scidb4py import Connection as SciDBBinaryConnection
+from scidb4py import InternalError as SciDBBinaryInternalError
 
 
 class SciDBConnection(object):
@@ -103,14 +104,30 @@ class SciDBConnection(object):
         Returns:
             result array that can be iterated over(see scidb4py)
         """
-        if not self.session_id():
-            raise RuntimeError('Cannot query SciDB without connecting first')
         self._binary_connection = SciDBBinaryConnection(self._host)
         print "Connecting to SciDB via binary on port 1239..."
         self._binary_connection.open()
         print "Executing query '%s' via the binary connection..." % query_str
         res_array = self._binary_connection.execute(query_str, afl=True)
         return res_array
+
+    def cancel_query(self):
+        """Cancels current query associated either with this connection.
+
+        This function will first try to cancel the binary connection query. Then, it will cancel
+        the HTTP connection (session) query as well.
+        """
+        if self._binary_connection:
+            try:
+                print 'Cancelling binary connection query...'
+                self._binary_connection.cancel()
+            except SciDBBinaryInternalError:
+                # No active query probably
+                pass
+        if self.session_id():
+            print 'Cancelling session query...'
+            self._get('/cancel', {})
+        print 'Done.'
 
     def get_result(self, query_id):
         """Retrieve result for a previously executed query.
@@ -136,20 +153,19 @@ class SciDBConnection(object):
 
         If no session is open, do nothing.
         """
-        if not self.session_id():
-            return
         if self._binary_connection:
             print 'Closing SciDB binary connection...'
             self._binary_connection.close()
             self._binary_connection = None
-        print 'Closing SciDB session %s...' % self.session_id()
-        try:
-            self._get('/release_session', {})
-        except requests.HTTPError:
-            # for some errors SciDB cleans up the session itself
-            pass
+        if self.session_id():
+            print 'Closing SciDB session %s...' % self.session_id()
+            try:
+                self._get('/release_session', {})
+            except requests.HTTPError:
+                # for some errors SciDB cleans up the session itself
+                pass
+            self._session.params.pop('id')
         print 'Success'
-        self._session.params.pop('id')
 
     def upload(self, file_path):
         """Upload a file to SciDB.
@@ -213,7 +229,7 @@ def _main():
     opts = parser.parse_args()
 
     # figure our the host
-    if '.' in opts.host:
+    if '.' in opts.host or opts.host == 'localhost':
         host = opts.host
     else:
         try:
@@ -230,7 +246,7 @@ def _main():
             scidb_name = scidb_name.split('.', 1)[0]
         password_path = os.path.join(opts.db_path, scidb_name, 'scidb_shim_password.txt')
     # read the password
-    with open(password_path, 'r') as password_file:
+    with open(password_path, 'rb') as password_file:
         password = password_file.read().strip()
 
     # connect

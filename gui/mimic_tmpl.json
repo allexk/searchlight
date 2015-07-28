@@ -1,0 +1,85 @@
+{
+    "searchlight": {
+        "sl": {
+            "max_probes": 1000,
+            "probes_percentage": 0.1,
+            "splits": 100,
+            "probe_submit": 0,
+            "interval_penalty": 0.5,
+
+            "time_strategy": "fin",
+            "time_interval": 300,
+            "restarts": 0,
+
+            "luby_scale": 0,
+
+            "fails_restart_probes": 1000,
+            "fails_restart_thr": -1,
+
+            "val_sync": 0
+        },
+
+        "validator": {
+            "max_validations": 1000000,
+            "restart_period": 1024,
+            "send_info_period": 1000,
+            "max_helpers": 0,
+            "helper_workload": 100,
+            "zones": 2,
+            "low_watermark": 500,
+            "high_watermark": 1000,
+            "rebal_watermark": 10000
+        },
+
+        "sampler": {
+            "preload": 1,
+            "memory_per_attr": 1024,
+            "cell_thr": 0.75,
+            "mbr_thr": 0.75,
+            "cell_limit": 1000
+        },
+
+        "load_aux_samples": 0,
+        "dynamic_scheduling": 1
+    },
+
+    "balance": {
+        "solver_balance": 1,
+        "validator_balance": "stripes",
+        "map_update_frequency": 0,
+        "general_low": 0.1,
+        "general_high": 0.5,
+        "slices_number": 100,
+        "load_slices": 1
+    },
+
+    "setup": {
+        "solvers": {"0": 3, "1": 3, "2": 3, "3": 3},
+        "validators": [0, 1, 2, 3]
+    },
+
+    "mimic": {
+        "l_id": 0,
+        "u_id": 7,
+        "l_time": 0,
+        "u_time": 23000000,
+        "avg_l": 10,
+        "avg_u": 50,
+        "len_l": 1000,
+        "len_u": 1000,
+        "step_len": 1,
+        "step_time": 10,
+
+        "signal": "ABP",
+
+        "neighborhood": {
+            "l_size": 1000,
+            "r_size": 1000,
+            "left_max_diff": 10,
+            "right_max_diff": 10
+        },
+
+        "db": "sl",
+        "time_limit": 3600
+    }
+}
