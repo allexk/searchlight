@@ -84,14 +84,17 @@ set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
 foreach (lib IN LISTS ORTOOLS_LIBRARIES GFLAGS_LIBRARIES COIN_LIBRARIES)
     get_filename_component(lib_path ${lib} PATH)
     get_filename_component(lib_name ${lib} NAME)
-    list(FIND CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES ${lib_path} is_system_dir)
-    if (is_system_dir EQUAL -1)
-        # A little bit of cheating: since these libraries are not handled
-        # by CMake, we need to copy the corresponding symlink .so.* files
-        # for the dynamic linker. We do it by simple GLOBing.
-        file(GLOB lib_files_all "${lib}*")
-        install(FILES ${lib_files_all} DESTINATION ${SL_LIB_DIR}/sl-aux)
-        message(STATUS "Library ${lib_name} will be installed to the SciDB plugins directory...")
+    get_filename_component(lib_ext ${lib} EXT)
+    if (NOT lib_ext STREQUAL ".a") # Don't install static libs
+        list(FIND CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES ${lib_path} is_system_dir)
+        if (is_system_dir EQUAL -1)
+            # A little bit of cheating: since these libraries are not handled
+            # by CMake, we need to copy the corresponding symlink .so.* files
+            # for the dynamic linker. We do it by simple GLOBing.
+            file(GLOB lib_files_all "${lib}*")
+            install(FILES ${lib_files_all} DESTINATION ${SL_LIB_DIR}/sl-aux)
+            message(STATUS "Library ${lib_name} will be installed to the SciDB plugins directory...")
+        endif()
     endif()
 endforeach()
 

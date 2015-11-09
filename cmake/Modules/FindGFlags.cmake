@@ -21,7 +21,7 @@ if (NOT GFLAGS_DIR)
 endif()
 message(STATUS "Using ${GFLAGS_DIR} as the gflags hint directory...")
 
-# find includes and libraries
+# find includes and libraries (prefer static, but cannot do due to the gflags -fPIC issue)
 find_path(GFLAGS_INCLUDE_DIR gflags/gflags.h HINTS ${GFLAGS_DIR}/include DOC "gflags include directory")
 find_library(GFLAGS_LIBRARY gflags HINTS ${GFLAGS_DIR}/lib DOC "gflags library")
 mark_as_advanced(GFLAGS_LIBRARY GFLAGS_INCLUDE_DIR)

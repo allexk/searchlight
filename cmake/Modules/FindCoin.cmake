@@ -22,10 +22,10 @@ if (NOT COIN_DIR)
 endif()
 message(STATUS "Using ${COIN_DIR} as the coin hint directory...")
 
-# find includes and libraries
+# find includes and libraries (prefer static)
 find_path(COIN_INCLUDE_DIR coin/CbcConfig.h HINTS ${COIN_DIR}/include DOC "coin include directory")
-find_library(COIN_UTIL_LIBRARY CoinUtils HINTS ${COIN_DIR}/lib DOC "coin utils library")
-find_library(COIN_LP_LIBRARY Clp HINTS ${COIN_DIR}/lib DOC "coin clp library")
+find_library(COIN_UTIL_LIBRARY libCoinUtils.a CoinUtils HINTS ${COIN_DIR}/lib DOC "coin utils library")
+find_library(COIN_LP_LIBRARY libClp.a Clp HINTS ${COIN_DIR}/lib DOC "coin clp library")
 mark_as_advanced(COIN_UTIL_LIBRARY COIN_LP_LIBRARY COIN_INCLUDE_DIR)
 
 # standard handling
