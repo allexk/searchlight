@@ -219,6 +219,96 @@ IntervalValue Adapter::GetElement(const Coordinates &point,
     return res;
 }
 
+IntervalValue Adapter::SqDist(const Coordinates &low, const Coordinates &high,
+		size_t int_dim,
+		AttributeID attr,
+		const std::vector<DoubleVector> &query_points,
+		const DoubleVector &query_seq) const {
+	// Tracing
+    if (logger->isTraceEnabled()) {
+        std::ostringstream deb_str;
+        deb_str << "Square distance: Points: ";
+        for (size_t i = 0; i < query_points.size(); ++i) {
+            deb_str << "\n\t(" << i << "): ";
+			std::copy(query_points[i].begin(), query_points[i].end(),
+					std::ostream_iterator<double>(deb_str, ", "));
+        }
+        deb_str << "\nLow: ";
+        std::copy(low.begin(), low.end(),
+                std::ostream_iterator<Coordinate>(deb_str, ", "));
+        deb_str << " High: ";
+        std::copy(high.begin(), high.end(),
+                std::ostream_iterator<Coordinate>(deb_str, ", "));
+        deb_str << " Attr: " << attr;
+        deb_str << " Mode: " << mode_;
+
+        logger->trace(deb_str.str(), LOG4CXX_LOCATION);
+    }
+
+    // Simulation stats
+    if (stats_enabled_) {
+        UpdateStatsWithRegion(low, high);
+    }
+    // starting the timer
+    const auto req_start_time = std::chrono::steady_clock::now();
+
+    IntervalValue res; // NULL
+    if (mode_ == EXACT) {
+        // First, resolve the attribute
+        AttributeID real_attr_id = array_desc_.GetArrayAttrributeID(attr);
+        // Compute
+        const ArrayAccess &array = array_desc_.GetAccessor();
+        double dist;
+        const bool success = array.SqDistance(low, high, int_dim, real_attr_id,
+        		query_seq, dist);
+        if (success) {
+        	res.state_ = IntervalValue::NON_NULL;
+        	res.min_ = res.max_ = res.val_ = dist;
+        }
+    } else if (mode_ == APPROX || mode_ == INTERVAL) {
+        const Sampler &sampler = array_desc_.GetSampler();
+        res.min_ = 0;
+        res.max_ = std::numeric_limits<double>::max();
+        for (const auto &point: query_points) {
+        	const IntervalValue point_res = sampler.SqDist(attr, low[int_dim],
+        			high[int_dim], point);
+        	if (point_res.state_ == IntervalValue::NUL) {
+        		res.state_ = IntervalValue::NUL;
+        		break;
+        	}
+        	// Non-NULL result; sample guarantees proper min_
+        	res.state_ = IntervalValue::NON_NULL;
+        	res.min_ += point_res.min_;
+        }
+        if (mode_ == APPROX) {
+            res.val_ = res.max_ = res.min_;
+            if (res.state_ == IntervalValue::MAY_NULL) {
+                // TODO: make the choice with some probability returned in res?
+                res.state_ = IntervalValue::NON_NULL;
+            }
+        }
+    } else if (mode_ == DUMB) {
+        // We are being dumb: (0; +inf) and it may be NULL
+        res.min_ = 0;
+        res.max_ = std::numeric_limits<double>::max();
+        res.state_ = IntervalValue::NON_NULL;
+        res.val_ = 0;
+    } else {
+        // cannot happen
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << "Unknown adapter mode!";
+    }
+
+    // "stopping" the timer
+    const auto req_end_time = std::chrono::steady_clock::now();
+    total_req_time_ += std::chrono::duration_cast<decltype(total_req_time_)>(
+            req_end_time - req_start_time);
+
+    LOG4CXX_TRACE(logger, "Computed square distance: " << res);
+
+    return res;
+}
+
 std::ostream &operator<<(std::ostream &os, const IntervalValue &iv) {
     if (iv.state_ == IntervalValue::NUL) {
         os << "(NULL)";

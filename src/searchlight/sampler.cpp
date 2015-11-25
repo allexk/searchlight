@@ -476,6 +476,261 @@ private:
     bool not_null_, null_;
 };
 
+Sampler::DFTSynopsis::DFTSynopsis(const ArrayDesc &data_desc,
+        const ArrayPtr &array) : synopsis_array_(array) {
+    // Array descriptor
+    const ArrayDesc &synopsis_desc = array->getArrayDesc();
+    // By convenience we store sizes in the name after the last '_'
+    const std::string &synopsis_config =
+            ArrayDesc::makeUnversionedName(synopsis_desc.getName());
+    cell_size_ = std::stoul(ParseArrayParamsFromName(synopsis_config).back());
+
+    // First dimension is trace MBRs: parse synopsis shape from there
+    const DimensionDesc &data_dim = data_desc.getDimensions()[0];
+    /*
+     * Cannot use low/high boundary, since SciDB aligns them by the
+     * chunk, so high_boundary might not be equal to current_end.
+     *
+     * See trim() in ArrayDesc for unbounded arrays.
+     *
+     * Use StartMin() here since it determines the total left boundary,
+     * which we need for proper origin.
+     */
+    synopsis_origin_ = data_dim.getStartMin();
+    synopsis_end_ = data_dim.getCurrEnd();
+    // Number of cells (cell sizes are read from the array's name)
+    const uint64_t curr_length = synopsis_end_ - synopsis_origin_ + 1;
+    cell_num_ = (curr_length - 1) / cell_size_ + 1;
+    // Synopsis correctness checking
+    const DimensionDesc &syn_dim = synopsis_desc.getDimensions()[0];
+    if (syn_dim.getStartMin() != 0) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << "Synopsis coordinates must start from 0";
+    }
+    if (syn_dim.getCurrEnd() + 1 < cell_num_) { // StartMin() == 0
+        std::ostringstream err_msg;
+        err_msg << "Synopsis must have at least "
+                << cell_num_ << "cells"
+                << " in the dimension " << syn_dim.getBaseName();
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << err_msg.str();
+    }
+
+    // Synopsis chunks info
+    chunk_size_ = syn_dim.getChunkInterval();
+    chunk_num_ = syn_dim.getCurrEnd() / chunk_size_ + 1;
+
+    // The second synopsis array dimension is the DFT coordinates
+    const DimensionDesc &dft_dim = synopsis_desc.getDimensions()[1];
+    if (dft_dim.getStartMin() != 0) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << "Synopsis coordinates must start from 0";
+    }
+    dft_num_ = dft_dim.getCurrEnd() + 1;
+
+    // Determine low/high attributes
+    const Attributes &attrs = synopsis_desc.getAttributes(true);
+    if (!SearchArrayDesc::FindAttributeId(attrs, std::string("low"), low_id_) ||
+        !SearchArrayDesc::FindAttributeId(attrs, std::string("high"), high_id_)) {
+        std::ostringstream err_msg;
+        err_msg << "Cannot find low/high attribute in the sample: sample="
+                << synopsis_desc.getName();
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << err_msg.str();
+    }
+}
+
+void Sampler::DFTSynopsis::SetCacheType(CachingType mode) {
+    cache_type_ = mode;
+    if (mode == CachingType::EAGER) {
+        /*
+         * Create the entire cell cache right now to simplify concurrency
+         * later. The cells are invalid and will be loaded from the synopsis
+         * later in lazy fashion.
+         */
+        chunks_ = Chunks({true});
+        chunks_[0].cells_ = DFTCells(cell_num_);
+    } else if (mode == CachingType::LAZY) {
+        /*
+         * Reserve space for array chunks. All chunks are invalid at the
+         * beginning.
+         */
+        chunks_ = Chunks(chunk_num_);
+    } else {
+        chunks_ = Chunks(); // make it empty
+    }
+}
+
+void Sampler::DFTSynopsis::Preload() {
+    if (cache_type_ != CachingType::EAGER) {
+        LOG4CXX_WARN(logger, "Attempting to preload non-eager synopsis.");
+        return;
+    }
+
+    // DFT synopsis is linear
+    AccessContext ctx;
+    for (size_t pos = 0; pos < cell_num_; ++pos) {
+    	GetCell(pos, ctx);
+    }
+    preloaded_ = true;
+}
+
+Sampler::DFTCell &Sampler::DFTSynopsis::GetCell(size_t cell_id,
+		AccessContext &ctx) {
+    if (cache_type_ == CachingType::EAGER) {
+        assert(chunks_.size() == 1 && cell_id < chunks_[0].cells_.size());
+        DFTCell &cell = chunks_[0].cells_[cell_id];
+
+        // Load cell if needed (cannot check validity here -- concurrency issues)
+        if (!preloaded_) {
+            /*
+             * Need a lock here. For efficiency reasons this has been
+             * implemented as a double-checked locking with fences and atomics.
+             *
+             * This used to be a separate function, but later it was inlined
+             * to avoid a huge overhead on non-preloaded synopses. This is a
+             * critical code path!
+             */
+            bool valid = cell.valid_.load(std::memory_order_acquire);
+            if (!valid) {
+                std::lock_guard<std::mutex> lock{mtx_};
+                valid = cell.valid_.load(std::memory_order_relaxed);
+                if (!valid) {
+                    FillCellFromArray(cell_id, ctx.iters_, cell);
+                    cell.valid_.store(true, std::memory_order_release);
+                }
+            }
+        }
+        assert(cell.valid_);
+        return cell;
+    } else if (cache_type_ == CachingType::LAZY) {
+        // Determine position
+    	const Coordinate chunk_pos = cell_id - cell_id % chunk_size_;
+    	const size_t chunk_linear_pos = chunk_pos / chunk_size_;
+        DFTSynopsisChunk &chunk = chunks_[chunk_linear_pos];
+
+        // Fetch (see the double-checked locking comment above)
+        bool valid = chunk.valid_.load(std::memory_order_acquire);
+        if (!valid) {
+            std::lock_guard<std::mutex> lock{mtx_};
+            valid = chunk.valid_.load(std::memory_order_relaxed);
+            if (!valid) {
+                LOG4CXX_DEBUG(logger, "Lazy-loading chunk " << chunk_linear_pos);
+                for (size_t i = 0; i < chunk_size_; ++i) {
+                	DFTCell &cell = chunk.cells_[i];
+                	FillCellFromArray(chunk_pos + i, ctx.iters_, cell);
+                	// Relaxed store is fine -- everything is locked
+                	cell.valid_.store(true, std::memory_order_relaxed);
+                }
+                chunk.valid_.store(true, std::memory_order_release);
+            }
+        }
+
+        // The resulting cell
+        assert(chunk.cells_[cell_id - chunk_pos].valid_);
+        return chunk.cells_[cell_id - chunk_pos];
+    } else {
+        FillCellFromArray(cell_id, ctx.iters_, ctx.cell_);
+        return ctx.cell_;
+    }
+}
+
+void Sampler::DFTSynopsis::CheckBounds(Coordinate point) const {
+	if (point < synopsis_origin_) {
+		point = synopsis_origin_;
+	} else if (point > synopsis_end_) {
+		point = synopsis_end_;
+	}
+}
+
+IntervalValue Sampler::DFTSynopsis::SqDist(Coordinate low, Coordinate high,
+		const DoubleVector &point) {
+	assert(low <= high);
+	CheckBounds(low);
+	CheckBounds(high);
+
+	// Determine start/end MBRs (synopsis cells)
+	const size_t start_cell = (low - synopsis_origin_) / cell_size_;
+	const size_t end_cell = (high - synopsis_origin_) / cell_size_;
+	AccessContext ctx;
+	IntervalValue res;
+	res.min_ = std::numeric_limits<double>::max();
+	for (size_t cell_id = start_cell; cell_id <= end_cell; ++cell_id) {
+		const DFTCell &cell = GetCell(cell_id, ctx);
+		// Check for empty MBR
+		if (!cell.mbr_.low_.empty()) {
+			res.state_ = IntervalValue::NON_NULL;
+			const double min_mbr_dist = cell.mbr_.MinSqDist(point);
+			if (min_mbr_dist < res.min_) {
+				res.min_ = min_mbr_dist;
+			}
+		}
+	}
+	return res;
+}
+
+void Sampler::DFTSynopsis::FillCellFromArray(size_t pos,
+        ArrayIterators &iters, DFTCell &cell) const {
+
+    // Init iterators (first time only)
+    if (!iters.low_it_) {
+        InitIterators(iters);
+    }
+
+    Coordinates syn_pos({Coordinate(pos), 0});
+    if (iters.low_it_->setPosition(syn_pos) && !iters.low_it_->isEmpty()) {
+    	cell.mbr_.low_.resize(dft_num_);
+    	cell.mbr_.high_.resize(dft_num_);
+    	for (size_t i = 0; i < dft_num_; ++i) {
+    		syn_pos[1] = i;
+			// should be a non-empty chunk for sure
+			if (!iters.low_it_->setPosition(syn_pos) ||
+					!iters.high_it_->setPosition(syn_pos)) {
+				std::ostringstream err_msg;
+				err_msg << "Cannot get info from synopsis, pos=(";
+				std::copy(syn_pos.begin(), syn_pos.end(),
+						std::ostream_iterator<Coordinate>(err_msg, ", "));
+				err_msg << ")";
+
+				throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+						SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
+			}
+			cell.mbr_.low_[i] = iters.low_it_->getItem().getDouble();
+			cell.mbr_.high_[i] = iters.high_it_->getItem().getDouble();
+    	}
+    }
+}
+
+void Sampler::DFTSynopsis::InitIterators(ArrayIterators &iters) const {
+    /*
+     * One thing to consider here. Creating item iterator results in
+     * fetching the first array chunk, which might create a small performance
+     * penalty. Another solution is to use array iterators and create
+     * chunk iterators when fetching a synopsis cell (see commented code
+     * for the FillCell... function).
+     */
+    iters.low_it_ = synopsis_array_->getItemIterator(low_id_);
+    iters.high_it_ = synopsis_array_->getItemIterator(high_id_);
+}
+
+size_t Sampler::DFTSynopsis::ComputeMemoryFootprint() const {
+    if (cache_type_ == CachingType::EAGER) {
+        return cell_num_ * sizeof(DFTCell) + sizeof(DFTSynopsisChunk);
+    } else if (cache_type_ == CachingType::LAZY) {
+        size_t res = chunk_num_ * sizeof(DFTSynopsisChunk);
+        // Count valid chunks' cells.
+        for (const auto &c: chunks_) {
+            if (c.valid_.load(std::memory_order_relaxed)) {
+                res += c.cells_.size() * sizeof(DFTCell);
+            }
+        }
+        return res;
+    } else {
+        // None
+        return 0;
+    }
+}
+
 Sampler::Synopsis::Synopsis(const ArrayDesc &data_desc,
         const ArrayPtr &array) : synopsis_array_(array) {
     // Array descriptor
@@ -915,11 +1170,58 @@ StringVector Sampler::ParseArrayParamsFromName(
     return res;
 }
 
+template<class T>
+void Sampler::PrepareSynopses(std::vector<T> &synopses,
+		CachingType cache_type, bool preload, size_t mem_limit,
+		const std::string &attr_name, AttributeID attr_search_id) {
+	// First, sort synopses by their cell sizes
+    std::stable_sort(synopses.begin(), synopses.end(),
+            [](const T &s1, const T &s2) {
+        return s1->GetCellSize() > s2->GetCellSize();
+    });
+
+    // Then set cache type and preload
+	for (const auto &syn: synopses) {
+		const size_t syn_mem_mb = syn->MemorySize() / 1024 / 1024; // in MB
+		if (syn_mem_mb <= mem_limit) {
+			// Cache the synopsis
+			syn->SetCacheType(cache_type);
+			// .. and preload it if needed
+			if (preload) {
+				LOG4CXX_INFO(logger, "Preloading synopsis: "<< syn->GetName());
+				syn->Preload();
+			}
+			mem_limit -= syn_mem_mb;
+		} else {
+			break;
+		}
+	}
+
+    // Warn about performance problems...
+    if (!synopses.front()->IsCached()) {
+        LOG4CXX_WARN(logger, "No synopses are cached for attribute "
+                << attr_name << "(" << attr_search_id << ")");
+    }
+
+    // Debug printing
+    if (logger->isDebugEnabled()) {
+        std::ostringstream msg;
+        msg << "Synopses loaded for attribute " << attr_name
+                << '(' << attr_search_id << "): ";
+        for (const auto &syn: synopses) {
+            msg << syn->GetName() << "(cached: " << int(syn->GetCachingType())
+                    << "), ";
+        }
+        logger->debug(msg.str());
+    }
+}
+
 void Sampler::LoadSampleForAttribute(const std::string &attr_name,
         AttributeID attr_search_id) {
     // Add a new vector of synopses if needed
     if (attr_search_id + 1 > synopses_.size()) {
         synopses_.resize(attr_search_id + 1);
+        dft_synopses_.resize(attr_search_id + 1);
     }
 
     // If we have loaded something for the attribute, ignore
@@ -930,73 +1232,48 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
 
     // See what we have for the attribute
     const auto &synops = array_synopses_[attr_name];
+    auto &loaded_dft_synopses = dft_synopses_[attr_search_id];
     for (const auto &syn: synops) {
-        loaded_synopses.emplace_back(new Synopsis{data_desc_, syn});
+    	// Determine if we're loading a DFT synopsis: they start as "dft_"
+        const std::string &syn_name =
+                ArrayDesc::makeUnversionedName(syn->getName());
+    	if (ParseArrayParamsFromName(syn_name)[0] == "dft") {
+    		loaded_dft_synopses.emplace_back(new DFTSynopsis{data_desc_, syn});
+    	} else {
+    		loaded_synopses.emplace_back(new Synopsis{data_desc_, syn});
+    	}
     }
 
     // Cache type
     const std::string cache_type_string =
             sl_config_.get("searchlight.sampler.cache", "eager");
-    Synopsis::CachingType cache_type = Synopsis::CachingType::NONE;
+    CachingType cache_type = CachingType::NONE;
     if (cache_type_string == "eager") {
-        cache_type = Synopsis::CachingType::EAGER;
+        cache_type = CachingType::EAGER;
     } else if (cache_type_string == "lazy") {
-        cache_type = Synopsis::CachingType::LAZY;
+        cache_type = CachingType::LAZY;
     } else {
         LOG4CXX_WARN(logger, "Unknown cache type: " << cache_type_string);
     }
 
+	// Are we preloading synopses?
+    const bool preload_syns =
+			sl_config_.get("searchlight.sampler.preload", 0);
+
+    // Set cache type and preload aggregate synopses
     if (!loaded_synopses.empty()) {
-        /*
-         *  Sort the vector of synopses by the cell size, preserving user's
-         *  ordering for synopses of the same cell size.
-         */
-        std::stable_sort(loaded_synopses.begin(), loaded_synopses.end(),
-                [](const SynopsisPtr &s1, const SynopsisPtr &s2) {
-            return s1->GetCellSize() > s2->GetCellSize();
-        });
+		const size_t memory_limit_mb =
+				sl_config_.get("searchlight.sampler.memory_per_attr", 1024);
+    	PrepareSynopses(loaded_synopses, cache_type, preload_syns,
+    			memory_limit_mb, attr_name, attr_search_id);
+    }
 
-        // Enable caching for some of the synopses
-        if (cache_type != Synopsis::CachingType::NONE) {
-            size_t memory_limit_mb =
-                    sl_config_.get("searchlight.sampler.memory_per_attr", 1024);
-            const bool preload_syns =
-                    sl_config_.get("searchlight.sampler.preload", 0);
-            for (const auto &syn: loaded_synopses) {
-                const size_t syn_mem_mb = syn->MemorySize() / 1024 / 1024; // in MB
-                if (syn_mem_mb <= memory_limit_mb) {
-                    // Cache the synopsis
-                    syn->SetCacheType(cache_type);
-                    // .. and preload it if needed
-                    if (preload_syns) {
-                        LOG4CXX_INFO(logger, "Preloading synopsis: "
-                                << syn->GetName());
-                        syn->Preload();
-                    }
-                    memory_limit_mb -= syn_mem_mb;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        // Warn about performance problems...
-        if (!loaded_synopses.front()->IsCached()) {
-            LOG4CXX_WARN(logger, "No synopses are cached for attribute "
-                    << attr_name << "(" << attr_search_id << ")");
-        }
-
-        // Debug printing
-        if (logger->isDebugEnabled()) {
-            std::ostringstream msg;
-            msg << "Synopses loaded for attribute " << attr_name
-                    << '(' << attr_search_id << "): ";
-            for (const auto &syn: loaded_synopses) {
-                msg << syn->GetName() << "(cached: " << int(syn->GetCachingType())
-                        << "), ";
-            }
-            logger->debug(msg.str());
-        }
+    // Set cache type and preload for DFT synopses
+    if (!loaded_dft_synopses.empty()) {
+		const size_t memory_limit_mb =
+				sl_config_.get("searchlight.sampler.memory_per_attr_dft", 1024);
+    	PrepareSynopses(loaded_dft_synopses, cache_type, preload_syns,
+    			memory_limit_mb, attr_name, attr_search_id);
     }
 }
 
@@ -1246,5 +1523,13 @@ IntervalValue Sampler::GetElement(const Coordinates &point,
     assert(!synopses_[attr].empty());
     const auto &syn = synopses_[attr][0];
     return syn->GetElement(point);
+}
+
+IntervalValue Sampler::SqDist(AttributeID attr, Coordinate low, Coordinate high,
+		const DoubleVector &point) const {
+    // FIXME: For now we compute distance via the primary sample
+	assert(!dft_synopses_[attr].empty());
+	const auto &syn = dft_synopses_[attr][0];
+	return syn->SqDist(low, high, point);
 }
 } /* namespace searchlight */

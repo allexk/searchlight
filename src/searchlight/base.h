@@ -85,6 +85,11 @@ typedef std::vector<int64_t> Int64Vector;
 typedef std::vector<size_t> SizeVector;
 
 /**
+ * Vector of double values.
+ */
+typedef std::vector<double> DoubleVector;
+
+/**
  * An assignment to a variable.
  *
  * It is called "lite" to contrast the full-feature or-tools Assignment,

@@ -79,8 +79,10 @@ TypedValueVector ArrayAccess::ComputeAggreagate(const Coordinates &low,
      *
      * FIXME: Rewrite BetweenArray to use setPosition() instead of ++
      */
-    const BetweenArray region(array_desc_, low, high,
-            data_array_, tile_mode_);
+    scidb::SpatialRangesPtr between_ranges =
+    		boost::make_shared<scidb::SpatialRanges>(low.size());
+    between_ranges->_ranges.push_back(scidb::SpatialRange(low, high));
+    const BetweenArray region(array_desc_, between_ranges, data_array_);
 
     if (tile_mode_) {
         ComputeGeneralAggregateTile(region, attr, aggrs, need_nulls);
@@ -124,10 +126,7 @@ void ArrayAccess::ComputeGeneralAggregateTile(const Array &array,
             if (tile->count()) {
                 for (size_t i = 0; i < aggrs.size(); i++) {
                     SmallAggr &agg = aggrs[i];
-                    if (agg.state_.getMissingReason() == 0) {
-                        agg.agg_->initializeState(agg.state_);
-                    }
-                    agg.agg_->accumulatePayload(agg.state_, tile);
+                    agg.agg_->accumulateIfNeeded(agg.state_, tile);
                 }
             }
             ++(*chunk_iter);
@@ -173,10 +172,7 @@ void ArrayAccess::ComputeGeneralAggregate(const Array &array,
                 SmallAggr &agg = aggrs[i];
                 if (!agg.is_count_ && (agg.needs_nulls_ ||
                         !v.isNull())) {
-                    if (agg.state_.getMissingReason() == 0) {
-                        agg.agg_->initializeState(agg.state_);
-                    }
-                    agg.agg_->accumulate(agg.state_, v);
+                    agg.agg_->accumulateIfNeeded(agg.state_, v);
                 }
             }
             ++(*chunk_iter);
@@ -204,4 +200,35 @@ void ArrayAccess::ComputeGeneralAggregate(const Array &array,
     }
 }
 
+bool ArrayAccess::SqDistance(const Coordinates &low, const Coordinates &high,
+		size_t int_dim, AttributeID attr,
+		const DoubleVector &query_seq, double &res) const {
+	// Interval coordinates
+	const Coordinate low_int = low[int_dim];
+	const Coordinate high_int = high[int_dim];
+	if (low_int > high_int || (high_int - low_int + 1) != query_seq.size()) {
+		return false;
+	}
+    // Iterate through the interval
+	ConstItemIteratorPtr iter = data_array_->getItemIterator(attr, 0);
+    const Type &value_type = TypeLibrary::getType(attrs_[attr].getType());
+    res = 0;
+    Coordinates pos{low};
+    for (Coordinate i = low_int; i <= high_int; ++i) {
+    	pos[int_dim] = i;
+    	if (!iter->setPosition(pos)) {
+    		// Empty element
+    		return false;
+    	}
+		Value &value = iter->getItem();
+		if (value.isNull()) {
+			return false;
+		}
+		// Non-empty and non-NULL
+		const double dval = scidb::ValueToDouble(value_type.typeId(), value);
+    	const double val_diff = query_seq[i] - dval;
+    	res += val_diff * val_diff;
+    }
+    return true;
+}
 } /* namespace searchlight */

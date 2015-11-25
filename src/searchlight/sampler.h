@@ -63,6 +63,16 @@ typedef SampleAggregate *(*SampleAggregateFactory)();
  * TODO: We assume even regions covering the whole array without holes.
  */
 class Sampler {
+private:
+    /**
+     * Type of caching for the synopsis.
+     */
+    enum class CachingType {
+        EAGER, /** All cells are in a linear array, high footprint. */
+        LAZY,  /** All _requested_ chunks are in a set of arrays. */
+        NONE   /** No caching. Each cell is read via array iterators.*/
+    };
+
 public:
     /**
      * Creates a sampler and a catalog of all synopses available.
@@ -154,6 +164,21 @@ public:
     IntervalValue GetElement(const Coordinates &point, AttributeID attr) const;
 
     /**
+     * Compute minimum square distance from the point to interval MBRs.
+     *
+     * Look at all MBRs covering the interval and compute minimal
+     * square distance to the query point.
+     *
+     * @param attr attribute to compute the distance for
+     * @param low low interval boundary
+     * @param high high interval boundary
+     * @param point query point
+     * @return minumum square distance from the interval to the point
+     */
+    IntervalValue SqDist(AttributeID attr, Coordinate low, Coordinate high,
+    		const DoubleVector &point) const;
+
+    /**
      * A region (cell) of the synopsis.
      */
     struct Cell {
@@ -218,7 +243,6 @@ public:
      */
     typedef std::vector<Cell> Cells;
 
-private:
     /**
      * Convenience struct for storing a region: a pair of coordinate vectors.
      */
@@ -260,6 +284,298 @@ private:
     };
 
     /**
+     * Convenience struct for storing a DFT region.
+     */
+    struct DFTRegion {
+        DoubleVector low_, high_;
+
+        /**
+         * Compute minimum square distance from point to this rectangle.
+         *
+         * @param point point coordinates
+         * @return minimum square distance
+         */
+        double MinSqDist(const DoubleVector &point) const {
+        	assert(low_.size() == high_.size());
+        	assert(point.size() == low_.size());
+
+        	double res = 0;
+        	for (size_t i = 0; i < low_.size(); ++i) {
+        		double min_coord_dist = std::max<double>(
+        				point[i] - high_[i], 0);
+        		min_coord_dist = std::max<double>(min_coord_dist,
+        				low_[i] - point[i]);
+        		res += min_coord_dist * min_coord_dist;
+        	}
+        	return res;
+        }
+    };
+
+    /**
+     * DFT synopsis cell.
+     *
+     * Basically DFT trace MBRs with low/high coordinates.
+     */
+    struct DFTCell {
+    	/**
+    	 * MBR covered by cell.
+    	 */
+    	DFTRegion mbr_;
+
+        /**
+         * Cell has been loaded.
+         */
+        std::atomic<bool> valid_{false};
+
+        /**
+         * Copy constructor.
+         *
+         * Needed because of the atomic and usage of this class in a vector.
+         *
+         * @param cell cell to copy from
+         */
+        DFTCell(const DFTCell &cell) :
+        	mbr_(cell.mbr_),
+            valid_(cell.valid_.load(std::memory_order_relaxed)) {}
+
+        /**
+         * Constructs an invalid (default) cell.
+         *
+         * If the cell is invalid, that means it has to be loaded from disk.
+         */
+        DFTCell() {}
+
+    };
+    typedef std::vector<DFTCell> DFTCells;
+
+private:
+
+    /**
+     * This class contains DFT-based synopsis information about a 1d
+     * sequence. The synopsis is 1D. Its cells are actually MBRs of the
+     * corresponding DFT trace subsequences.
+     */
+    class DFTSynopsis : private boost::noncopyable {
+    public:
+        /**
+         * Create a new DFT synopsis.
+         *
+         * No cells are loaded at this point. Only meta-data is initialized.
+         *
+         * @param data_desc data array descriptor
+         * @param array synopsis array
+         */
+        DFTSynopsis(const ArrayDesc &data_desc, const ArrayPtr &array);
+
+        /**
+         * Set caching type for the synopsis.
+         *
+         * @param mode see CachingType
+         */
+        void SetCacheType(CachingType mode);
+
+        /**
+         * Check if this synopsis is cached.
+         *
+         * @return true, if the cells are cached; false, otherwise
+         */
+        bool IsCached() const {
+            return cache_type_ != CachingType::NONE;
+        }
+
+        /**
+         * Return caching type for the synopsis.
+         *
+         * @return synopsis caching type
+         */
+        CachingType GetCachingType() const {
+            return cache_type_;
+        }
+        /**
+         * Returns the cell size of the synopsis.
+         *
+         * @return synopsis cell size
+         */
+        uint64_t GetCellSize() const {
+            return cell_size_;
+        }
+
+        /**
+         * Returns the name of the synopsis.
+         *
+         * The synopsis name equals the name of the underlying array.
+         *
+         * @return synopsis name
+         */
+        const std::string &GetName() const {
+            return synopsis_array_->getName();
+        }
+
+        /**
+         * Preloads this synopsis.
+         *
+         * Preloading should be performed before concurrent access to the
+         * synopsis. If a synopsis is preloaded, threads will not check the
+         * validity of the cells and will use them immediately.
+         *
+         * Since the checking is done via a bool flag, preload must be done
+         * at the initialization phase.
+         */
+        void Preload();
+
+        /**
+         * Return memory size needed to cache all cells of this synopsis.
+         *
+         * @return required cache memory size (in bytes)
+         */
+        size_t MemorySize() const {
+            return sizeof(DFTCell) * cell_num_;
+        }
+
+        /**
+         * Compute minimum square distance from the point to interval MBRs.
+         *
+         * Look at all MBRs covering the interval and compute minimal
+         * square distance to the query point.
+         *
+         * @param low low interval boundary
+         * @param high high interval boundary
+         * @param point query point
+         * @return minumum square distance from the interval to the point
+         */
+        IntervalValue SqDist(Coordinate low, Coordinate high,
+        		const DoubleVector &point);
+
+        /**
+         * Output this synopsis statistics into a stream.
+         *
+         * @param str stream for output
+         */
+        void OutputStats(std::ostream &str) const {
+            str << "Synopsis " << GetName() << ":\n";
+            str << "\tCells accessed: "
+                    << cells_accessed_.load(std::memory_order_relaxed);
+            str << "\n\tMemory footprint (MB): "
+                    << ComputeMemoryFootprint() / 1024 / 1024;
+        }
+
+    private:
+        // Synopsis chunks
+        struct DFTSynopsisChunk {
+            std::atomic<bool> valid_;
+            DFTCells cells_;
+
+            // Default validity constructor
+            DFTSynopsisChunk(bool valid = false) : valid_{valid} {}
+
+            // Copy constructor (needed to copy atomic)
+            DFTSynopsisChunk(const DFTSynopsisChunk &other) :
+                valid_{other.valid_.load(std::memory_order_relaxed)},
+                cells_{other.cells_} {}
+        };
+
+        // Synopsis chunks
+        typedef std::vector<DFTSynopsisChunk> Chunks;
+
+        /**
+         * Contains iterators needed to access the synopsis array.
+         */
+        struct ArrayIterators {
+            ConstItemIteratorPtr low_it_, high_it_;
+        };
+
+        /**
+         * Stores context information for current synopsis accessor.
+         */
+        struct AccessContext {
+            ArrayIterators iters_;
+            DFTCell cell_; // for non-cached synopses
+        };
+
+        /**
+         * Return cell pointed by the iterator.
+         *
+         * The user specifies context, containing additional information
+         * for the reader.
+         *
+         * @param cell_id cell number
+         * @param ctx reader context
+         * @return cell pointed to by the iterator
+         */
+        DFTCell &GetCell(size_t cell_id, AccessContext &ctx);
+
+        /*
+         * Retrieves the synopsis cell from the specified position.
+         */
+        void FillCellFromArray(size_t pos,
+                ArrayIterators &iters, DFTCell &cell) const;
+
+        // Init synopsis iterators.
+        void InitIterators(ArrayIterators &iters) const;
+
+        // Return memory footprint for the synopsis
+        size_t ComputeMemoryFootprint() const;
+
+        // Check if the point inside the managed interval
+        void CheckBounds(Coordinate point) const;
+
+        /*
+         *  Synopsis cache. Usage depends on the caching type:
+         *
+         *  EAGER: there is one entry [0] for all synopsis cells.
+         *  LAZY: entries correspond to synopsis array chunks.
+         */
+        mutable Chunks chunks_;  // Synopsis chunks with linearized cells
+
+        // Do we cache cells in memory?
+        CachingType cache_type_ = CachingType::NONE;
+
+        // Is this synopses preloaded? No cell validation required, if it is.
+        bool preloaded_ = false;
+
+        // Attribute IDs for low/high elements in the synopsis array
+        AttributeID low_id_, high_id_;
+
+        // The sample array
+        const ArrayPtr synopsis_array_;
+
+        // The number of DFT coordinates.
+        uint64_t dft_num_;
+
+        // The size of a cell (trace size covered by MBR)
+        size_t cell_size_;
+
+        // The starting and ending points of the synopsis (original coordinates of the waveform covered)
+        Coordinate synopsis_origin_, synopsis_end_;
+
+        // The number of cells (MBRs)
+        size_t cell_num_;
+
+        // Number of synopsis array chunks (each chunk has chunk_size_ MBRs)
+        size_t chunk_num_;
+
+        // Size of the synopsis array chunks for the waveform
+        size_t chunk_size_;
+
+        // Stats: total number of cell accessed
+        std::atomic<uint64_t> cells_accessed_{0};
+
+        /* To synchronize access during cell loads.
+         *
+         * TODO: Strictly speaking, there is no need to have a single mutex for
+         * multiple consumers loading different cells. Another simple solution
+         * is to have two mutexes, one for even and another for odd cells.
+         * One could even generalize further, e.g., to four mutexes. This way
+         * if consumers load different (modulo) cells, they won't block and
+         * if they load the same cell, one of them will block, which is
+         * the main intention here. Note, in this case each consumer should
+         * have its own copy of the iterators.
+         */
+        mutable std::mutex mtx_;
+    };
+
+
+    /**
      * This class contains all synopsis information about a single attribute
      * of the array. This includes synopsis cells and the corresponding
      * metadata. Different synopses, even for a single attribute,
@@ -267,15 +583,6 @@ private:
      */
     class Synopsis : private boost::noncopyable {
     public:
-        /**
-         * Type of caching for the synopsis.
-         */
-        enum class CachingType {
-            EAGER, /** All cells are in a linear array, high footprint. */
-            LAZY,  /** All _requested_ chunks are in a set of arrays. */
-            NONE   /** No caching. Each cell is read via array iterators.*/
-        };
-
         /**
          * Create a new synopsis.
          *
@@ -640,9 +947,10 @@ private:
     };
 
     /**
-     * Synopsis pointer.
+     * Synopsis pointers.
      */
     using SynopsisPtr = std::unique_ptr<Synopsis>;
+    using DFTSynopsisPtr = std::unique_ptr<DFTSynopsis>;
 
     /*
      *  Iterator over the cells of a region. We assume that cells are
@@ -868,6 +1176,14 @@ private:
      */
     static StringVector ParseArrayParamsFromName(const std::string &array_name);
 
+    /*
+     * Prepares synopses (sorts by cell size, caches, preloads)
+     */
+    template<class T>
+    void PrepareSynopses(std::vector<T> &synopses,
+    		CachingType cache_type, bool preload, size_t mem_limit,
+			const std::string &attr_name, AttributeID attr_search_id);
+
     // Synopses catalog (attr. name --> list of synopsis)
     std::unordered_map<std::string,std::vector<ArrayPtr>> array_synopses_;
 
@@ -877,6 +1193,7 @@ private:
      * size in decreasing order.
      */
     std::vector<std::vector<SynopsisPtr>> synopses_;
+    std::vector<std::vector<DFTSynopsisPtr>> dft_synopses_;
 
     // Descriptor of the data array we store synopses for
     const ArrayDesc data_desc_;

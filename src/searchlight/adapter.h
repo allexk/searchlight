@@ -206,6 +206,35 @@ public:
     IntervalValue GetElement(const Coordinates &point, AttributeID attr) const;
 
     /**
+     * Return square distance from the query sequence to the interval values.
+     *
+     * The value can be approximated by an interval via the DFT sampling with
+     * MBRs, covering traces. The exact value is computed by retrieving array
+     * values belonging to the interval.
+     *
+     * Note, that the query interval might be represented by several points,
+     * which corresponds to dividing the query sequence into several
+     * subsequence. The latter is needed to be able to use DFT sampling --
+     * it can handle only sequences if the specified length.
+     *
+     * The user specifies both the DFT points and the original sequence. The
+     * adapter will choose which to use depending on the mode.
+     *
+     * @param low left interval boundary
+     * @param high right interval boundary
+     * @param int_dim interval dimension among low/high
+     * @param attr attribute for values
+     * @param query_points points corresponding to query_seq
+     * @param query_seq original query sequence
+     * @return square distance from point to interval values
+     */
+    IntervalValue SqDist(const Coordinates &low, const Coordinates &high,
+    		size_t int_dim,
+    		AttributeID attr,
+    		const std::vector<DoubleVector> &query_points,
+			const DoubleVector &query_seq) const;
+
+    /**
      * Enables stats collecting mode.
      *
      * Statistics is collected about all accesses performed during the time
@@ -275,6 +304,7 @@ private:
                 const Coordinate high = dims[i].getCurrEnd();
                 if (region_low_[i] < low) {
                     region_low_[i] = low;
+                    pos_[i] = low;
                 }
                 if (region_high_[i] > high) {
                     region_high_[i] = high;
