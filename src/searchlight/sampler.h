@@ -179,6 +179,28 @@ public:
     		const DoubleVector &point) const;
 
     /**
+     * Return available DFT synopsis sizes.
+     *
+     * When the query sequence is transformed into a DFT point, it is
+     * necessary to know which synopses the sampler has, since each synopsis is
+     * created for the fixed (parameter) size. This function returns available
+     * sizes.
+     *
+     * The sizes are returned only for the specified attribute id
+     *
+     * @param internal attribute id
+     * @return vector of available DFT synopsis sizes
+     */
+    std::vector<size_t> AvailableDFTSizes(AttributeID attr) const {
+    	std::vector<size_t> res;
+    	if (attr < dft_synopses_.size() && !dft_synopses_[attr].empty()) {
+        	// FIXME: For now we use only a single DFT synopsis
+    		res.push_back(dft_synopses_[attr][0]->GetSubsequenceSize());
+    	}
+    	return res;
+    }
+
+    /**
      * A region (cell) of the synopsis.
      */
     struct Cell {
@@ -447,6 +469,14 @@ private:
         		const DoubleVector &point);
 
         /**
+         * Return subsequence size (omega) for this synopsis.
+         * @return synopsis subsequence size
+         */
+        size_t GetSubsequenceSize() const {
+        	return subseq_size_;
+        }
+
+        /**
          * Output this synopsis statistics into a stream.
          *
          * @param str stream for output
@@ -519,6 +549,9 @@ private:
         // Check if the point inside the managed interval
         void CheckBounds(Coordinate point) const;
 
+        // Parse DFT synopsis params from the string
+        void ParseDFTSynopsisParams(const std::string &params);
+
         /*
          *  Synopsis cache. Usage depends on the caching type:
          *
@@ -544,6 +577,9 @@ private:
 
         // The size of a cell (trace size covered by MBR)
         size_t cell_size_;
+
+        // Subsequence size for which DFT coordibnates were computed
+        size_t subseq_size_;
 
         // The starting and ending points of the synopsis (original coordinates of the waveform covered)
         Coordinate synopsis_origin_, synopsis_end_;

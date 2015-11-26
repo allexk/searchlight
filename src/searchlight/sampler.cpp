@@ -483,7 +483,7 @@ Sampler::DFTSynopsis::DFTSynopsis(const ArrayDesc &data_desc,
     // By convenience we store sizes in the name after the last '_'
     const std::string &synopsis_config =
             ArrayDesc::makeUnversionedName(synopsis_desc.getName());
-    cell_size_ = std::stoul(ParseArrayParamsFromName(synopsis_config).back());
+    ParseDFTSynopsisParams(ParseArrayParamsFromName(synopsis_config).back());
 
     // First dimension is trace MBRs: parse synopsis shape from there
     const DimensionDesc &data_dim = data_desc.getDimensions()[0];
@@ -497,7 +497,8 @@ Sampler::DFTSynopsis::DFTSynopsis(const ArrayDesc &data_desc,
      * which we need for proper origin.
      */
     synopsis_origin_ = data_dim.getStartMin();
-    synopsis_end_ = data_dim.getCurrEnd();
+    // Covered sequences must fit exactly, should be careful with synopsis_end_
+    synopsis_end_ = data_dim.getCurrEnd() - cell_size_ + 1;
     // Number of cells (cell sizes are read from the array's name)
     const uint64_t curr_length = synopsis_end_ - synopsis_origin_ + 1;
     cell_num_ = (curr_length - 1) / cell_size_ + 1;
@@ -538,6 +539,30 @@ Sampler::DFTSynopsis::DFTSynopsis(const ArrayDesc &data_desc,
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << err_msg.str();
     }
+}
+
+void Sampler::DFTSynopsis::ParseDFTSynopsisParams(const std::string &params) {
+    typedef boost::tokenizer<boost::char_separator<char>> tokenizer_t;
+    boost::char_separator<char> sep("xX"); // size_1xsize_2x...xsize_n
+    tokenizer_t tokenizer(params, sep);
+
+    // Expecting: AxB, where A is subsequence size and B is MBR size
+    tokenizer_t::const_iterator cit = tokenizer.begin();
+    if (cit == tokenizer.end()) {
+        std::ostringstream err_msg;
+        err_msg << "Cannot parse subsequence size from DFT params: " << params;
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << err_msg.str();
+    }
+    subseq_size_ = boost::lexical_cast<size_t>(cit->c_str());
+    ++cit;
+    if (cit == tokenizer.end()) {
+        std::ostringstream err_msg;
+        err_msg << "Cannot parse MBR size from DFT params: " << params;
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << err_msg.str();
+    }
+    cell_size_ = boost::lexical_cast<size_t>(cit->c_str());
 }
 
 void Sampler::DFTSynopsis::SetCacheType(CachingType mode) {
