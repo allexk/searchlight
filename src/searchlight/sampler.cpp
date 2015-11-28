@@ -35,6 +35,8 @@
 #include <boost/make_shared.hpp>
 #include <boost/tokenizer.hpp>
 
+#include <fftw3.h>
+
 namespace searchlight {
 
 // The logger
@@ -1548,6 +1550,47 @@ IntervalValue Sampler::GetElement(const Coordinates &point,
     assert(!synopses_[attr].empty());
     const auto &syn = synopses_[attr][0];
     return syn->GetElement(point);
+}
+
+void Sampler::ComputeDFTs(const DoubleVector &seq, size_t dft_size,
+		size_t dft_num, DoubleVector &res) {
+	// In out arrays (reusable)
+	double *in = (double *)fftw_malloc(sizeof(double) * dft_size);
+	fftw_complex *out = (fftw_complex *)fftw_malloc(
+			sizeof(fftw_complex) * (dft_size / 2 + 1));
+	fftw_plan p = fftw_plan_dft_r2c_1d(dft_size, in, out, FFTW_ESTIMATE);
+	// Break the sequence and compute DFTs
+	const double sqrt_N = std::sqrt(dft_size);
+	for (size_t i = 0; i + dft_size - 1 < seq.size(); i += dft_size) {
+		// Copy to the planned array
+		memcpy(in, seq.data() + i, sizeof(double) * dft_size);
+		// Perform DFT
+		fftw_execute(p);
+		// Copy to the result
+		for (size_t j = 0; j < dft_num / 2; ++j) {
+			res.push_back(out[j][0] / sqrt_N);
+			res.push_back(out[j][1] / sqrt_N);
+		}
+		if (dft_num % 2 != 0) {
+			res.push_back(out[dft_num / 2][0] / sqrt_N);
+		}
+	}
+	// Cleanup
+	fftw_destroy_plan(p);
+	fftw_free(in);
+	fftw_free(out);
+}
+
+void Sampler::RegisterQuerySequence(AttributeID attr, size_t seq_id,
+		const DoubleVector &seq) {
+	for (const auto &dft_syn: dft_synopses_[attr]) {
+		const size_t dft_size = dft_syn->GetSubsequenceSize();
+		const size_t dft_num = dft_syn->GetDFTNum();
+		const DFTSequenceID cache_id{attr, seq_id, dft_size};
+		auto &cache_seq = dft_seq_cache_[cache_id];
+		cache_seq.reserve(seq.size() / dft_size * dft_num);
+		ComputeDFTs(seq, dft_size, dft_num, cache_seq);
+	}
 }
 
 IntervalValue Sampler::SqDist(AttributeID attr, Coordinate low, Coordinate high,

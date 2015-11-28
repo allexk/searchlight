@@ -158,9 +158,6 @@ private:
     // Sets the bitmap for the chunk and, optionally, fills the bitmap chunk.
     void CheckAndSetBitmapRLE(MemChunk *chunk) const;
 
-    // Fetches a bitmap from the one of the remotes
-    void FetchBitmapFromRemote(const Coordinates &pos) const;
-
     // Check if we already have the chunk in cache.
     bool CheckRemoteCache(const Address &addr) const {
         const auto &cached_chunk = cache_.remote_chunks_.find(addr);
@@ -403,9 +400,6 @@ const ConstChunk &DepartArrayIterator::GetChunk() const {
                     MemChunk *new_chunk = dynamic_cast<MemChunk *>(
                                 &(cache_iter_->newChunk(current_)));
                     assert(new_chunk);
-                    const ConstChunk *bitmap_chunk = new_chunk->getBitmapChunk();
-                    const bool need_bitmap =
-                            bitmap_chunk && bitmap_chunk->getSize() == 0;
                     lock.unlock();
 
                     // get the chunk from messenger
@@ -422,39 +416,12 @@ const ConstChunk &DepartArrayIterator::GetChunk() const {
                         throw;
                     }
 
-                    /*
-                     * Okay, here we want to retrieve the bitmap chunk if our
-                     * new chunk is not RLE (rare). If it's not, it does not
-                     * contain a bitmap attached.
-                     */
-                    if (!new_chunk->isRLE() && need_bitmap) {
-                        try {
-                            /*
-                             *  Fetching bitmap might be interrupted as well.
-                             *  While the corresponding repeat request will
-                             *  be created, we still need to notify this
-                             *  chunk's clients.
-                             *
-                             *  This, however, might result in refetching the
-                             *  current chunk.
-                             */
-                            FetchBitmapFromRemote(current_);
-                        } catch (...) {
-                            LOG4CXX_DEBUG(logger, "Cannot fulfill the current "
-                                  "chunk's bitmap fetch. Another will repeat.");
-                            cache_.repeat_requests_.insert(addr);
-                            cache_.current_requests_.erase(addr);
-                            cache_.cond_.notify_all();
-                            throw;
-                        }
-                    }
-
                     // Working with structures again
                     lock.lock();
-                    if (new_chunk->isRLE() &&
-                            !new_chunk->getAttributeDesc().isEmptyIndicator()) {
+                    if (!new_chunk->getAttributeDesc().isEmptyIndicator()) {
                         CheckAndSetBitmapRLE(new_chunk);
                     }
+
                     /*
                      * Use the cache's (fake) query for writing.
                      *
@@ -473,7 +440,6 @@ const ConstChunk &DepartArrayIterator::GetChunk() const {
 }
 
 void DepartArrayIterator::CheckAndSetBitmapRLE(MemChunk *chunk) const {
-    assert(chunk->isRLE());
     // Removing const from the pointer is safe here
     ConstChunk * const bitmap_chunk =
             const_cast<ConstChunk *>(chunk->getBitmapChunk());
@@ -506,7 +472,6 @@ void DepartArrayIterator::CheckAndSetBitmapRLE(MemChunk *chunk) const {
         mod_bitmap_chunk->pin();
         mod_bitmap_chunk->allocate(bitmap_size);
         bitmap->pack(static_cast<char *>(mod_bitmap_chunk->getDataForLoad()));
-        mod_bitmap_chunk->setRLE(true);
         mod_bitmap_chunk->unPin();
 
         // Create fetch record
@@ -514,16 +479,6 @@ void DepartArrayIterator::CheckAndSetBitmapRLE(MemChunk *chunk) const {
                 Address(bitmap_chunk->getAttributeDesc().getId(),
                         bitmap_chunk->getFirstPosition(false)),
                 true);
-    }
-}
-
-void DepartArrayIterator::FetchBitmapFromRemote(const Coordinates &pos) const {
-    const AttributeDesc *empty_attr = array_.desc.getEmptyBitmapAttribute();
-    if (empty_attr) {
-        auto iter = array_.getConstIterator(empty_attr->getId());
-        if (iter->setPosition(pos)) {
-            iter->getChunk();
-        }
     }
 }
 

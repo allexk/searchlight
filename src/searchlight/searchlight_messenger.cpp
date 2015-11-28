@@ -551,16 +551,13 @@ void SearchlightMessenger::HandleSLChunkRequest(
     if (attach_binary) {
         const ConstChunk &chunk = array_iter->getChunk();
         boost::shared_ptr<ConstRLEEmptyBitmap> empty_bitmap;
-        if (chunk.isRLE() &&
-                array->getArrayDesc().getEmptyBitmapAttribute() &&
+        if (array->getArrayDesc().getEmptyBitmapAttribute() &&
                 !chunk.getAttributeDesc().isEmptyIndicator()) {
             empty_bitmap = chunk.getEmptyBitmap();
         }
         chunk.compress(*buffer, empty_bitmap);
         empty_bitmap.reset(); // apparently, reset() is mandatory here (bug?)
 
-        reply->set_sparse(chunk.isSparse());
-        reply->set_rle(chunk.isRLE());
         reply->set_compression_method(buffer->getCompressionMethod());
         reply->set_decompressed_size(buffer->getDecompressedSize());
         reply->set_count(chunk.isCountKnown() ? chunk.count() : 0);
@@ -572,7 +569,7 @@ void SearchlightMessenger::HandleSLChunkRequest(
 
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
-    network_manager->sendMessage(msg_desc->getSourceInstanceID(), msg);
+    network_manager->sendPhysical(msg_desc->getSourceInstanceID(), msg);
     query_ctx->stats_.msgs_sent_++;
 }
 
@@ -616,11 +613,8 @@ void SearchlightMessenger::HandleSLChunk(
 
         Chunk *chunk = chunk_req->chunk_;
 
-        chunk->setSparse(record->sparse());
-        chunk->setRLE(record->rle());
         chunk->decompress(*compressed_buffer);
         chunk->setCount(record->count());
-        assert(checkChunkMagic(*chunk));
         /*
          *  Note, we do not call chunk->write() here, since the caller might
          *  want to do something else. write() might cause unpin() for some
@@ -713,7 +707,7 @@ void SearchlightMessenger::SendSolution(const boost::shared_ptr<Query> &query,
 
     // determine the coordinator
     const InstanceID coord_id = query->getCoordinatorID();
-    if (coord_id == scidb::COORDINATOR_INSTANCE) {
+    if (coord_id == scidb::INVALID_INSTANCE) {
         LOG4CXX_ERROR(logger, "Attempting to send a solution"
                 "from the coordinator");
         return;
@@ -747,7 +741,7 @@ void SearchlightMessenger::ReportIdleSolver(
         const boost::shared_ptr<Query> &query, uint64_t solver_id) const {
     // determine the coordinator
     const InstanceID coord_id = query->getCoordinatorID();
-    if (coord_id == scidb::COORDINATOR_INSTANCE) {
+    if (coord_id == scidb::INVALID_INSTANCE) {
         LOG4CXX_ERROR(logger, "Attempting to report idle coordinator");
         return;
     }
@@ -780,7 +774,7 @@ void SearchlightMessenger::ReportFinValidator(
         const boost::shared_ptr<Query> &query) const {
     // determine the coordinator
     const InstanceID coord_id = query->getCoordinatorID();
-    if (coord_id == scidb::COORDINATOR_INSTANCE) {
+    if (coord_id == scidb::INVALID_INSTANCE) {
         LOG4CXX_ERROR(logger, "Attempting to report idle validator at "
                 "the coordinator");
         return;
@@ -836,7 +830,7 @@ void SearchlightMessenger::RejectHelp(const boost::shared_ptr<Query> &query,
         const std::vector<InstanceID> &ids, uint64_t src, bool hard) const {
     // determine the coordinator
     const InstanceID coord_id = query->getCoordinatorID();
-    if (coord_id == scidb::COORDINATOR_INSTANCE) {
+    if (coord_id == scidb::INVALID_INSTANCE) {
         LOG4CXX_ERROR(logger, "Attempting to reject help at the coordinator");
         return;
     }
@@ -890,7 +884,7 @@ void SearchlightMessenger::AcceptHelp(const boost::shared_ptr<Query> &query,
         uint64_t inst) const {
     // prepare the message
     const InstanceID coord_id = query->getCoordinatorID();
-    if (coord_id == scidb::COORDINATOR_INSTANCE) {
+    if (coord_id == scidb::INVALID_INSTANCE) {
         LOG4CXX_ERROR(logger, "Attempting to accept help at the coordinator");
         return;
     }
@@ -970,7 +964,7 @@ void SearchlightMessenger::BroadcastDistrUpdate(
 
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
-    network_manager->broadcast(msg);
+    network_manager->broadcastLogical(msg);
 }
 
 void SearchlightMessenger::SendBalanceResult(
@@ -1015,7 +1009,7 @@ void SearchlightMessenger::BroadcastFinishSearch(
 
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
-    network_manager->broadcast(msg);
+    network_manager->broadcastLogical(msg);
 
     // stats
     const QueryContextPtr query_ctx =
@@ -1041,7 +1035,7 @@ void SearchlightMessenger::BroadcastValidatorInfo(
 
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
-    network_manager->broadcast(msg);
+    network_manager->broadcastLogical(msg);
 }
 
 void SearchlightMessenger::BroadcastCommit(
@@ -1062,7 +1056,7 @@ void SearchlightMessenger::BroadcastCommit(
 
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
-    network_manager->broadcast(msg);
+    network_manager->broadcastLogical(msg);
 
     // stats
     const QueryContextPtr query_ctx =

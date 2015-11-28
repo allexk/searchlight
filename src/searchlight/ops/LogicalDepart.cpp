@@ -136,11 +136,16 @@ public:
     virtual ArrayDesc inferSchema(std::vector<ArrayDesc> schemas,
             boost::shared_ptr<Query> query) override {
         assert(schemas.size() == 1);
-        const ArrayDesc &array_desc = schemas[0];
-        if (array_desc.getSize() == scidb::INFINITE_LENGTH) {
-            throw USER_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << "Array for departitioning must be finite!";
-        }
+        ArrayDesc &array_desc = schemas[0];
+
+       /*
+        * Trim the descriptor. We need this for properly functioning
+        * Searchlight code. We probably care only about the finite
+        * lower boundary.
+        *
+        * FIXME: Check if we really need this, especially in the sampler.
+        */
+       array_desc.trim();
 
         if (_parameters.size() > 1) {
             // Copy should work, but the descriptor pointer will be incorrect.
@@ -162,19 +167,19 @@ public:
                 // First, we want to check the boundaries. Note, we cannot
                 // have a infinite length array here.
                 const DimensionDesc &dim = dims[i];
-                if (low < dim.getStart()) {
-                    low = dim.getStart();
+                if (low < dim.getStartMin()) {
+                    low = dim.getStartMin();
                 }
                 if (high > dim.getEndMax()) {
                     high = dim.getEndMax();
                 }
 
                 // Then, we want to align the coordinates with the chunks
-                Coordinate offs = low - dim.getStart();
+                Coordinate offs = low - dim.getStartMin();
                 if (offs % dim.getChunkInterval()) {
                     low -= offs % dim.getChunkInterval();
                 }
-                offs = high - dim.getStart();
+                offs = high - dim.getStartMin();
                 if ((offs + 1) % dim.getChunkInterval()) {
                    high -= offs % dim.getChunkInterval();
                    high += (dim.getChunkInterval() - 1);

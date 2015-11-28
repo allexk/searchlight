@@ -134,7 +134,7 @@ SearchlightTask::SearchlightTask(const std::string &library_name,
     ReadConfig(config_file_name);
 
     // Fill in distributed search info
-    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
+    if (query->isCoordinator()) {
         distr_search_info_.reset(new DistributedSearchInfo);
         for (size_t i = 0; i < active_solver_instances_.size(); i++) {
             // Each instance might contain several solvers
@@ -284,7 +284,7 @@ void SearchlightTask::ReportIdleSolver(uint64_t solver_id, bool deferable) {
         }
     }
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
-    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
+    if (query->isCoordinator()) {
         // We are at the coordinator -- handle the solver
         HandleIdleSolver(solver_id);
     } else {
@@ -295,7 +295,7 @@ void SearchlightTask::ReportIdleSolver(uint64_t solver_id, bool deferable) {
 
 void SearchlightTask::ReportFinValidator() {
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
-    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
+    if (query->isCoordinator()) {
         // We are at the coordinator -- handle the solver
         HandleFinValidator(my_instance_id_);
     } else {
@@ -692,7 +692,7 @@ void SearchlightTask::HandleRejectHelp(uint64_t src,
 void SearchlightTask::RejectHelp(const std::vector<uint64_t> &helpers,
         uint64_t solver_id, bool hard) {
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
-    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
+    if (query->isCoordinator()) {
         HandleRejectHelp(solver_id, helpers, hard);
     } else {
         // We are at a common instance -- send helpers back to the coordinator
@@ -703,7 +703,7 @@ void SearchlightTask::RejectHelp(const std::vector<uint64_t> &helpers,
 
 void SearchlightTask::ReportSolution(const std::vector<int64_t> &values) {
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
-    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
+    if (query->isCoordinator()) {
         // We are at the coordinator -- add the solution to the queue
         const std::string sol = searchlight_.SolutionToString(values);
         LOG4CXX_INFO(result_logger, sol);
@@ -803,7 +803,7 @@ void SearchlightTask::DispatchWork(const LiteAssignmentVector &work,
     }
 
     // Next, we notify the coordinator about acceptance
-    if (query->getCoordinatorID() == scidb::COORDINATOR_INSTANCE) {
+    if (query->isCoordinator()) {
         HandleAcceptHelper(dest_solver);
     } else {
         SearchlightMessenger::getInstance()->AcceptHelp(query, dest_solver);
@@ -864,11 +864,11 @@ void SearchlightTask::HandleSearchlightError(
             // We should try to notify the query
             const auto query = Query::getValidQueryPtr(query_);
             query->handleError(error);
-            if (query->getCoordinatorID() != scidb::COORDINATOR_INSTANCE) {
+            if (!query->isCoordinator()) {
                 // Send to the coordinator
                 auto error_msg = scidb::makeErrorMessageFromException(
                         *sl_error_, query->getQueryID());
-                NetworkManager::getInstance()->sendMessage(
+                NetworkManager::getInstance()->sendPhysical(
                         query->getPhysicalCoordinatorID(), error_msg);
                 LOG4CXX_INFO(logger, "Notified coordinator about the error");
             }
@@ -890,7 +890,7 @@ const ConstChunk *SearchlightResultsArray::nextChunk(AttributeID attId,
      */
     {
         boost::shared_ptr<Query> query(Query::getValidQueryPtr(_query));
-        if (query->getCoordinatorID() != scidb::COORDINATOR_INSTANCE) {
+        if (!query->isCoordinator()) {
             return NULL;
             // The searchlight and validator threads will continue working
         }

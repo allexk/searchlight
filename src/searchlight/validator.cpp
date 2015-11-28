@@ -468,8 +468,8 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
                 (search_array_desc.GetSearchArraySize() - 1) /
                 active_validators.size() + 1;
         const size_t cache_size = size_t(Config::getInstance()->getOption<int>(
-                scidb::CONFIG_CACHE_SIZE)) * 1024 * 1024;
-        const size_t tmp_size = size_t(Config::getInstance()->getOption<int>(
+                scidb::CONFIG_SMGR_CACHE_SIZE)) * 1024 * 1024;
+        const size_t tmp_size = size_t(Config::getInstance()->getOption<size_t>(
                 scidb::CONFIG_MEM_ARRAY_THRESHOLD)) * 1024 * 1024;
         const size_t inst_count = sl_task_.GetQueryInstanceCount();
 

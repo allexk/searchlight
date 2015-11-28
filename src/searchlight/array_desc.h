@@ -39,6 +39,8 @@
 
 namespace searchlight {
 
+class Searchlight;
+
 /**
  * This is a descriptor for the given array. It contains information about
  * dimensions (names and intervals), attributes and other schema info. It also
@@ -73,13 +75,10 @@ public:
      *
      * @param array the scidb's original array
      * @param samples available samples
-     * @param sl_config Searchlight config
+     * @param sl Searchlight instance
      */
     SearchArrayDesc(const ArrayPtr &array, const ArrayPtrVector &samples,
-            const SearchlightConfig &sl_config) :
-        array_(array),
-        sampler_(array->getArrayDesc(), samples, sl_config),
-        data_accessor_(array) {}
+    		const Searchlight &sl);
 
     /**
      * Registers a search attribute with the descriptor. The sample for this
@@ -95,6 +94,19 @@ public:
      */
     AttributeID RegisterAttribute(const std::string &attr_name,
             bool load_aux_samples);
+
+    /**
+     * Register query sequence for the specified attribute.
+     *
+     * Basically, we register sequence with the sample, so it can perform
+     * DFT conversion based on the available synopses.
+     *
+     * @param attr sequence attribute
+     * @param seq_id sequence id
+     * @param seq query sequence
+     */
+    void RegisterQuerySequence(AttributeID attr, size_t seq_id,
+    		const DoubleVector &seq);
 
     /**
      * Returns the id of the specified attribute in the given vector. Note,
@@ -260,6 +272,9 @@ public:
     size_t GetSearchArraySize() const;
 
 private:
+    // Searchlight reference
+    const Searchlight &sl_;
+
     // The data array
     const ArrayPtr array_;
 

@@ -80,7 +80,7 @@ public:
      */
     DLLHandler() :
         dlls_dir_(scidb::Config::getInstance()->
-                getOption<std::string>(scidb::CONFIG_PLUGINS)) {}
+                getOption<std::string>(scidb::CONFIG_PLUGINSDIR)) {}
 
     /**
      * Destructor. Closes all opened DLLs.
@@ -607,17 +607,42 @@ public:
      * @param samples samples available for the data array
      */
     void RegisterArray(ArrayPtr &data, const ArrayPtrVector &samples) {
-        array_desc_.reset(new SearchArrayDesc(data, samples, GetConfig()));
+        array_desc_.reset(new SearchArrayDesc(data, samples, *this));
     }
 
     /**
      * Registers an attribute for the search. All further adapter data
      * accesses must go through the returned id.
      *
+     * This function also initializes all synopses corresponding to the
+     * attribute.
+     *
      * @param name the attribute's name
      * @return the access id for the attribute
      */
     AttributeID RegisterAttribute(const std::string &name);
+
+    /**
+     * Read and register query sequence from the specified file.
+     *
+     * @param search attribute id the sequence belongs to
+     * @param filename file name to parse
+     * @return registered query sequence id
+     */
+    size_t RegisterQuerySequence(AttributeID sattr, const std::string &filename);
+
+    /**
+     * Return previously registered query sequence.
+     *
+     * The user must have previously registered the sequence and obtained
+     * an id for it. This id is specified as the parameter.
+     *
+     * @param seq_id sequence id
+     * @return query sequence reference
+     */
+    const DoubleVector &GetQuerySequence(size_t seq_id) const {
+    	return query_seqs_.at(seq_id);
+    }
 
     /**
      * Returns the creator for the requested UDF.
@@ -860,6 +885,9 @@ private:
 
     // Var names
     StringVector var_names_;
+
+    // Sequences registered with Searchlight (e.g., query waveform sequence)
+    std::vector<DoubleVector> query_seqs_;
 
     // Validator for the search and its thread
     Validator *validator_;

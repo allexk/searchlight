@@ -28,6 +28,7 @@
  * @author Alexander Kalinin
  */
 
+#include "searchlight.h"
 #include "array_desc.h"
 
 #include "searchlight_messenger.h"
@@ -37,6 +38,14 @@ namespace searchlight {
 // The logger
 static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.array_descriptor"));
+
+SearchArrayDesc::SearchArrayDesc(const ArrayPtr &array,
+		const ArrayPtrVector &samples,
+		const Searchlight &sl) :
+			sl_(sl),
+			array_(array),
+			sampler_(array->getArrayDesc(), samples, sl.GetConfig()),
+			data_accessor_(array) {}
 
 AttributeID SearchArrayDesc::RegisterAttribute(const std::string &attr_name,
         bool load_aux_samples) {
@@ -66,6 +75,11 @@ AttributeID SearchArrayDesc::RegisterAttribute(const std::string &attr_name,
     LOG4CXX_DEBUG(logger, "Registered attribute, name=" << attr_name <<
             ", orig_id=" << orig_id << ", internal_id=" << search_id);
     return search_id;
+}
+
+void SearchArrayDesc::RegisterQuerySequence(AttributeID attr, size_t seq_id,
+		const DoubleVector &seq) {
+	sampler_.RegisterQuerySequence(attr, seq_id, seq);
 }
 
 void SearchArrayDesc::GetDynamicChunksDistribution(
@@ -101,7 +115,7 @@ SearchArrayDesc::ChunkZones SearchArrayDesc::CreateChunkZones(
     res.zones_.resize(zones_num);
     std::vector<std::pair<Coordinate, Coordinate>> current_area(dims.size());
     for (size_t i = 0; i < dims.size(); ++i) {
-        current_area[i].first = dims[i].getLowBoundary();
+        current_area[i].first = dims[i].getStartMin();
         current_area[i].second = dims[i].getCurrLength();
     }
 

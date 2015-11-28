@@ -132,6 +132,19 @@ public:
     }
 
     /**
+     * Register query sequence for the specified attribute.
+     *
+     * Basically we compute DFTs based on the synopses available and cache
+     * the for future use.
+     *
+     * @param attr sequence attribute
+     * @param seq_id sequence id
+     * @param seq query sequence
+     */
+    void RegisterQuerySequence(AttributeID attr, size_t seq_id,
+    		const DoubleVector &seq);
+
+    /**
      * Computes specified aggregates for the specified region for the
      * specified attribute. The aggregates must be registered in the sampler or
      * be default ones. The boundaries returned for the aggregate are guaranteed
@@ -474,6 +487,15 @@ private:
          */
         size_t GetSubsequenceSize() const {
         	return subseq_size_;
+        }
+
+        /**
+         * Return the number of DFT coordinates in the synopsis.
+         *
+         * @return number of DFT coordinates
+         */
+        size_t GetDFTNum() const {
+        	return dft_num_;
         }
 
         /**
@@ -1220,6 +1242,17 @@ private:
     		CachingType cache_type, bool preload, size_t mem_limit,
 			const std::string &attr_name, AttributeID attr_search_id);
 
+    /*
+     * Compute DFTs of size dft_size from the sequence seq and store first
+     * dft_num components in res sequentially.
+     *
+     * Since DFT results in complex numbers, we store real and imaginary
+     * parts sequentially for components. For example, if dft_num == 6,
+     * we take the first 3 components of the DFT.
+     */
+    static void ComputeDFTs(const DoubleVector &seq, size_t dft_size,
+    		size_t dft_num, DoubleVector &res);
+
     // Synopses catalog (attr. name --> list of synopsis)
     std::unordered_map<std::string,std::vector<ArrayPtr>> array_synopses_;
 
@@ -1249,6 +1282,26 @@ private:
 
     // Limit on the total number of cells to use for estimations
     size_t cell_limit_;
+
+    /*
+     *  Query sequences DFT cache types and routines.
+     */
+    // DFTs are cached by attribute, sequence id and synopsis resolution
+    using DFTSequenceID = std::tuple<AttributeID, size_t, size_t>;
+    // Hash function to use in maps
+    struct DFTSequenceIDHash : public std::unary_function<DFTSequenceID, size_t> {
+    	size_t operator()(const DFTSequenceID &id) const {
+    		size_t h = 17;
+    		h = 31 * h + std::get<0>(id);
+    		h = 31 * h + std::get<1>(id);
+    		h = 31 * h + std::get<2>(id);
+    		return h;
+    	}
+    };
+    // Cache of DFT sequences
+    using DFTSequenceCache = std::unordered_map<DFTSequenceID, DoubleVector, DFTSequenceIDHash>;
+    // Cache itself
+    DFTSequenceCache dft_seq_cache_;
 };
 
 /**
