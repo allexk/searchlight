@@ -20,6 +20,7 @@ find_package(Protobuf REQUIRED)
 find_package(Boost REQUIRED)    # we need only headers because of SciDb
 find_package(GFlags REQUIRED)   # needed by or-tools
 find_package(Coin REQUIRED)     # needed by or-tools
+find_package(FFTW REQUIRED)
 
 # includes and libraries
 include_directories(${SCIDB_INCLUDE_DIRS})
@@ -28,6 +29,7 @@ include_directories(${GFLAGS_INCLUDE_DIRS})
 include_directories(${LOG4CXX_INCLUDE_DIRS})
 include_directories(${Boost_INCLUDE_DIRS})
 include_directories(${PROTOBUF_INCLUDE_DIRS})
+include_directories(${FFTW_INCLUDE_DIRS})
 
 # add c++0x compatibility and turn-off STL deprecated warnings (needed for or-tools)
 # other warnings are turned off because of SciDb and or-tools
@@ -81,7 +83,7 @@ set(CMAKE_INSTALL_RPATH "$ORIGIN:$ORIGIN/sl-aux")
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
 
 # Determine libraries to be installed in the plugin directory along with searchlight
-foreach (lib IN LISTS ORTOOLS_LIBRARIES GFLAGS_LIBRARIES COIN_LIBRARIES)
+foreach (lib IN LISTS ORTOOLS_LIBRARIES GFLAGS_LIBRARIES COIN_LIBRARIES FFTW_LIBRARIES)
     get_filename_component(lib_path ${lib} PATH)
     get_filename_component(lib_name ${lib} NAME)
     get_filename_component(lib_ext ${lib} EXT)

@@ -21,6 +21,7 @@ add_library(searchlight_udo SHARED searchlight/ortools_model.cpp
 target_link_libraries(searchlight_udo ${ORTOOLS_LIBRARIES})
 target_link_libraries(searchlight_udo ${GFLAGS_LIBRARIES})
 target_link_libraries(searchlight_udo ${COIN_LIBRARIES})
+target_link_libraries(searchlight_udo ${FFTW_LIBRARIES})
 
 # NOTE: we need to link all auxilliary libraries with the UDO library,
 # since it is loaded with RTLD_LOCAL by SciDB. That means its dependencies
