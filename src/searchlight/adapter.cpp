@@ -221,27 +221,19 @@ IntervalValue Adapter::GetElement(const Coordinates &point,
 
 IntervalValue Adapter::SqDist(const Coordinates &low, const Coordinates &high,
 		size_t int_dim,
-		AttributeID attr,
-		const std::vector<DoubleVector> &query_points,
-		const DoubleVector &query_seq) const {
+		AttributeID attr, size_t seq_id) const {
 	// Tracing
     if (logger->isTraceEnabled()) {
         std::ostringstream deb_str;
-        deb_str << "Square distance: Points: ";
-        for (size_t i = 0; i < query_points.size(); ++i) {
-            deb_str << "\n\t(" << i << "): ";
-			std::copy(query_points[i].begin(), query_points[i].end(),
-					std::ostream_iterator<double>(deb_str, ", "));
-        }
-        deb_str << "\nLow: ";
+        deb_str << "Square distance: Low: ";
         std::copy(low.begin(), low.end(),
                 std::ostream_iterator<Coordinate>(deb_str, ", "));
         deb_str << " High: ";
         std::copy(high.begin(), high.end(),
                 std::ostream_iterator<Coordinate>(deb_str, ", "));
         deb_str << " Attr: " << attr;
+        deb_str << " Seq ID: " << seq_id;
         deb_str << " Mode: " << mode_;
-
         logger->trace(deb_str.str(), LOG4CXX_LOCATION);
     }
 
@@ -259,6 +251,7 @@ IntervalValue Adapter::SqDist(const Coordinates &low, const Coordinates &high,
         // Compute
         const ArrayAccess &array = array_desc_.GetAccessor();
         double dist;
+        const DoubleVector &query_seq = array_desc_.GetQuerySequence(seq_id);
         const bool success = array.SqDistance(low, high, int_dim, real_attr_id,
         		query_seq, dist);
         if (success) {
@@ -267,19 +260,7 @@ IntervalValue Adapter::SqDist(const Coordinates &low, const Coordinates &high,
         }
     } else if (mode_ == APPROX || mode_ == INTERVAL) {
         const Sampler &sampler = array_desc_.GetSampler();
-        res.min_ = 0;
-        res.max_ = std::numeric_limits<double>::max();
-        for (const auto &point: query_points) {
-        	const IntervalValue point_res = sampler.SqDist(attr, low[int_dim],
-        			high[int_dim], point);
-        	if (point_res.state_ == IntervalValue::NUL) {
-        		res.state_ = IntervalValue::NUL;
-        		break;
-        	}
-        	// Non-NULL result; sample guarantees proper min_
-        	res.state_ = IntervalValue::NON_NULL;
-        	res.min_ += point_res.min_;
-        }
+        res = sampler.SqDist(attr, low[int_dim], high[int_dim], seq_id);
         if (mode_ == APPROX) {
             res.val_ = res.max_ = res.min_;
             if (res.state_ == IntervalValue::MAY_NULL) {

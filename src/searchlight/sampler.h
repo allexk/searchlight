@@ -182,14 +182,17 @@ public:
      * Look at all MBRs covering the interval and compute minimal
      * square distance to the query point.
      *
+     * This function assumes the query sequence has been registered with the
+     * sampler. The id must be provided as a parameter by the user.
+     *
      * @param attr attribute to compute the distance for
      * @param low low interval boundary
      * @param high high interval boundary
-     * @param point query point
-     * @return minumum square distance from the interval to the point
+     * @param seq_id query sequence id
+     * @return minimum square distance from the interval to the point
      */
     IntervalValue SqDist(AttributeID attr, Coordinate low, Coordinate high,
-    		const DoubleVector &point) const;
+    		size_t seq_id) const;
 
     /**
      * Return available DFT synopsis sizes.
@@ -330,9 +333,8 @@ public:
          * @param point point coordinates
          * @return minimum square distance
          */
-        double MinSqDist(const DoubleVector &point) const {
+        double MinSqDist(const double *point) const {
         	assert(low_.size() == high_.size());
-        	assert(point.size() == low_.size());
 
         	double res = 0;
         	for (size_t i = 0; i < low_.size(); ++i) {
@@ -475,11 +477,11 @@ private:
          *
          * @param low low interval boundary
          * @param high high interval boundary
-         * @param point query point
+         * @param point query points
          * @return minumum square distance from the interval to the point
          */
         IntervalValue SqDist(Coordinate low, Coordinate high,
-        		const DoubleVector &point);
+        		const DoubleVector &points);
 
         /**
          * Return subsequence size (omega) for this synopsis.

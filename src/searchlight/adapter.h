@@ -217,22 +217,17 @@ public:
      * subsequence. The latter is needed to be able to use DFT sampling --
      * it can handle only sequences if the specified length.
      *
-     * The user specifies both the DFT points and the original sequence. The
-     * adapter will choose which to use depending on the mode.
+     * It is assumed that the query sequence has been registered with
+     * Searchlight, so the sequence id is specified as a parameter.
      *
      * @param low left interval boundary
      * @param high right interval boundary
      * @param int_dim interval dimension among low/high
-     * @param attr attribute for values
-     * @param query_points points corresponding to query_seq
-     * @param query_seq original query sequence
+     * @param seq_id query sequence id
      * @return square distance from point to interval values
      */
     IntervalValue SqDist(const Coordinates &low, const Coordinates &high,
-    		size_t int_dim,
-    		AttributeID attr,
-    		const std::vector<DoubleVector> &query_points,
-			const DoubleVector &query_seq) const;
+    		size_t int_dim, AttributeID attr, size_t seq_id) const;
 
     /**
      * Enables stats collecting mode.

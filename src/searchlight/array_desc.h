@@ -109,6 +109,14 @@ public:
     		const DoubleVector &seq);
 
     /**
+     * Return query sequence by ID.
+     *
+     * @param seq_id sequence id
+     * @return query sequence
+     */
+    const DoubleVector &GetQuerySequence(size_t seq_id) const;
+
+    /**
      * Returns the id of the specified attribute in the given vector. Note,
      * the attribute's id and the vector's id are not necessarily the same.
      * The id returned corresponds to the array's descriptor.

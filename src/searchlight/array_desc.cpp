@@ -47,6 +47,10 @@ SearchArrayDesc::SearchArrayDesc(const ArrayPtr &array,
 			sampler_(array->getArrayDesc(), samples, sl.GetConfig()),
 			data_accessor_(array) {}
 
+const DoubleVector &SearchArrayDesc::GetQuerySequence(size_t seq_id) const {
+	return sl_.GetQuerySequence(seq_id);
+}
+
 AttributeID SearchArrayDesc::RegisterAttribute(const std::string &attr_name,
         bool load_aux_samples) {
     const auto map_it = attr_to_id_.find(attr_name);

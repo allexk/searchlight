@@ -671,8 +671,9 @@ void Sampler::DFTSynopsis::CheckBounds(Coordinate point) const {
 }
 
 IntervalValue Sampler::DFTSynopsis::SqDist(Coordinate low, Coordinate high,
-		const DoubleVector &point) {
+		const DoubleVector &points) {
 	assert(low <= high);
+	assert(points.size() % dft_num_ == 0);
 	CheckBounds(low);
 	CheckBounds(high);
 
@@ -680,17 +681,28 @@ IntervalValue Sampler::DFTSynopsis::SqDist(Coordinate low, Coordinate high,
 	const size_t start_cell = (low - synopsis_origin_) / cell_size_;
 	const size_t end_cell = (high - synopsis_origin_) / cell_size_;
 	AccessContext ctx;
-	IntervalValue res;
-	res.min_ = std::numeric_limits<double>::max();
-	for (size_t cell_id = start_cell; cell_id <= end_cell; ++cell_id) {
-		const DFTCell &cell = GetCell(cell_id, ctx);
-		// Check for empty MBR
-		if (!cell.mbr_.low_.empty()) {
-			res.state_ = IntervalValue::NON_NULL;
-			const double min_mbr_dist = cell.mbr_.MinSqDist(point);
-			if (min_mbr_dist < res.min_) {
-				res.min_ = min_mbr_dist;
+	IntervalValue res; // NUL; min_ = 0
+	res.max_ = std::numeric_limits<double>::max();
+	for (size_t pos = 0; pos < points.size(); pos += dft_num_) {
+		IntervalValue point_res;
+		point_res.min_ = std::numeric_limits<double>::max();
+		for (size_t cell_id = start_cell; cell_id <= end_cell; ++cell_id) {
+			const DFTCell &cell = GetCell(cell_id, ctx);
+			// Check for empty MBR
+			if (!cell.mbr_.low_.empty()) {
+				point_res.state_ = IntervalValue::NON_NULL;
+				const double min_mbr_dist = cell.mbr_.MinSqDist(
+						points.data() + pos);
+				if (min_mbr_dist < point_res.min_) {
+					point_res.min_ = min_mbr_dist;
+				}
 			}
+		}
+		if (point_res.state_ != IntervalValue::NUL) {
+			res.state_ = IntervalValue::NON_NULL;
+			res.min_ += point_res.min_;
+		} else {
+			break;
 		}
 	}
 	return res;
@@ -1594,10 +1606,15 @@ void Sampler::RegisterQuerySequence(AttributeID attr, size_t seq_id,
 }
 
 IntervalValue Sampler::SqDist(AttributeID attr, Coordinate low, Coordinate high,
-		const DoubleVector &point) const {
+		size_t seq_id) const {
     // FIXME: For now we compute distance via the primary sample
 	assert(!dft_synopses_[attr].empty());
 	const auto &syn = dft_synopses_[attr][0];
-	return syn->SqDist(low, high, point);
+	const size_t subseq_size = syn->GetSubsequenceSize();
+	const DFTSequenceID cache_id{attr, seq_id, subseq_size};
+	// Query points
+	assert(dft_seq_cache_.find(cache_id) != dft_seq_cache_.end());
+	const auto &query_points = dft_seq_cache_.at(cache_id);
+	return syn->SqDist(low, high, query_points);
 }
 } /* namespace searchlight */
