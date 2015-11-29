@@ -59,6 +59,361 @@ namespace {
 }
 
 /**
+ * Square distance from the array values to the query sequence.
+ *
+ * This is basically an extension of the IntExpr to properly handle
+ * distance function over arrays.
+ */
+class SqDistFuncExpr : public BaseIntExpr {
+public:
+    /**
+     * Constructs a distance function expression for an array.
+     *
+     * @param s the solver we are using
+     * @param adapter the adapter for data access
+     * @param coords array coordinates
+     * @param params array: attribute, seq. id, seq. length, seq. dimension
+     */
+	SqDistFuncExpr(Solver *s, AdapterPtr adapter,
+            const std::vector<IntVar *> &coords,
+            const std::vector<int64> &params) :
+        BaseIntExpr(s),
+        adapter_(adapter),
+        attr_(AttributeID(params[0])),
+        dims_(coords.size()),
+		seq_id_(size_t(params[1])),
+		seq_len_(size_t(params[2])),
+		coords_(coords),
+        coords_iters_(dims_),
+		seq_dim_(size_t(params[3])),
+        min_support_low_(dims_),
+        min_support_high_(dims_) {
+
+        for (size_t i = 0; i < dims_; i++) {
+            coords_iters_[i] = coords_[i]->MakeDomainIterator(true);
+        }
+    }
+
+    /**
+     * Destructor.
+     */
+    virtual ~SqDistFuncExpr() {}
+
+    /**
+     * Returns the minimum distance for all subsequences.
+     *
+     * @return the minimum of the expression
+     */
+    virtual int64 Min() const {
+        if (!ComputeMinMax()) {
+            solver()->Fail();
+        }
+        return min_;
+    }
+
+    /**
+     * Sets the minimum of the expression.
+     *
+     * Currently, we do not propagate it to the variables, but we fail the
+     * search if the required minimum is impossible.
+     *
+     * @param m the minimum to set
+     */
+    virtual void SetMin(int64 m) {
+        if (!ComputeMinMax() || m > max_) {
+            solver()->Fail();
+        }
+    }
+
+    /**
+     * Returns the maximum of the expression among all sequences.
+     *
+     * @return the maximum of the expression
+     */
+    virtual int64 Max() const {
+        if (!ComputeMinMax()) {
+            solver()->Fail();
+        }
+        return max_;
+    }
+
+    /**
+     * Sets the maximum of the expression.
+     *
+     * Currently, we do not propagate it to the variables, but we fail the
+     * search if the required maximum is impossible.
+     *
+     * @param m the maximum to set
+     */
+    virtual void SetMax(int64 m) {
+        if (!ComputeMinMax() || m < min_) {
+            solver()->Fail();
+        }
+    }
+
+    /**
+     * Attaches a demon to watch for range changes of the expression.
+     *
+     * @param d the demon to attach
+     */
+    virtual void WhenRange(Demon* d) {
+        for (size_t i = 0; i < dims_; i++) {
+            coords_[i]->WhenRange(d);
+        }
+    }
+
+    /**
+     * Returns a string representation for debug printing.
+     *
+     * @return a debug string
+     */
+    virtual std::string DebugString() const {
+        std::string debug_str("SqDistArray(");
+        for (int i = 0; i < dims_; i++) {
+            if (i > 0) {
+                debug_str += ", ";
+            }
+            debug_str += StringPrintf("%s",
+                    coords_[i]->DebugString().c_str());
+        }
+        debug_str += ")";
+        return debug_str;
+    }
+
+    /**
+     * Accepts the given visitor for stats, buffering, printing, etc.
+     *
+     * @param visitor calling visitor
+     */
+    virtual void Accept(ModelVisitor* const visitor) const {
+    	// Function start
+        std::string tag("UDF_sqdist");
+        visitor->BeginVisitIntegerExpression(tag, this);
+        // Variables
+        visitor->VisitIntegerVariableArrayArgument(ModelVisitor::kVarsArgument,
+                coords_);
+        // Params
+        std::vector<int64> params{int64(attr_), int64(seq_id_),
+        	int64(seq_len_), int64(seq_dim_)};
+        visitor->VisitIntegerArrayArgument(ModelVisitor::kValuesArgument,
+                params);
+        // Function end
+        visitor->EndVisitIntegerExpression(tag, this);
+    }
+
+private:
+    /*
+     * Computes min/max of the aggregate if necessary.
+     * Made const since it is called from Min()/Max(), which are made const
+     * by or-tool's design.
+     *
+     * Returns true, if the min/max are set; false, if we need to backtrack.
+     * We fail outside the function to avoid problems with setjmp/longjmp, since
+     * (a) that's how Fail() is implemented (b) we have local objects there that
+     * need dtors.
+     */
+    bool ComputeMinMax() const;
+
+    /*
+     *  Computes the aggregate for the given fixed coordinates.
+     */
+    IntervalValue ComputeFunc(const Coordinates &low,
+    		const Coordinates &high) const;
+
+    // Check if the support for min/max is valid.
+    bool CheckSupport() const;
+
+    // Returns the stringified aggregate name
+    std::string GetAggregateName() const {
+    	return "UDF_sqdist";
+    }
+
+    /*
+     * Saves the old value at addr and assigns the new value
+     * at the same place. Introduced to fix a small incompatibility
+     * between int64 types in or-tools and scidb, which results in
+     * ambiguity in SaveAndSetValue function.
+     *
+     * Strictly speaking, converting the pointer to (int64 *) is not
+     * cool, but since they are both 8 bytes (guaranteed), it should be
+     * fine.
+     */
+    void SaveCoordinate(Coordinate *addr, Coordinate new_val) const {
+        solver()->SaveAndSetValue(reinterpret_cast<int64 *>(addr),
+                int64(new_val));
+    }
+
+    const AdapterPtr adapter_; // the adapter for data access
+    const AttributeID attr_; // attribute we are computing
+    const size_t dims_;  // dimensionality
+    const size_t seq_id_; // Sequence ID
+    const size_t seq_len_; // Sequence length
+
+    // coordinates for the sequences and iterators
+    const std::vector<IntVar *> coords_;
+    std::vector<IntVarIterator *> coords_iters_;
+    // Dimension of the sequence variable
+    const size_t seq_dim_;
+
+    // Min/max aggregate values and caches for support
+    mutable int64 min_ = 0;
+    const int64 max_ = std::numeric_limits<int64>::max();
+    // Support for minimum: min, max values for vars
+    mutable Coordinates min_support_low_, min_support_high_;
+    mutable bool min_max_init_ = false;
+};
+
+IntervalValue SqDistFuncExpr::ComputeFunc(const Coordinates &low,
+        const Coordinates &high) const {
+    return adapter_->SqDist(low, high, seq_dim_, attr_, seq_id_);
+}
+
+bool SqDistFuncExpr::CheckSupport() const {
+    // first time: no support
+    if (!min_max_init_) {
+        return false;
+    }
+
+    /*
+     * The support is valid if the variable intervals are the same.
+     *
+     * Strictly speaking this is not true, since the domains might have changed.
+     * For example, the heuristic might have removed a value from the middle.
+     * Min value is still value in this case, though, but possibly not as tight
+     * as it could be.
+     */
+    for (size_t i = 0; i < dims_; i++) {
+    	if (Coordinate(coords_[i]->Min()) != min_support_low_[i] ||
+    			Coordinate(coords_[i]->Max()) != min_support_high_[i]) {
+    		return false;
+    	}
+    }
+    return true;
+}
+
+bool SqDistFuncExpr::ComputeMinMax() const {
+    IntervalValue new_min;
+    Coordinates new_min_support_low, new_min_support_high;
+
+    // First case: variables are bound
+    bool vars_bound = true;
+    for (size_t i = 0; i < dims_; i++) {
+        if (!coords_[i]->Bound()) {
+            vars_bound = false;
+            break;
+        }
+    }
+
+    if (vars_bound) {
+        if (CheckSupport()) {
+            return true;
+        }
+        Coordinates low(dims_), high(dims_);
+        for (size_t i = 0; i < dims_; i++) {
+            high[i] = low[i] = coords_[i]->Value();
+        }
+        high[seq_dim_] += seq_len_ - 1;
+
+        new_min = ComputeFunc(low, high);
+        new_min_support_low = low;
+        new_min_support_high = high;
+    } else {
+        // Second case: checks for all combinations of non-sequence dimensions
+		if (CheckSupport()) {
+			return true;
+		}
+		/*
+		 * Here we need to go through every possible combination
+		 * of non-sequence vars, which might be tricky for an arbitrary
+		 * number of dimensions...
+		 */
+		Coordinates low(dims_), high(dims_);
+		for (size_t i = 0; i < dims_; i++) {
+			if (i != seq_dim_) {
+				coords_iters_[i]->Init();
+				high[i] = low[i] = coords_iters_[i]->Value();
+			}
+		}
+		low[seq_dim_] = coords_[seq_dim_]->Min();
+		high[seq_dim_] = coords_[seq_dim_]->Max() + seq_len_ - 1;
+
+		while (true) {
+			const IntervalValue val = ComputeFunc(low, high);
+			if (new_min.state_ == IntervalValue::NUL) {
+				new_min = val;
+				new_min_support_low = low;
+				new_min_support_high = high;
+			} else {
+				if (val.min_ < new_min.min_) {
+					new_min.min_ = val.min_;
+					new_min_support_low = low;
+					new_min_support_high = high;
+				}
+			}
+
+			/*
+			 *  Move to a new region. We try to move the current
+			 *  iterator while possible, and then reset and move to
+			 *  the next one and so on... The sequence dimension is fixed.
+			 */
+			size_t i = 0;
+			while (i < dims_) {
+				if (i == seq_dim_) {
+					// Skip the sequence dimension
+					++i;
+					continue;
+				}
+				// Try to move to the next value
+				IntVarIterator *it = coords_iters_[i];
+				const size_t k = i;
+				it->Next();
+				if (!it->Ok()) {
+					it->Init();
+					i++;
+				}
+				high[k] = low[k] = it->Value();
+				if (k == i) {
+					// New combination: break and compute it
+					break;
+				}
+			}
+			// more regions? not if we have exhausted all iterators
+			if (i == dims_) {
+				break;
+			}
+		}
+    }
+
+    /*
+     * At this point we have a proper new_min and support. We need
+     * to analyze the value and properly save it.
+     */
+    Solver * const s = solver();
+    if (new_min.state_ == IntervalValue::NUL) {
+        return false;
+    }
+
+    /*
+     * Need to convert from double to int64, since or-tools do not support
+     * floating values. For now, just round them to the nearest integer for the
+     * exact value case or "nearest" interval for the interval case.
+     *
+     * TODO: revisit later if floats/doubles become available in or-tools.
+     */
+    int64 new_min_rounded = RBoundToInt64(new_min.min_);
+
+    // save the values and supports
+    s->SaveAndSetValue(&min_, new_min_rounded);
+    s->SaveAndSetValue(&min_max_init_, true);
+    for (size_t i = 0; i < dims_; i++) {
+    	SaveCoordinate(&min_support_low_[i], new_min_support_low[i]);
+    	SaveCoordinate(&min_support_high_[i], new_min_support_high[i]);
+    }
+
+    return true;
+}
+
+/**
  * This class allows to compute aggregate functions on arrays that are
  * expressed in terms of integer variables
  *
@@ -490,6 +845,7 @@ bool AggrFuncExpr::ComputeMinMax() const {
                     }
 
                     if (k == i) {
+                    	// Successful move: i didn't increment
                         break;
                     }
                 }
@@ -602,4 +958,10 @@ IntExpr *CreateUDF_max(Solver *solver, AdapterPtr adapter,
             params);
 }
 
+extern "C"
+IntExpr *CreateUDF_sqdist(Solver *solver, AdapterPtr adapter,
+        const std::vector<IntVar *> &coords,
+        const std::vector<int64> &params) {
+    return new SqDistFuncExpr(solver, adapter, coords, params);
+}
 } /* namespace searchlight */
