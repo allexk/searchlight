@@ -39,8 +39,10 @@ add_library(searchlight_sdss SHARED tasks/sdss.cpp)
 target_link_libraries(searchlight_sdss searchlight_udo)
 add_library(searchlight_mimic SHARED tasks/mimic.cpp)
 target_link_libraries(searchlight_mimic searchlight_udo)
+add_library(searchlight_dist SHARED tasks/dist.cpp)
+target_link_libraries(searchlight_dist searchlight_udo)
 
 #install rules for the Searchlight libs
 install(TARGETS searchlight_udo searchlight_udfs searchlight_sw
-    searchlight_sdss searchlight_mimic
+    searchlight_sdss searchlight_mimic searchlight_dist
     DESTINATION ${SL_LIB_DIR})

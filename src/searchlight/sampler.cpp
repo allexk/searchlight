@@ -487,7 +487,7 @@ Sampler::DFTSynopsis::DFTSynopsis(const ArrayDesc &data_desc,
             ArrayDesc::makeUnversionedName(synopsis_desc.getName());
     ParseDFTSynopsisParams(ParseArrayParamsFromName(synopsis_config).back());
 
-    // First dimension is trace MBRs: parse synopsis shape from there
+    // First dimension is the waveform dimension
     const DimensionDesc &data_dim = data_desc.getDimensions()[0];
     /*
      * Cannot use low/high boundary, since SciDB aligns them by the
@@ -523,7 +523,7 @@ Sampler::DFTSynopsis::DFTSynopsis(const ArrayDesc &data_desc,
     chunk_size_ = syn_dim.getChunkInterval();
     chunk_num_ = syn_dim.getCurrEnd() / chunk_size_ + 1;
 
-    // The second synopsis array dimension is the DFT coordinates
+    // The last synopsis array dimension is the DFT coordinates
     const DimensionDesc &dft_dim = synopsis_desc.getDimensions()[1];
     if (dft_dim.getStartMin() != 0) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
