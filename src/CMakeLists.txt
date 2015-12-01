@@ -46,3 +46,7 @@ target_link_libraries(searchlight_dist searchlight_udo)
 install(TARGETS searchlight_udo searchlight_udfs searchlight_sw
     searchlight_sdss searchlight_mimic searchlight_dist
     DESTINATION ${SL_LIB_DIR})
+
+# utils
+add_executable(dft_sampler utils/dft_sampler.cpp)
+target_link_libraries(dft_sampler ${FFTW_LIBRARIES})
