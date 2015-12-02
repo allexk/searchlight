@@ -50,3 +50,4 @@ install(TARGETS searchlight_udo searchlight_udfs searchlight_sw
 # utils
 add_executable(dft_sampler utils/dft_sampler.cpp)
 target_link_libraries(dft_sampler ${FFTW_LIBRARIES})
+set_target_properties(dft_sampler PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)

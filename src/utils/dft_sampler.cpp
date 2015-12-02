@@ -70,22 +70,24 @@ public:
 	 * Construct a new MBR.
 	 *
 	 * @param dims dimensionality
+	 * @param mbr_size MBR size (in the number of sequences)
 	 */
-	MBR(size_t dims) :
-		low_(dims),
-		high_(dims) {}
+	MBR(size_t dims, size_t mbr_size) :
+			low_(dims),
+			high_(dims),
+			mbr_size_(mbr_size) {
+		Reset(0);
+	}
 
 	/**
 	 * Resets MBR to cover the specified coordinate.
 	 *
 	 * @param coord coordinate to reset to
-	 * @param w omega (subsequence size)
-	 * @param mbr_size the size of MBR
 	 */
-	void Reset(size_t coord, size_t w, size_t mbr_size) {
-		start_pos_ = coord - coord % w;
-		end_pos_ = start_pos_ + mbr_size - 1;
-		id_ = coord / mbr_size;
+	void Reset(size_t coord) {
+		start_pos_ = coord - coord % mbr_size_;
+		end_pos_ = start_pos_ + mbr_size_ - 1;
+		id_ = coord / mbr_size_;
 		valid_ = false;
 	}
 
@@ -102,11 +104,10 @@ public:
 	 * Check if coordinate belongs to an MBR sequence.
 	 *
 	 * @param pos coordinate position
-	 * @param w omega (subsequence size)
 	 * @return true, if the coordinate belongs to the MBR
 	 */
-	bool CheckCoordinate(size_t pos, size_t w) const {
-		return valid_ && pos >= start_pos_ && pos <= end_pos_ + w - 1;
+	bool CheckCoordinate(size_t pos) const {
+		return pos >= start_pos_ && pos <= end_pos_;
 	}
 
 	/**
@@ -116,12 +117,17 @@ public:
 	 */
 	void AddPoint(const Coordinates &point) {
 		assert(point.size() == low_.size());
-		valid_ = true;
-		for (size_t i = 0; i < point.size(); ++i) {
-			if (low_[i] < point[i]) {
-				low_[i] = point[i];
-			} else if (high_[i] < point[i]) {
-				high_[i] = point[i];
+		if (!valid_) {
+			low_ = point;
+			high_ = point;
+			valid_ = true;
+		} else {
+			for (size_t i = 0; i < point.size(); ++i) {
+				if (low_[i] > point[i]) {
+					low_[i] = point[i];
+				} else if (high_[i] < point[i]) {
+					high_[i] = point[i];
+				}
 			}
 		}
 	}
@@ -140,7 +146,7 @@ public:
 		if (!valid_) return;
 
 		for (size_t i = 0; i < low_.size(); ++i) {
-			s << id_ << ',' << i << ',' << low_[i] << ',' << high_[i];
+			s << id_ << ',' << i << ',' << low_[i] << ',' << high_[i] << '\n';
 		}
 	}
 
@@ -149,6 +155,7 @@ private:
 	int end_pos_ = 0; // End sequence position (inclusive)
 	int id_ = 0; // ID of the MBR
 	Coordinates low_, high_; // Low/high coordinates
+	const size_t mbr_size_; // MBR size
 	bool valid_ = false; // true if it's valid
 };
 
@@ -170,8 +177,10 @@ public:
 	 *
 	 * The assumed format is:
 	 * 	coordinate,value
+	 *
+	 * @return true, if the value was read; false, otherwise
 	 */
-	void Next() {
+	bool Next() {
 		std::string line;
 		if (std::getline(inf_, line)) {
 		    typedef boost::tokenizer<boost::char_separator<char>> tokenizer_t;
@@ -198,7 +207,9 @@ public:
 		    	err << "Unknown component in CSV: '" << line << "'\n";
 		    	throw std::runtime_error(err.str());
 		    }
+		    return true;
 		}
+		return false;
 	}
 
 	/**
@@ -234,15 +245,16 @@ private:
 	double last_val_ = 0;
 };
 
-void SynchronizeMBR(MBR &mbr, size_t new_coordinate, size_t w, size_t mbr_size,
-		std::ostream &s) {
-	if (!mbr.CheckCoordinate(new_coordinate, w) && mbr.Valid()) {
+void SynchronizeMBR(MBR &mbr, size_t new_coordinate, std::ostream &s) {
+	if (mbr.CheckCoordinate(new_coordinate)) {
+		return;
+	}
+	// Either not valid or finished the current one
+	if (mbr.Valid()) {
 		// Finished a valid MBR
 		mbr.OutputCSV(s);
-	} else if (!mbr.Valid()) {
-		// No valid MBR: create a new one
-		mbr.Reset(new_coordinate, w, mbr_size);
 	}
+	mbr.Reset(new_coordinate);
 }
 
 void CheckAndHandleEOF(const CSVReader &reader, const MBR &mbr,
@@ -298,16 +310,10 @@ int main(int argc, char **argv) {
 	}
 	const std::string in_file{argv[optind++]};
 
-	if (optind >= argc) {
-		std::cerr << "Output filename is not specified\n";
-		return -1;
-	}
-	const std::string out_file{argv[optind]};
-
 	// Open file and read it line by line
 	CSVReader reader{in_file};
-	std::ofstream outf{out_file};
-	MBR mbr(d * 2);
+	std::ostream &outf = std::cout;
+	MBR mbr(d * 2, m);
 	// FFTW stuff
 	double *in_fftw = (double *)fftw_malloc(sizeof(double) * w);
 	fftw_complex *out_fftw = (fftw_complex *)fftw_malloc(
@@ -317,24 +323,33 @@ int main(int argc, char **argv) {
 	// Start parsing
 	bool new_seq = true;
 	size_t expected_coord = 0;
+	size_t first_seq_coord = 0;
+	size_t i = 0;
 	while (true) {
 		// Now we need to fill in the FFT buffer
-		size_t i = 0;
 		if (!new_seq) {
+			first_seq_coord++;
 			memmove(in_fftw, in_fftw + 1, sizeof(double) * (w - 1));
 			i = w - 1;
 		}
 		bool empty_found = false;
 		while (i < w) {
-			reader.Next();
-			CheckAndHandleEOF(reader, mbr, outf);
+			if (!reader.Next()) {
+				CheckAndHandleEOF(reader, mbr, outf);
+			}
 			size_t coord = reader.Coordinate();
 			if (coord != expected_coord) {
 				// Empty element
-				expected_coord = coord;
+				expected_coord = coord + 1;
+				in_fftw[0] = reader.Value();
+				i = 1;
+				first_seq_coord = coord;
 				empty_found = true;
 				break;
 			} else {
+				if (new_seq && i == 0) {
+					first_seq_coord = coord;
+				}
 				in_fftw[i] = reader.Value();
 				expected_coord++;
 			}
@@ -342,6 +357,7 @@ int main(int argc, char **argv) {
 		}
 		new_seq = empty_found;
 		if (empty_found) continue;
+		i = 0;
 		// Can compute FFTW
 		fftw_execute(p);
 		Coordinates point;
@@ -351,7 +367,7 @@ int main(int argc, char **argv) {
 			point.push_back(out_fftw[j][1] / sqrt_N);
 		}
 		// Add to the MBR
-		SynchronizeMBR(mbr, reader.Coordinate(), w, m, outf);
+		SynchronizeMBR(mbr, first_seq_coord, outf);
 		mbr.AddPoint(point);
 	}
 
