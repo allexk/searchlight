@@ -107,8 +107,7 @@ size_t Searchlight::RegisterQuerySequence(AttributeID sattr,
 	std::ifstream seq_file(filename);
 	// Sequence length
 	size_t seq_len;
-	seq_file >> seq_len;
-	if (!seq_file.good()) {
+	if (!(seq_file >> seq_len)) {
 		LOG4CXX_ERROR(logger, "Error reading sequence length: " << filename);
 		throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
 				<< "Cannot read sequence length from file";
@@ -116,8 +115,7 @@ size_t Searchlight::RegisterQuerySequence(AttributeID sattr,
 	// Sequence itself
 	DoubleVector seq(seq_len);
 	for (size_t i = 0; i < seq_len; ++i) {
-		seq_file >> seq[i];
-		if (!seq_file.good()) {
+		if (!(seq_file >> seq[i])) {
 			LOG4CXX_ERROR(logger, "Error reading element " << i << "from "
 					<< filename);
 			throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
@@ -126,7 +124,7 @@ size_t Searchlight::RegisterQuerySequence(AttributeID sattr,
 	}
 	query_seqs_.emplace_back(std::move(seq));
 	const size_t seq_id = query_seqs_.size() - 1;
-	array_desc_->RegisterQuerySequence(sattr, seq_id, seq);
+	array_desc_->RegisterQuerySequence(sattr, seq_id, query_seqs_.back());
 	return seq_id;
 }
 

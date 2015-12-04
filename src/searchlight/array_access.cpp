@@ -226,7 +226,7 @@ bool ArrayAccess::SqDistance(const Coordinates &low, const Coordinates &high,
 		}
 		// Non-empty and non-NULL
 		const double dval = scidb::ValueToDouble(value_type.typeId(), value);
-    	const double val_diff = query_seq[i] - dval;
+    	const double val_diff = query_seq[i - low_int] - dval;
     	res += val_diff * val_diff;
     }
     return true;

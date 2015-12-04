@@ -466,7 +466,8 @@ private:
          * @return required cache memory size (in bytes)
          */
         size_t MemorySize() const {
-            return sizeof(DFTCell) * cell_num_;
+        	// Don't forget about the low/high vectors in DFTRegion!
+            return (sizeof(DFTCell) + sizeof(double) * 2 * dft_num_) * cell_num_;
         }
 
         /**
@@ -571,7 +572,7 @@ private:
         size_t ComputeMemoryFootprint() const;
 
         // Check if the point inside the managed interval
-        void CheckBounds(Coordinate point) const;
+        void CheckBounds(Coordinate &point) const;
 
         // Parse DFT synopsis params from the string
         void ParseDFTSynopsisParams(const std::string &params);

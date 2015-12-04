@@ -86,7 +86,7 @@ void Dist(Searchlight *sl, uint32_t id) {
     // task params
     const int32 start_time = config.get<int32>("dist.l_time");
     const int32 end_time   = config.get<int32>("dist.u_time");
-    const int32 query_dist = config.get<int32>("dist.sq_dist");
+    const int32 query_dist = config.get<int32>("dist.dist", 0);
     const std::string query_seq = config.get("dist.query", "");
     const int32 step_time  = config.get<int32>("dist.step_time", 1);
     const int32 time_limit = config.get("dist.time_limit", 3600);
@@ -106,11 +106,11 @@ void Dist(Searchlight *sl, uint32_t id) {
 
     // valid sequence
     solver.AddConstraint(solver.MakeLessOrEqual(
-            solver.MakeSum(coords[1], seq_len), end_time + 1));
+            solver.MakeSum(coords[0], seq_len), end_time + 1));
 
     // create function
     UDFFunctionCreator sqdist_fab = sl->GetUDFFunctionCreator("sqdist");
-    std::vector<int64> udf_params{attr, seq_id, seq_len, 1};
+    std::vector<int64> udf_params{attr, int64(seq_id), int64(seq_len), 0};
     IntExpr * const sqdist = solver.RevAlloc(sqdist_fab(&solver, adapter,
     		coords, udf_params));
     solver.AddConstraint(solver.MakeLessOrEqual(sqdist,

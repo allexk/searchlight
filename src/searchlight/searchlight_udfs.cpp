@@ -284,7 +284,8 @@ bool SqDistFuncExpr::CheckSupport() const {
      */
     for (size_t i = 0; i < dims_; i++) {
     	if (Coordinate(coords_[i]->Min()) != min_support_low_[i] ||
-    			Coordinate(coords_[i]->Max()) != min_support_high_[i]) {
+    			Coordinate(coords_[i]->Max()) + seq_len_ - 1 !=
+    					min_support_high_[i]) {
     		return false;
     	}
     }

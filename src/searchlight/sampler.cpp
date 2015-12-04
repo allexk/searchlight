@@ -500,7 +500,7 @@ Sampler::DFTSynopsis::DFTSynopsis(const ArrayDesc &data_desc,
      */
     synopsis_origin_ = data_dim.getStartMin();
     // Covered sequences must fit exactly, should be careful with synopsis_end_
-    synopsis_end_ = data_dim.getCurrEnd() - cell_size_ + 1;
+    synopsis_end_ = data_dim.getCurrEnd() - subseq_size_ + 1;
     // Number of cells (cell sizes are read from the array's name)
     const uint64_t curr_length = synopsis_end_ - synopsis_origin_ + 1;
     cell_num_ = (curr_length - 1) / cell_size_ + 1;
@@ -510,7 +510,13 @@ Sampler::DFTSynopsis::DFTSynopsis(const ArrayDesc &data_desc,
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << "Synopsis coordinates must start from 0";
     }
-    if (syn_dim.getCurrEnd() + 1 < cell_num_) { // StartMin() == 0
+    /*
+     * Use getEndMax to check the number of cells. The thing here is that
+     * empty element just means an empty MBR. This is fine with us.
+     * Strictly speaking the following check is not required, but it might
+     * allow us to detect simple sample array construction errors.
+     */
+    if (syn_dim.getEndMax() < cell_num_ - 1) { // StartMin() == 0
         std::ostringstream err_msg;
         err_msg << "Synopsis must have at least "
                 << cell_num_ << "cells"
@@ -662,7 +668,7 @@ Sampler::DFTCell &Sampler::DFTSynopsis::GetCell(size_t cell_id,
     }
 }
 
-void Sampler::DFTSynopsis::CheckBounds(Coordinate point) const {
+void Sampler::DFTSynopsis::CheckBounds(Coordinate &point) const {
 	if (point < synopsis_origin_) {
 		point = synopsis_origin_;
 	} else if (point > synopsis_end_) {
@@ -675,6 +681,12 @@ IntervalValue Sampler::DFTSynopsis::SqDist(Coordinate low, Coordinate high,
 	assert(low <= high);
 	assert(points.size() % dft_num_ == 0);
 	CheckBounds(low);
+	/*
+	 * High actually defines the end of the search interval. Should adjust
+	 * for the last subsequence, since we want low/high to be first and last
+	 * trace points.
+	 */
+	high -= subseq_size_ - 1;
 	CheckBounds(high);
 
 	// Determine start/end MBRs (synopsis cells)
