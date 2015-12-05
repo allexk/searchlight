@@ -671,8 +671,8 @@ Sampler::DFTCell &Sampler::DFTSynopsis::GetCell(size_t cell_id,
 void Sampler::DFTSynopsis::CheckBounds(Coordinate &point) const {
 	if (point < synopsis_origin_) {
 		point = synopsis_origin_;
-	} else if (point > synopsis_end_) {
-		point = synopsis_end_;
+	} else if (point > synopsis_end_ + subseq_size_ - 1) {
+		point = synopsis_end_ + subseq_size_ - 1;
 	}
 }
 
@@ -681,21 +681,39 @@ IntervalValue Sampler::DFTSynopsis::SqDist(Coordinate low, Coordinate high,
 	assert(low <= high);
 	assert(points.size() % dft_num_ == 0);
 	CheckBounds(low);
+	CheckBounds(high);
+	/*
+	 * points.size() / dft_num shows the number of subsequences. The number
+	 * of trace points cannot be less than the query sequence size.
+	 */
+	const size_t query_subseq_num = points.size() / dft_num_;
+	if (high - low + 1 < query_subseq_num * subseq_size_) {
+		// Query sequence doesn't fit -- return NULL
+		return IntervalValue();
+	}
 	/*
 	 * High actually defines the end of the search interval. Should adjust
 	 * for the last subsequence, since we want low/high to be first and last
 	 * trace points.
 	 */
 	high -= subseq_size_ - 1;
-	CheckBounds(high);
 
 	// Determine start/end MBRs (synopsis cells)
-	const size_t start_cell = (low - synopsis_origin_) / cell_size_;
-	const size_t end_cell = (high - synopsis_origin_) / cell_size_;
 	AccessContext ctx;
 	IntervalValue res; // NUL; min_ = 0
+	/*
+	 * If we have several subsequences of the original query sequence, we
+	 * can adjust low/high a little bit (e.g., second subsequence cannot
+	 * start at the original low). So, we recompute them at every step.
+	 */
+	Coordinate subseq_low = low;
+	Coordinate subseq_high = high - (query_subseq_num - 1) * subseq_size_;
 	res.max_ = std::numeric_limits<double>::max();
 	for (size_t pos = 0; pos < points.size(); pos += dft_num_) {
+		const size_t start_cell = (subseq_low - synopsis_origin_) / cell_size_;
+		subseq_low += subseq_size_;
+		const size_t end_cell = (subseq_high - synopsis_origin_) / cell_size_;
+		subseq_high += subseq_size_;
 		IntervalValue point_res;
 		point_res.min_ = std::numeric_limits<double>::max();
 		for (size_t cell_id = start_cell; cell_id <= end_cell; ++cell_id) {
