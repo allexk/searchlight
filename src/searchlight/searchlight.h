@@ -887,6 +887,7 @@ private:
     StringVector var_names_;
 
     // Sequences registered with Searchlight (e.g., query waveform sequence)
+    std::unordered_map<std::string, size_t> query_seqs_map_;
     std::vector<DoubleVector> query_seqs_;
 
     // Validator for the search and its thread
