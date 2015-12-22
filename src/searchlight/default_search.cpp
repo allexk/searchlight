@@ -507,7 +507,7 @@ Decision* SLSearch::Next(Solver* const s) {
                 << asgn->DebugString());
 
         LiteAssignmentVector work(1);
-        FullAssignmentToLite(*asgn, work.back());
+        FullAssignmentToLite(*asgn, 0, work.back());
         sl_solver_.DispatchWork(work);
 
         return s->MakeFailDecision();
@@ -782,7 +782,7 @@ void BalancingMonitor::BeginNextDecision(DecisionBuilder* const b) {
                     "helper: " << snapshot_asgn_.DebugString());
 
             LiteAssignmentVector work(1);
-            FullAssignmentToLite(snapshot_asgn_, work.back());
+            FullAssignmentToLite(snapshot_asgn_, 0, work.back());
             sl_solver_.DispatchWork(work);
 
             // Fail will "detach" the tree from the current solver

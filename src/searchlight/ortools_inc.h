@@ -85,12 +85,15 @@ void LiteToFullAssignment(Assignment &asgn,
         const LiteVarAssignment &lite_asgn);
 
 /**
- * Converts a lite assignment to a full Assignment.
+ * Converts a full Assignment to a lite assignment.
+ *
+ * Elements are added starting from position pos.
  *
  * @param asgn full assignment
+ * @param pos starting position for putting elements
  * @param lite_asgn lite assignment
  */
-void FullAssignmentToLite(const Assignment &asgn,
+void FullAssignmentToLite(const Assignment &asgn, size_t pos,
         LiteVarAssignment &lite_asgn);
 
 } /* namespace searchlight */

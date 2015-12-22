@@ -605,9 +605,16 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
             HandleForwards(*balance_msg, inst);
             break;
         case SearchlightBalance::BALANCE_RESULT:
+        {
+        	LiteVarAssignment add_vals;
+        	if (balance_msg->load_size()) {
+        		SearchlightMessenger::UnpackAssignment(
+        				balance_msg->load(0), add_vals);
+        	}
             searchlight_.GetValidator().HandleForwardResult(
-                    balance_msg->id(0), balance_msg->result());
+                    balance_msg->id(0), balance_msg->result(), add_vals.mins_);
             break;
+        }
         case SearchlightBalance::ACCEPT_HELP:
             assert(balance_msg->id_size());
             for (int i = 0; i < balance_msg->id_size(); i++) {
@@ -841,11 +848,11 @@ void SearchlightTask::ForwardCandidates(const LiteAssignmentVector &cands,
 }
 
 void SearchlightTask::SendBalanceResult(InstanceID dest, uint64_t id,
-        bool result) const {
+        bool result, const std::vector<int64_t> &add_vals) const {
     // For now a helper is always a remote instance.
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     SearchlightMessenger::getInstance()->SendBalanceResult(query, dest, id,
-            result);
+            result, add_vals);
 }
 
 void SearchlightTask::BroadcastValidatorInfo(size_t cands_num) const {

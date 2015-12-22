@@ -141,6 +141,7 @@ public:
     explicit RestoreAssignmentBuilder(Validator &validator,
             const AdapterPtr &adapter, Solver *s,
             int restart_period, const Assignment *prototype,
+			const Assignment &track_prototype,
             Validator::CandidateVector &&asgns,
             bool slave)
         : validator_(validator),
@@ -149,6 +150,7 @@ public:
           action_succeeded_(false),
           aux_monitor_(*this, s, restart_period),
           last_asgn_{new Assignment{prototype}},
+		  track_vars_asgn_{&track_prototype},
           slave_{slave} {}
 
 
@@ -176,12 +178,18 @@ public:
             if (last_action_.type_ == Action::Type::LOCAL_CHECK) {
                 if (action_succeeded_) {
                     LiteVarAssignment lite_asgn;
-                    FullAssignmentToLite(*last_asgn_, lite_asgn);
+                    FullAssignmentToLite(*last_asgn_, 0, lite_asgn);
+                    FullAssignmentToLite(track_vars_asgn_,
+                    		last_asgn_->NumIntVars(), lite_asgn);
                     validator_.sl_task_.ReportSolution(lite_asgn.mins_);
                 }
             } else if (last_action_.type_ == Action::Type::REMOTE_CHECK) {
+                LiteVarAssignment lite_asgn;
+                if (action_succeeded_) {
+                	FullAssignmentToLite(track_vars_asgn_, 0, lite_asgn);
+                }
                 validator_.SendForwardResult(last_action_.forward_id_,
-                        action_succeeded_);
+                        action_succeeded_, lite_asgn.mins_);
             } else {
                 // Simulation finished: we need to decide if we want to forward
                 assert(action_succeeded_);
@@ -300,6 +308,9 @@ public:
             if (apply) {
                 // Action was successful
                 restore_db_.action_succeeded_ = true;
+                if (restore_db_.last_action_.type_ != Action::Type::SIM) {
+                	restore_db_.track_vars_asgn_.Store();
+                }
                 my_fail_ = true;
                 solver()->Fail();
             } else {
@@ -348,6 +359,9 @@ public:
     // Assignment used in the last action
     AssignmentPtr last_asgn_;
 
+    // Additional tracking vars
+    Assignment track_vars_asgn_;
+
     // Last action taken by the DB
     Action last_action_;
 
@@ -361,7 +375,8 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
         sl_task_(sl_task),
         solver_("validator solver"),
         adapter_(sl.CreateAdapter("validator")), // DUMB mode by default!
-        search_vars_prototype_(&solver_) {
+        search_vars_prototype_(&solver_),
+		track_vars_prototype_(&solver_) {
 
     // First, clone the solver (solver 0 is always available)
     ExportModel(sl_.GetSearchSolver(0), &validator_model_);
@@ -386,24 +401,8 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
      */
     VariableFinder var_finder;
     solver_.Accept(&var_finder);
-    VariableFinder::StringVarMap var_map = var_finder.GetVarMap();
-    for (StringVector::const_iterator cit = var_names.begin();
-            cit != var_names.end(); cit++) {
-        VariableFinder::StringVarMap::const_iterator var = var_map.find(*cit);
-        if (var == var_map.end()) {
-            std::ostringstream err_msg;
-            err_msg << "Cannot find a variable in the duplicate solver: name="
-                    << *cit;
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << err_msg.str();
-        }
-        /*
-         *  const_cast is perfectly fine. Vars just come from the visitor,
-         *  which does not change them. But these vars are supposed to be
-         *  changed during the search anyway, albeit later.
-         */
-        search_vars_prototype_.Add(const_cast<IntVar *>(var->second));
-    }
+    var_finder.FillAssignment(var_names, search_vars_prototype_);
+    var_finder.FillAssignment(sl.GetTrackExprs(), track_vars_prototype_);
 
     const SearchlightConfig &sl_config = sl_task_.GetConfig();
     max_pending_validations_ =
@@ -505,7 +504,7 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
 
 void Validator::AddSolution(const Assignment &sol) {
     LiteVarAssignment lite_sol;
-    FullAssignmentToLite(sol, lite_sol);
+    FullAssignmentToLite(sol, 0, lite_sol);
 
     LOG4CXX_TRACE(logger, "New solution to validate: " << sol.DebugString());
 
@@ -577,7 +576,8 @@ void Validator::AddRemoteCandidates(LiteAssignmentVector &cands,
     validate_cond_.notify_all();
 }
 
-void Validator::HandleForwardResult(uint64_t id, bool result) {
+void Validator::HandleForwardResult(uint64_t id, bool result,
+		const std::vector<int64_t> &add_vals) {
     if (IsReforward(id)) {
         // Forward to the original sender
         std::unique_lock<std::mutex> validate_lock{to_validate_mtx_};
@@ -589,11 +589,15 @@ void Validator::HandleForwardResult(uint64_t id, bool result) {
             validate_cond_.notify_all();
         }
         validate_lock.unlock();
-        SendForwardResult(original_id, result);
+        SendForwardResult(original_id, result, add_vals);
     } else {
         std::lock_guard<std::mutex> validate_lock{to_validate_mtx_};
         assert(forwarded_candidates_.find(id) != forwarded_candidates_.end());
         if (result) {
+        	std::vector<int64_t> &sol = forwarded_candidates_[id].mins_;
+        	if (!add_vals.empty()) {
+        		sol.insert(sol.end(), add_vals.begin(), add_vals.end());
+        	}
             sl_task_.ReportSolution(forwarded_candidates_[id].mins_);
         }
         forwarded_candidates_.erase(id);
@@ -603,14 +607,16 @@ void Validator::HandleForwardResult(uint64_t id, bool result) {
     }
 }
 
-void Validator::SendForwardResult(int64_t forw_id, bool result) {
+void Validator::SendForwardResult(int64_t forw_id, bool result,
+		const std::vector<int64_t> &add_vals) {
     assert(forw_id >= 0);
     std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
     const auto forw_info = remote_candidates_[forw_id];
     remote_candidates_.erase(forw_id);
     validate_lock.unlock();
 
-    sl_task_.SendBalanceResult(forw_info.first, forw_info.second, result);
+    sl_task_.SendBalanceResult(forw_info.first, forw_info.second, result,
+    		add_vals);
 }
 
 template <typename CoordinatesSequence>
@@ -634,7 +640,7 @@ void Validator::PushToLocalZone(const CoordinateSet &chunks,
 
     // Convert and push
     LiteVarAssignment lite_sol;
-    FullAssignmentToLite(*asgn, lite_sol);
+    FullAssignmentToLite(*asgn, 0, lite_sol);
 
     std::lock_guard<std::mutex> lock{to_validate_mtx_};
     PushCandidate({std::move(lite_sol), -2}, zone);
@@ -705,7 +711,7 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
 
         // forward
         LiteAssignmentVector asgns(1);
-        FullAssignmentToLite(*asgn, asgns[0]);
+        FullAssignmentToLite(*asgn, 0, asgns[0]);
         uint64_t cand_id;
         {
             std::lock_guard<std::mutex> lock{to_validate_mtx_};
@@ -806,7 +812,8 @@ void Validator::operator()() {
     LOG4CXX_INFO(logger, "Starting the validator search");
     DecisionBuilder *db =
             solver_.RevAlloc(new RestoreAssignmentBuilder(*this, adapter_,
-                    &solver_, restart_period_, &search_vars_prototype_, {},
+                    &solver_, restart_period_, &search_vars_prototype_,
+					track_vars_prototype_, {},
                     false));
     try {
         solver_status_ = solver_.Solve(db);
@@ -1130,6 +1137,7 @@ Validator::ValidatorHelper::ValidatorHelper(int id, Validator &parent,
                 adapter_{parent_.sl_.CreateAdapter(
                         "validator helper_" + std::to_string(id))},
                 prototype_{&solver_},
+				track_prototype_{&solver_},
                 id_{id} {
     /*
      *  First, clone the solver. It's crucial to create it from the model and
@@ -1148,25 +1156,12 @@ Validator::ValidatorHelper::ValidatorHelper(int id, Validator &parent,
      */
     VariableFinder var_finder;
     solver_.Accept(&var_finder);
-    VariableFinder::StringVarMap var_map = var_finder.GetVarMap();
+    StringVector search_var_names;
     for (const auto &elem: init_assignment.IntVarContainer().elements()) {
-        const std::string &var_name = elem.Var()->name();
-        VariableFinder::StringVarMap::const_iterator it = var_map.find(var_name);
-        if (it == var_map.end()) {
-            std::ostringstream err_msg;
-            err_msg << "Cannot find a variable in a duplicate solver: name="
-                    << var_name;
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << err_msg.str();
-        }
-        /*
-         *  const_cast is perfectly fine. Vars just come from the visitor,
-         *  which does not change them. But these vars are supposed to be
-         *  changed during the search anyway, albeit later.
-         */
-        IntVar *var = const_cast<IntVar *>(it->second);
-        prototype_.Add(var);
+    	search_var_names.push_back(elem.Var()->name());
     }
+    var_finder.FillAssignment(search_var_names, prototype_);
+    var_finder.FillAssignment(parent_.sl_.GetTrackExprs(), track_prototype_);
 }
 
 void Validator::ValidatorHelper::operator()() {
@@ -1179,7 +1174,7 @@ void Validator::ValidatorHelper::operator()() {
          */
         const std::unique_ptr<DecisionBuilder> db{
                 new RestoreAssignmentBuilder(parent_, adapter_,
-                        &solver_, 0, &prototype_,
+                        &solver_, 0, &prototype_, track_prototype_,
                         std::move(workload_), true)};
         adapter_->SetAdapterMode(Adapter::DUMB); // Will be switched in Next()
         try {

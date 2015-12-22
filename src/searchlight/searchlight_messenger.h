@@ -323,9 +323,11 @@ public:
      * @param dest destination Searchlight
      * @param id id of the balancing load
      * @param result result status of the load
+     * @param add_vals additional values to send (e.g., track var values)
      */
     void SendBalanceResult(const boost::shared_ptr<Query> &query,
-            InstanceID dest, uint64_t id, bool result) const;
+            InstanceID dest, uint64_t id, bool result,
+			const std::vector<int64_t> &add_vals) const;
 
     /**
      * Determines instances on which specified chunks currently reside.

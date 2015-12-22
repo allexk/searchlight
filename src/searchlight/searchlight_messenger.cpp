@@ -969,7 +969,8 @@ void SearchlightMessenger::BroadcastDistrUpdate(
 
 void SearchlightMessenger::SendBalanceResult(
         const boost::shared_ptr<Query> &query,
-        InstanceID dest, uint64_t forw_id, bool result) const {
+        InstanceID dest, uint64_t forw_id, bool result,
+		const std::vector<int64_t> &add_vals) const {
 
     // prepare the message
     boost::shared_ptr<scidb::MessageDesc> msg =
@@ -981,6 +982,11 @@ void SearchlightMessenger::SendBalanceResult(
     record->set_type(SearchlightBalance::BALANCE_RESULT);
     record->add_id(forw_id);
     record->set_result(result);
+    if (!add_vals.empty()) {
+		VarAssignment *var_asgn = record->add_load();
+		LiteVarAssignment asgn{add_vals, {}};
+		PackAssignment(asgn, *var_asgn, {});
+    }
 
     // log
     LOG4CXX_TRACE(logger, "Sending balancing result: dest=" << dest
@@ -1135,12 +1141,13 @@ void SearchlightMessenger::FillBalanceMessage(SearchlightBalance &msg,
         const std::vector<int64_t> &aux) {
     if (aux.empty()) {
         FillBalanceMessage(msg, asgns);
-    }
-    std::vector<int64_t> aux_info(1);
-    for (size_t i = 0; i < asgns.size(); ++i) {
-        VarAssignment *var_asgn = msg.add_load();
-        aux_info[0] = aux[i];
-        PackAssignment(asgns[i], *var_asgn, aux_info);
+    } else {
+		std::vector<int64_t> aux_info(1);
+		for (size_t i = 0; i < asgns.size(); ++i) {
+			VarAssignment *var_asgn = msg.add_load();
+			aux_info[0] = aux[i];
+			PackAssignment(asgns[i], *var_asgn, aux_info);
+		}
     }
 }
 

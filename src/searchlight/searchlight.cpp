@@ -102,6 +102,16 @@ AttributeID Searchlight::RegisterAttribute(const std::string &name) {
             sl_task_.GetConfig().get("searchlight.load_aux_samples", 0));
 }
 
+void Searchlight::AddTrackExpr(IntExpr *expr, const std::string &name) {
+	IntVar *cast_var = expr->Var();
+	if (cast_var->HasName()) {
+		LOG4CXX_WARN(logger, "Variable tracking expression has name "
+				<< cast_var->name() << ", changing to " << name);
+	}
+	cast_var->set_name(name);
+	track_var_names_.insert(name);
+}
+
 size_t Searchlight::RegisterQuerySequence(AttributeID sattr,
 		const std::string &filename) {
 	const auto it = query_seqs_map_.find(filename);
@@ -400,7 +410,7 @@ void SearchlightSolver::DetermineLocalWorkload() {
 
             // we define the load in terms of initial vars + split_var intervals
             LiteVarAssignment asgn;
-            FullAssignmentToLite(vars_leaf_, asgn);
+            FullAssignmentToLite(vars_leaf_, 0, asgn);
             asgn.mins_[split_var_num] = start;
             asgn.maxs_[split_var_num] = end;
             local_load_.push_back(std::move(asgn));
@@ -582,6 +592,12 @@ std::string Searchlight::SolutionToString(
         if (i != var_names_.size() - 1) {
             sol_string << ", ";
         }
+    }
+    // Add tracking vars
+    const StringVector track_var_names = GetTrackExprs();
+    for (size_t i = 0; i < track_var_names.size(); ++i) {
+    	sol_string << ", " << track_var_names[i] << '='
+    			<< vals[var_names_.size() + i];
     }
     return sol_string.str();
 }

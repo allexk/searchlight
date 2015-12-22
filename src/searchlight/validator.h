@@ -88,8 +88,10 @@ public:
      *
      * @param id forward id
      * @param result true, if the candidate is valid; false, otherwise
+     * @param add_vals additional values coming with the result
      */
-    void HandleForwardResult(uint64_t id, bool result);
+    void HandleForwardResult(uint64_t id, bool result,
+    		const std::vector<int64_t> &add_vals);
 
     /**
      * Blocks until the validor clears the validator queue. This allows the
@@ -278,6 +280,9 @@ private:
         // The prototype assignment for search variables
         Assignment prototype_;
 
+        // The prototype assignment for tracking vars
+        Assignment track_prototype_;
+
         // Thread to run the helper
         std::thread thr_;
 
@@ -316,8 +321,12 @@ private:
                free_validator_helpers_.size() == validator_helpers_.size();
     }
 
-    // Sends back the result of the forward
-    void SendForwardResult(int64_t forw_id, bool result);
+    /*
+     * Sends back the result of the forward
+     * (add_vals represent additional values, like tracking vars).
+     */
+    void SendForwardResult(int64_t forw_id, bool result,
+    		const std::vector<int64_t> &add_vals);
 
     // Checks if we want to forward (returns true) and forwards if we can.
     bool CheckForward(const CoordinateSet &chunks, const Assignment *asgn);
@@ -419,6 +428,9 @@ private:
 
     // The prototype assignment for search variables
     Assignment search_vars_prototype_;
+
+    // The prototype for the additional tracking vars
+    Assignment track_vars_prototype_;
 
     // Condition var to wait for solutions to validate
     mutable std::condition_variable validate_cond_;
@@ -531,6 +543,36 @@ public:
      */
     const StringVarMap &GetVarMap() const {
         return var_map_;
+    }
+
+    /**
+     * Fill assignment with the specified variables.
+     *
+     * The user provides variable names and the corresponding search vars are
+     * added to the assignment. If a variable is not found, an exception is
+     * thrown.
+     *
+     * @param var_names variables to find
+     * @param asgn assignment to fill
+     */
+    void FillAssignment(const StringVector &var_names, Assignment &asgn) const {
+		for (auto cit = var_names.begin(); cit != var_names.end(); ++cit) {
+			const auto var = var_map_.find(*cit);
+			if (var == var_map_.end()) {
+				std::ostringstream err_msg;
+				err_msg << "Cannot find a variable in"
+						"the duplicate solver: name=" << *cit;
+				throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+						SCIDB_LE_ILLEGAL_OPERATION)
+						<< err_msg.str();
+			}
+			/*
+			 *  const_cast is perfectly fine. Vars just come from the visitor,
+			 *  which does not change them. But these vars are supposed to be
+			 *  changed during the search anyway, albeit later.
+			 */
+			asgn.Add(const_cast<IntVar *>(var->second));
+		}
     }
 
 private:

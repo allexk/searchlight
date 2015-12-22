@@ -206,8 +206,10 @@ public:
      * @param dest destination Searchlight
      * @param id id of the balancing load
      * @param result result status of the load
+     * @param add_vals additional values to send
      */
-    void SendBalanceResult(InstanceID dest, uint64_t id, bool result) const;
+    void SendBalanceResult(InstanceID dest, uint64_t id, bool result,
+    		const std::vector<int64_t> &add_vals) const;
 
     /**
      * Broadcast validator's info.

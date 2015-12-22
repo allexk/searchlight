@@ -632,6 +632,36 @@ public:
     size_t RegisterQuerySequence(AttributeID sattr, const std::string &filename);
 
     /**
+     * Add tracking expression to Searchlight.
+     *
+     * Tracking expression's values are added to all solutions and output to
+     * the users.
+     *
+     * The expression will be cast to var and the var will be assigned the
+     * specified name. The overhead of adding an additional cast var to the
+     * model should be negligent.
+     *
+     * @param expr tracking expression
+     * @param name name to output
+     */
+    void AddTrackExpr(IntExpr *expr, const std::string &name);
+
+    /**
+     * Return vector of track expression names.
+     *
+     * The ordering in the vector might change if the new tracking vars are
+     * added.
+     *
+     * @return track expression names
+     */
+    StringVector GetTrackExprs() const {
+    	StringVector res;
+    	std::copy(track_var_names_.begin(), track_var_names_.end(),
+    			std::back_inserter(res));
+    	return res;
+    }
+
+    /**
      * Return previously registered query sequence.
      *
      * The user must have previously registered the sequence and obtained
@@ -889,6 +919,9 @@ private:
     // Sequences registered with Searchlight (e.g., query waveform sequence)
     std::unordered_map<std::string, size_t> query_seqs_map_;
     std::vector<DoubleVector> query_seqs_;
+
+    // Tracking variables
+    std::unordered_set<std::string> track_var_names_;
 
     // Validator for the search and its thread
     Validator *validator_;
