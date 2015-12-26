@@ -113,6 +113,7 @@ void Dist(Searchlight *sl, uint32_t id) {
     std::vector<int64> udf_params{attr, int64(seq_id), int64(seq_len), 0};
     IntExpr * const sqdist = solver.RevAlloc(sqdist_fab(&solver, adapter,
     		coords, udf_params));
+    sl->AddTrackExpr(sqdist, "sqdist");
     solver.AddConstraint(solver.MakeLessOrEqual(sqdist,
     		query_dist * query_dist));
 
