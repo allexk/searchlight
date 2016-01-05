@@ -52,6 +52,7 @@ using operations_research::SearchLimit;
 
 using operations_research::IntVar;
 using operations_research::IntVarIterator;
+using operations_research::InitAndGetValues;
 using operations_research::IntVarElement;
 using operations_research::IntervalVar;
 using operations_research::SequenceVar;

@@ -192,6 +192,16 @@ private:
 typedef IntExpr *(* UDFFunctionCreator)(Solver *, AdapterPtr,
         const std::vector<IntVar *> &, const std::vector<int64> &);
 
+/**
+ * Information about the domain of an integer variable.
+ */
+struct IntVarDomainInfo {
+	// Is it a continuous variable?
+	bool interval_;
+	// Domain values (min, max if interval_ = true)
+	std::vector<int64> values_;
+};
+
 /*
  * This class encapsulates a single solver thread-instance. The model,
  * monitors, heuristics go here. The Searchlight class provides higher
@@ -460,6 +470,13 @@ public:
     Status GetSolverStatus() const {
         return status_;
     }
+
+    /**
+     * Return domains for all decision variables.
+     *
+     * @return domains of all decision variables
+     */
+    std::vector<IntVarDomainInfo> GetCurrentVarDomains() const;
 
 private:
     // Reject/release helpers
@@ -887,7 +904,7 @@ public:
     }
 
     /**
-     * Return Searchligh solver with the given local id.
+     * Return Searchlight solver with the given local id.
      *
      * primarily used to establish the model.
      *

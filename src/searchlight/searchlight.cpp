@@ -418,6 +418,30 @@ void SearchlightSolver::DetermineLocalWorkload() {
     }
 }
 
+std::vector<IntVarDomainInfo> SearchlightSolver::GetCurrentVarDomains() const {
+	std::vector<IntVarDomainInfo> res(all_vars_.size());
+	for (size_t i = 0; i < all_vars_.size(); ++i) {
+		const IntVar *var = all_vars_[i];
+		IntVarDomainInfo &dom = res[i];
+		const int64 var_min = var->Min();
+		const int64 var_max = var->Max();
+		if (var->Size() == var_max - var_min + 1) {
+			// Continuous variable
+			dom.interval_ = true;
+			dom.values_ = {var_min, var_max};
+		} else {
+			// Domain has holes
+			dom.interval_ = false;
+			dom.values_.reserve(var->Size());
+	        std::unique_ptr<IntVarIterator> it(var->MakeDomainIterator(false));
+	        for (const int64 value : InitAndGetValues(it.get())) {
+	          dom.values_.push_back(value);
+	        }
+		}
+	}
+	return res;
+}
+
 void SearchlightSolver::Solve() {
     // Enter the search
     status_ = Status::SEARCHING;

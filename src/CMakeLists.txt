@@ -12,7 +12,8 @@ add_library(searchlight_udo SHARED searchlight/ortools_model.cpp
     searchlight/ops/plugin.cpp
     searchlight/default_search.cpp searchlight/searchlight_messenger.cpp ${MSG_SRC}
     searchlight/ops/LogicalDepart.cpp searchlight/ops/PhysicalDepart.cpp
-    searchlight/ops/DepartArray.cpp)
+    searchlight/ops/DepartArray.cpp
+    searchlight/relax.cpp)
 
 # We have to link the libraries since SciDb will not load them during the
 # dynamic operator loading. We don't need to do anything special for SciDb
