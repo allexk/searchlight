@@ -9,6 +9,11 @@
 
 namespace searchlight {
 
+// Relaxable constraint tags defined
+const char RelaxableConstraint::BetweenConstTag[] = "RelaxableBetween";
+const char RelaxableConstraint::LessEqConstTag[] = "RelaxableLEQ";
+const char RelaxableConstraint::GreaterEqConstTag[] = "RelaxableGEQ";
+
 void Relaxator::RegisterConstraint(const std::string &name, size_t solver_id,
 		RelaxableConstraint *constr, IntExpr *expr, int64 max_l, int64 max_h) {
 	assert(constr && expr && solver_id < solvers_num_);
@@ -91,6 +96,10 @@ void Relaxator::RegisterFail(size_t solver_id) {
 		const IntExpr *c_expr = ci.solver_exprs_[solver_id];
 		const int64 cmin = c_expr->Min();
 		const int64 cmax = c_expr->Max();
+		// if cmin > cmax, that means the constraint cannot be fulfilled ever
+		if (cmin > cmax) {
+			return;
+		}
 		// Check if we're violating the constraint
 		int64 min_d, max_d;
 		const int rel_pos = ci.int_.MinMaxDistance(cmin, cmax, min_d, max_d);

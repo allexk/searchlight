@@ -42,137 +42,224 @@ namespace searchlight {
  */
 class RelaxableConstraint : public Constraint {
 public:
-	/**
-	 * Construct a new relaxable constraint.
-	 *
-	 * @param solver solver instance
-	 */
-	RelaxableConstraint(Solver* const solver) : Constraint(solver) {}
-	/**
-	 * Sets new params for the constraint.
-	 *
-	 * The constraint is expected to be of interval type. For example,
-	 * arithmetic comparisons and between satify this property.
-	 *
-	 * @param l lower interval value
-	 * @param h high interval value
-	 */
-	virtual void SetNewParams(int64 l, int64 h) = 0;
+    /**
+     * Relaxable constraint tags.
+     */
+    static const char BetweenConstTag[];
+    static const char LessEqConstTag[];
+    static const char GreaterEqConstTag[];
 
-	/**
-	 * Get constraint params.
-	 *
-	 * @param l low interval value
-	 * @param h high interval value
-	 */
-	virtual void GetParams(int64 &l, int64 &h) const = 0;
+    /**
+     * Construct a new relaxable constraint.
+     *
+     * @param solver solver instance
+     */
+    RelaxableConstraint(Solver* const solver) : Constraint(solver) {}
+    /**
+     * Sets new params for the constraint.
+     *
+     * The constraint is expected to be of interval type. For example,
+     * arithmetic comparisons and between satify this property.
+     *
+     * @param l lower interval value
+     * @param h high interval value
+     */
+    virtual void SetNewParams(int64 l, int64 h) = 0;
+
+    /**
+     * Get constraint params.
+     *
+     * @param l low interval value
+     * @param h high interval value
+     */
+    virtual void GetParams(int64 &l, int64 &h) const = 0;
+
+    /**
+     * Return constraint's expression.
+     *
+     * @return constraint's expression
+     */
+    virtual IntExpr *GetExpr() const = 0;
+
+    /**
+     * Accept model visitor.
+     *
+     * @param visitor model visitor
+     */
+    virtual void Accept(ModelVisitor* const visitor) const override {
+        visitor->VisitIntegerArgument(ModelVisitor::kValueArgument, id_);
+    }
+
+    /**
+     * Set constraint id.
+     *
+     * @param id constraint id
+     */
+    void SetId(int64 id) {
+        id_ = id;
+    }
+
+    /**
+     * Return constraint ID.
+     *
+     * @return constraint ID
+     */
+    int64 Id() const {
+        return id_;
+    }
+
+private:
+	// Constraint id
+	int64 id_ = -1;
 };
 
 /**
  * Relaxable between constraint.
  */
 class BetweenCt : public RelaxableConstraint {
- public:
-  BetweenCt(Solver* const s, IntExpr* const v, int64 l, int64 u)
-      : RelaxableConstraint(s), expr_(v), min_(l), max_(u) {}
+public:
+    BetweenCt(Solver* const s, IntExpr* const v, int64 l, int64 u) :
+        RelaxableConstraint(s),
+        expr_(v),
+        min_(l),
+        max_(u) {}
 
-  /**
-   * Set new interval for the between constraint.
-   *
-   * @param l low interval value
-   * @param h high interval value
-   */
-  virtual void SetNewParams(int64 l, int64 h) override {
-	  solver()->SaveAndSetValue(&min_, l);
-	  solver()->SaveAndSetValue(&max_, h);
-  }
-
-  /**
-   * Get interval for the between constraint.
-   *
-   * @param l low interval value
-   * @param h high interval value
-   */
-  virtual void GetParams(int64 &l, int64 &h) const override {
-	  l = min_;
-	  h = max_;
-  }
-
-  virtual void Post() {
-    if (!expr_->IsVar()) {
-      Demon* const d = solver()->MakeConstraintInitialPropagateCallback(this);
-      expr_->WhenRange(d);
+    /**
+     * Set new interval for the between constraint.
+     *
+     * @param l low interval value
+     * @param h high interval value
+     */
+    virtual void SetNewParams(int64 l, int64 h) override {
+        solver()->SaveAndSetValue(&min_, l);
+        solver()->SaveAndSetValue(&max_, h);
     }
-  }
 
-  virtual void InitialPropagate() { expr_->SetRange(min_, max_); }
+   /**
+    * Get interval for the between constraint.
+    *
+    * @param l low interval value
+    * @param h high interval value
+    */
+    virtual void GetParams(int64 &l, int64 &h) const override {
+        l = min_;
+        h = max_;
+    }
 
-  virtual std::string DebugString() const {
-    return StringPrintf("BetweenCt(%s, %" GG_LL_FORMAT "d, %" GG_LL_FORMAT "d)",
-                        expr_->DebugString().c_str(), min_, max_);
-  }
+    virtual void Post() {
+        if (!expr_->IsVar()) {
+            Demon* const d = solver()->
+                    MakeConstraintInitialPropagateCallback(this);
+            expr_->WhenRange(d);
+        }
+    }
 
-  virtual void Accept(ModelVisitor* const visitor) const {
-    visitor->BeginVisitConstraint(ModelVisitor::kBetween, this);
-    visitor->VisitIntegerArgument(ModelVisitor::kMinArgument, min_);
-    visitor->VisitIntegerExpressionArgument(ModelVisitor::kExpressionArgument,
-                                            expr_);
-    visitor->VisitIntegerArgument(ModelVisitor::kMaxArgument, max_);
-    visitor->EndVisitConstraint(ModelVisitor::kBetween, this);
-  }
+    virtual void InitialPropagate() {
+        expr_->SetRange(min_, max_);
+    }
 
- private:
-  IntExpr* const expr_;
-  int64 min_;
-  int64 max_;
+    virtual std::string DebugString() const {
+        return StringPrintf(
+                "RelaxableBetweenCt(%s, %" GG_LL_FORMAT "d, %" GG_LL_FORMAT "d)",
+                expr_->DebugString().c_str(), min_, max_);
+    }
+
+    virtual void Accept(ModelVisitor* const visitor) const {
+        visitor->BeginVisitConstraint(
+                RelaxableConstraint::BetweenConstTag, this);
+        RelaxableConstraint::Accept(visitor);
+        visitor->VisitIntegerArgument(ModelVisitor::kMinArgument, min_);
+        visitor->VisitIntegerExpressionArgument(
+                ModelVisitor::kExpressionArgument, expr_);
+        visitor->VisitIntegerArgument(ModelVisitor::kMaxArgument, max_);
+        visitor->EndVisitConstraint(ModelVisitor::kBetween, this);
+    }
+
+    virtual IntExpr *GetExpr() const override {
+        return expr_;
+    }
+
+private:
+    IntExpr* const expr_;
+    int64 min_;
+    int64 max_;
 };
 
 /**
  * Relaxable >= constraint.
  */
 class GreaterEqExprCst : public RelaxableConstraint {
- public:
-  GreaterEqExprCst(Solver* const s, IntExpr* const e, int64 v);
-  virtual ~GreaterEqExprCst() {}
-  virtual void Post();
-  virtual void InitialPropagate();
-  virtual std::string DebugString() const;
-  virtual IntVar* Var() {
-    return solver()->MakeIsGreaterOrEqualCstVar(expr_->Var(), value_);
-  }
+public:
+    GreaterEqExprCst(Solver* const s, IntExpr* const e, int64 v) :
+        RelaxableConstraint(s),
+        expr_(e),
+        value_(v),
+        demon_(nullptr) {}
 
-  virtual void Accept(ModelVisitor* const visitor) const {
-    visitor->BeginVisitConstraint(ModelVisitor::kGreaterOrEqual, this);
-    visitor->VisitIntegerExpressionArgument(ModelVisitor::kExpressionArgument,
-                                            expr_);
-    visitor->VisitIntegerArgument(ModelVisitor::kValueArgument, value_);
-    visitor->EndVisitConstraint(ModelVisitor::kGreaterOrEqual, this);
-  }
+    virtual void Post() {
+        if (!expr_->IsVar() && expr_->Min() < value_) {
+            demon_ = solver()->MakeConstraintInitialPropagateCallback(this);
+            expr_->WhenRange(demon_);
+        } else {
+            // Clean the demon in case the constraint is posted during search.
+            demon_ = nullptr;
+        }
+	}
 
-  /**
-   * Set new interval for the >= constraint.
-   *
-   * Note, h is actually ignore since it's always +inf for this constraint.
-   *
-   * @param l low interval value
-   * @param h high interval value (ignored)
-   */
-  virtual void SetNewParams(int64 l, int64 h) override {
-	  solver()->SaveAndSetValue(&value_, l);
-  }
+    virtual IntExpr *GetExpr() const override {
+        return expr_;
+    }
 
-  /**
-   * Get interval for the >= constraint.
-   *
-   * High value is always +inf for this constraint.
-   *
-   * @param l low interval value
-   * @param h high interval value
-   */
-  virtual void GetParams(int64 &l, int64 &h) const override {
-	  l = value_;
-	  h = kint64max;
-  }
+    virtual void InitialPropagate() {
+        expr_->SetMin(value_);
+        if (demon_ != nullptr && expr_->Min() >= value_) {
+            demon_->inhibit(solver());
+        }
+    }
+
+    virtual std::string DebugString() const {
+        return StringPrintf("(relaxable %s >= %" GG_LL_FORMAT "d)",
+                            expr_->DebugString().c_str(), value_);
+    }
+
+    virtual IntVar* Var() {
+        return solver()->MakeIsGreaterOrEqualCstVar(expr_->Var(), value_);
+    }
+
+    virtual void Accept(ModelVisitor* const visitor) const {
+        visitor->BeginVisitConstraint(
+                RelaxableConstraint::GreaterEqConstTag, this);
+        RelaxableConstraint::Accept(visitor);
+        visitor->VisitIntegerExpressionArgument(
+                ModelVisitor::kExpressionArgument, expr_);
+        visitor->VisitIntegerArgument(ModelVisitor::kValueArgument, value_);
+        visitor->EndVisitConstraint(ModelVisitor::kGreaterOrEqual, this);
+    }
+
+    /**
+     * Set new interval for the >= constraint.
+     *
+     * Note, h is actually ignore since it's always +inf for this constraint.
+     *
+     * @param l low interval value
+     * @param h high interval value (ignored)
+     */
+    virtual void SetNewParams(int64 l, int64 h) override {
+        solver()->SaveAndSetValue(&value_, l);
+    }
+
+    /**
+     * Get interval for the >= constraint.
+     *
+     * High value is always +inf for this constraint.
+     *
+     * @param l low interval value
+     * @param h high interval value
+     */
+    virtual void GetParams(int64 &l, int64 &h) const override {
+	    l = value_;
+	    h = kint64max;
+    }
 
 private:
     IntExpr* const expr_;
@@ -180,108 +267,87 @@ private:
     Demon* demon_;
 };
 
-GreaterEqExprCst::GreaterEqExprCst(Solver* const s, IntExpr* const e, int64 v)
-    : RelaxableConstraint(s), expr_(e), value_(v), demon_(nullptr) {}
-
-void GreaterEqExprCst::Post() {
-  if (!expr_->IsVar() && expr_->Min() < value_) {
-    demon_ = solver()->MakeConstraintInitialPropagateCallback(this);
-    expr_->WhenRange(demon_);
-  } else {
-    // Let's clean the demon in case the constraint is posted during search.
-    demon_ = nullptr;
-  }
-}
-
-void GreaterEqExprCst::InitialPropagate() {
-  expr_->SetMin(value_);
-  if (demon_ != nullptr && expr_->Min() >= value_) {
-    demon_->inhibit(solver());
-  }
-}
-
-std::string GreaterEqExprCst::DebugString() const {
-  return StringPrintf("(%s >= %" GG_LL_FORMAT "d)",
-                      expr_->DebugString().c_str(), value_);
-}
-
-
 /**
  * Relaxable <= constraint.
  */
 class LessEqExprCst : public RelaxableConstraint {
- public:
-  LessEqExprCst(Solver* const s, IntExpr* const e, int64 v);
-  virtual ~LessEqExprCst() {}
-  virtual void Post();
-  virtual void InitialPropagate();
-  virtual std::string DebugString() const;
-  virtual IntVar* Var() {
-    return solver()->MakeIsLessOrEqualCstVar(expr_->Var(), value_);
-  }
-  virtual void Accept(ModelVisitor* const visitor) const {
-    visitor->BeginVisitConstraint(ModelVisitor::kLessOrEqual, this);
-    visitor->VisitIntegerExpressionArgument(ModelVisitor::kExpressionArgument,
-                                            expr_);
-    visitor->VisitIntegerArgument(ModelVisitor::kValueArgument, value_);
-    visitor->EndVisitConstraint(ModelVisitor::kLessOrEqual, this);
-  }
+public:
+    LessEqExprCst(Solver* const s, IntExpr* const e, int64 v) :
+        RelaxableConstraint(s),
+        expr_(e),
+        value_(v),
+        demon_(nullptr) {}
 
-  /**
-   * Set new interval for the <= constraint.
-   *
-   * Note, l is actually ignore since it's always -inf for this constraint.
-   *
-   * @param l low interval value (ignored)
-   * @param h high interval value
-   */
-  virtual void SetNewParams(int64 l, int64 h) override {
-	  solver()->SaveAndSetValue(&value_, h);
-  }
+    virtual void Post() {
+        if (!expr_->IsVar() && expr_->Max() > value_) {
+            demon_ = solver()->MakeConstraintInitialPropagateCallback(this);
+            expr_->WhenRange(demon_);
+        } else {
+            // Clean the demon in case the constraint is posted during search.
+            demon_ = nullptr;
+        }
+    }
 
-  /**
-   * Get interval for the <= constraint.
-   *
-   * Low value is always -inf for this constraint.
-   *
-   * @param l low interval value
-   * @param h high interval value
-   */
-  virtual void GetParams(int64 &l, int64 &h) const override {
-	  l = kint64min;
-	  h = value_;
-  }
+    virtual void InitialPropagate() {
+        expr_->SetMax(value_);
+        if (demon_ != nullptr && expr_->Max() <= value_) {
+          demon_->inhibit(solver());
+        }
+    }
 
- private:
-  IntExpr* const expr_;
-  int64 value_;
-  Demon* demon_;
+    virtual std::string DebugString() const {
+        return StringPrintf("(relaxable %s <= %" GG_LL_FORMAT "d)",
+                            expr_->DebugString().c_str(), value_);
+    }
+
+    virtual IntVar* Var() {
+        return solver()->MakeIsLessOrEqualCstVar(expr_->Var(), value_);
+    }
+
+    virtual void Accept(ModelVisitor* const visitor) const {
+        visitor->BeginVisitConstraint(
+                RelaxableConstraint::LessEqConstTag, this);
+        RelaxableConstraint::Accept(visitor);
+        visitor->VisitIntegerExpressionArgument(
+                ModelVisitor::kExpressionArgument, expr_);
+        visitor->VisitIntegerArgument(ModelVisitor::kValueArgument, value_);
+        visitor->EndVisitConstraint(ModelVisitor::kLessOrEqual, this);
+    }
+
+    virtual IntExpr *GetExpr() const override {
+        return expr_;
+    }
+
+    /**
+    * Set new interval for the <= constraint.
+    *
+    * Note, l is actually ignore since it's always -inf for this constraint.
+    *
+    * @param l low interval value (ignored)
+    * @param h high interval value
+    */
+    virtual void SetNewParams(int64 l, int64 h) override {
+        solver()->SaveAndSetValue(&value_, h);
+    }
+
+    /**
+    * Get interval for the <= constraint.
+    *
+    * Low value is always -inf for this constraint.
+    *
+    * @param l low interval value
+    * @param h high interval value
+    */
+    virtual void GetParams(int64 &l, int64 &h) const override {
+        l = kint64min;
+        h = value_;
+    }
+
+private:
+    IntExpr* const expr_;
+    int64 value_;
+    Demon* demon_;
 };
-
-LessEqExprCst::LessEqExprCst(Solver* const s, IntExpr* const e, int64 v)
-    : RelaxableConstraint(s), expr_(e), value_(v), demon_(nullptr) {}
-
-void LessEqExprCst::Post() {
-  if (!expr_->IsVar() && expr_->Max() > value_) {
-    demon_ = solver()->MakeConstraintInitialPropagateCallback(this);
-    expr_->WhenRange(demon_);
-  } else {
-    // Let's clean the demon in case the constraint is posted during search.
-    demon_ = nullptr;
-  }
-}
-
-void LessEqExprCst::InitialPropagate() {
-  expr_->SetMax(value_);
-  if (demon_ != nullptr && expr_->Max() <= value_) {
-    demon_->inhibit(solver());
-  }
-}
-
-std::string LessEqExprCst::DebugString() const {
-  return StringPrintf("(%s <= %" GG_LL_FORMAT "d)",
-                      expr_->DebugString().c_str(), value_);
-}
 
 /**
  * This class represents constraint. Constraint is basically an interval,
@@ -424,11 +490,13 @@ public:
 	 * @param sl Searchlight instance
 	 * @param solvers
 	 * @param dist_w distance weight for the relaxation degree
+	 * @param res_num the number of results to track (top-k)
 	 */
-	Relaxator(Searchlight &sl, size_t solvers, double dist_w) :
+	Relaxator(Searchlight &sl, size_t solvers, double dist_w, size_t res_num) :
 		sl_(sl),
 		solvers_num_(solvers),
-		distance_weight_(dist_w) {}
+		distance_weight_(dist_w),
+		res_num_(res_num) {}
 
 	/**
 	 * Register new relaxation constraint for a particular solver.
@@ -444,7 +512,46 @@ public:
 			RelaxableConstraint *constr, IntExpr *expr,
 			int64 max_l, int64 max_h);
 
+	/**
+	 * Register a solver fail from a particular Searchlight solver.
+	 *
+	 * Check if the fail can be relaxed in the future, and if so, then save it.
+	 * Otherwise, just ignore it.
+	 *
+	 * @param solver_id SearchlightSolver id
+	 */
 	void RegisterFail(size_t solver_id);
+
+	/**
+	 * Update Lower Relaxation Degree (LDR) bound.
+	 *
+	 * @param lrd new lower relaxation degree bound
+	 */
+	void UpdateLRD(double lrd) {
+		assert(lrd >= 0.0 && lrd <= 1.0);
+		// Relaxed is fine here; we don't need any specific ordering
+		lrd_.store(lrd, std::memory_order_relaxed);
+	}
+
+	/**
+	 * Return current LRD.
+	 *
+	 * @return current LRD
+	 */
+	double GetLRD() const {
+		return lrd_.load(std::memory_order_relaxed);
+	}
+
+	/**
+	 * Check if the query is a relaxing one.
+	 *
+	 * @return true, if we're relaxing the query; false otherwise
+	 */
+	bool RelaxingQuery() const {
+		return !orig_consts_.empty();
+	}
+
+	void AddResult(const std::vector<int64> &const_expr_vals);
 
 private:
 	/*
@@ -559,8 +666,49 @@ private:
 	// Distance weight for the relaxation degree (query param)
 	const double distance_weight_;
 
+	// Maximum number of results to track
+	const size_t res_num_;
+
+	// Map of top results by relaxation degree
+	std::map<double, size_t> top_res_rd_;
+
 	// For concurrency control
 	std::mutex mtx_;
+};
+
+/**
+ * This search monitor catches fails and calls relaxator to record them for
+ * possible future replays.
+ */
+class FailCollectorMonitor : public SearchMonitor {
+public:
+	/**
+	 * Create a new FailCollectorMonitor.
+	 *
+	 * @param solver CP solver
+	 * @param rel query relaxator
+	 * @param sid Searchlight solver id
+	 */
+	FailCollectorMonitor(Solver &solver, Relaxator &rel, size_t sid) :
+		SearchMonitor(&solver),
+		relaxator_(rel),
+		solver_id_(sid) {}
+
+    /**
+     * Called at the beginning of a fail.
+     *
+     * Just call the relaxator. It knows what to do.
+     */
+	virtual void BeginFail() override {
+    	relaxator_.RegisterFail(solver_id_);
+    }
+
+private:
+	// Query relaxator
+	Relaxator &relaxator_;
+
+	// Searchlight solver id
+	size_t solver_id_;
 };
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_RELAX_H_ */

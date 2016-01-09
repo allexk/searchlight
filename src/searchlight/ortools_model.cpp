@@ -39,6 +39,7 @@
  */
 
 #include "ortools_model.h"
+#include "relax.h"
 
 #include <base/stl_util.h>
 #include <base/callback.h>
@@ -935,6 +936,7 @@ using operations_research::CPIntegerExpressionProto;
 using operations_research::CPModelLoader;
 using operations_research::FirstPassVisitor;
 using operations_research::SecondPassVisitor;
+using operations_research::CPConstraintProto;
 
 /*
  * Builds UDFs during model duplication (at import).
@@ -958,6 +960,95 @@ IntExpr* UDFBuilder(UDFFunctionCreator udf_creator, const AdapterPtr &adapter,
 
     return builder->solver()->RevAlloc(
             udf_creator(builder->solver(), adapter, vars, params));
+}
+
+// Relaxable constraint builders
+Constraint *BuildRelaxableLessOrEqual(CPModelLoader* const builder,
+                             const CPConstraintProto& proto) {
+    int64 id;
+    if (!builder->ScanArguments(ModelVisitor::kValueArgument, proto, &id)) {
+    	return nullptr;
+    }
+    IntExpr *expr;
+    if (!builder->ScanArguments(ModelVisitor::kExpressionArgument, proto,
+    		&expr)) {
+    	return nullptr;
+    }
+	int64 value;
+	if (!builder->ScanArguments(ModelVisitor::kValueArgument, proto,
+			&value)) {
+		return nullptr;
+	}
+	// All is valid; create
+	Solver *solver = builder->solver();
+	RelaxableConstraint *constr = solver->RevAlloc(
+			new LessEqExprCst(solver, expr, value));
+	constr->SetId(id);
+	return constr;
+}
+
+Constraint *BuildRelaxableGreaterOrEqual(CPModelLoader* const builder,
+                             const CPConstraintProto& proto) {
+    int64 id;
+    if (!builder->ScanArguments(ModelVisitor::kValueArgument, proto, &id)) {
+    	return nullptr;
+    }
+    IntExpr *expr;
+    if (!builder->ScanArguments(ModelVisitor::kExpressionArgument, proto,
+    		&expr)) {
+    	return nullptr;
+    }
+	int64 value;
+	if (!builder->ScanArguments(ModelVisitor::kValueArgument, proto,
+			&value)) {
+		return nullptr;
+	}
+	// All is valid; create
+	Solver *solver = builder->solver();
+	RelaxableConstraint *constr = solver->RevAlloc(
+			new GreaterEqExprCst(solver, expr, value));
+	constr->SetId(id);
+	return constr;
+}
+
+Constraint *BuildRelaxableBetween(CPModelLoader* const builder,
+                             const CPConstraintProto& proto) {
+    int64 id;
+    if (!builder->ScanArguments(ModelVisitor::kValueArgument, proto, &id)) {
+    	return nullptr;
+    }
+	int64 min_value;
+	if (!builder->ScanArguments(ModelVisitor::kValueArgument, proto,
+			&min_value)) {
+		return nullptr;
+	}
+    IntExpr *expr;
+    if (!builder->ScanArguments(ModelVisitor::kExpressionArgument, proto,
+    		&expr)) {
+    	return nullptr;
+    }
+	int64 max_value;
+	if (!builder->ScanArguments(ModelVisitor::kValueArgument, proto,
+			&max_value)) {
+		return nullptr;
+	}
+	// All is valid; create
+	Solver *solver = builder->solver();
+	RelaxableConstraint *constr = solver->RevAlloc(
+			new BetweenCt(solver, expr, min_value, max_value));
+	constr->SetId(id);
+	return constr;
+}
+
+// Register builders for relaxable constraints
+bool RegisterRelaxableCstBuilders(Solver &solver) {
+	solver.RegisterBuilder(RelaxableConstraint::BetweenConstTag,
+			NewPermanentCallback(BuildRelaxableBetween));
+	solver.RegisterBuilder(RelaxableConstraint::LessEqConstTag,
+			NewPermanentCallback(BuildRelaxableLessOrEqual));
+	solver.RegisterBuilder(RelaxableConstraint::GreaterEqConstTag,
+			NewPermanentCallback(BuildRelaxableGreaterOrEqual));
+	return true;
 }
 
 /*
@@ -1002,8 +1093,9 @@ bool CloneModel(const Searchlight &sl, const Solver &from, Solver &to,
 bool CloneModel(const Searchlight &sl, const CPModelProto &from, Solver &to,
         const AdapterPtr &adapter) {
 
-    // Register UDF builder
-    if (!RegisterUDFBuilder(sl, to, adapter)) {
+    // Register UDF and relaxable constraints builder
+    if (!RegisterUDFBuilder(sl, to, adapter) ||
+    		!RegisterRelaxableCstBuilders(to)) {
         return false;
     }
 

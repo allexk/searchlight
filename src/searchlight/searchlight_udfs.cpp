@@ -106,7 +106,8 @@ public:
      */
     virtual int64 Min() const {
         if (!ComputeMinMax()) {
-            solver()->Fail();
+            //solver()->Fail();
+        	return kint64max;
         }
         return min_;
     }
@@ -132,7 +133,8 @@ public:
      */
     virtual int64 Max() const {
         if (!ComputeMinMax()) {
-            solver()->Fail();
+            //solver()->Fail();
+        	return kint64min;
         }
         return max_;
     }
@@ -483,7 +485,8 @@ public:
      */
     virtual int64 Min() const {
         if (!ComputeMinMax()) {
-            solver()->Fail();
+            //solver()->Fail();
+        	return kint64max;
         }
         return min_;
     }
@@ -509,7 +512,8 @@ public:
      */
     virtual int64 Max() const {
         if (!ComputeMinMax()) {
-            solver()->Fail();
+            //solver()->Fail();
+        	return kint64min;
         }
         return max_;
     }
