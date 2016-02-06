@@ -183,7 +183,7 @@ public:
      * @param work assignments to send
      * @param dest_solver id of the solver to send the work to
      */
-    void DispatchWork(const LiteAssignmentVector &work,
+    void DispatchWork(const CandidateVector &work,
             uint64_t dest_solver);
 
     /**
@@ -196,7 +196,7 @@ public:
      * @param dest destination validator
      * @param forw_id id of the forward
      */
-    void ForwardCandidates(const LiteAssignmentVector &cands,
+    void ForwardCandidates(const CandidateVector &cands,
             const std::vector<int64_t> &zones,
             InstanceID dest, uint64_t forw_id) const;
 
@@ -221,6 +221,13 @@ public:
     void BroadcastValidatorInfo(size_t cands_num) const;
 
     /**
+     * Broadcast a newly found solution's relaxation degree (RD).
+     *
+     * @param rd relaxation degree
+     */
+    void BroadcastRD(double rd) const;
+
+    /**
      * Returns query context of this task.
      *
      * @return task's query context
@@ -236,8 +243,10 @@ public:
      * user (via SciDb) or be sent to the coordinator.
      *
      * @param values solution values
+     * @param add_values additional values (e.g., tracking values)
      */
-    void ReportSolution(const std::vector<int64_t> &values);
+    void ReportSolution(const std::vector<int64_t> &values,
+        const std::vector<int64_t> &add_values);
 
     /**
      * Returns the property tree containing configuration options.
@@ -381,6 +390,44 @@ public:
      */
     bool PendingSolverJobs(bool check_idle_solvers);
 
+    /**
+     * Solver id that is not equivalent to any valid id.
+     */
+    static const uint64_t INVALID_SOLVER_ID = ~uint64_t(0);
+
+    /**
+     * Return instance ID from the global solver ID.
+     *
+     * @param id global solver ID
+     * @return instance ID
+     */
+    static inline scidb::InstanceID GetInstanceFromSolverID(uint64_t id) {
+        // Just ignore low 32 bits
+        return id >> 32;
+    }
+
+    /**
+     * Return local solver ID from global solver ID.
+     *
+     * @param id global solver ID
+     * @return local solver ID
+     */
+    static inline uint32_t GetLocalIDFromSolverID(uint64_t id) {
+        // Just ignore high 32 bits
+        return uint32_t(id);
+    }
+
+    /**
+     * Create global solver ID from the instance ID and local solver ID.
+     *
+     * @param inst instance ID
+     * @param ord local solver ID
+     * @return global solver ID
+     */
+    static inline uint64_t CreateSolverID(scidb::InstanceID inst, uint32_t ord) {
+        return (uint64_t(inst) << 32) + ord;
+    }
+
 private:
     // Contains information about the state of distributed search.
     struct DistributedSearchInfo {
@@ -498,7 +545,7 @@ private:
 
     // Dispatches a new load to a solver or stores it until a thread is ready.
     // Note: the load will be unusable after the call
-    void DispatchOrStoreLoad(LiteAssignmentVector &load,
+    void DispatchOrStoreLoad(CandidateVector &load,
             uint64_t dest_solver);
 
     // The main DLL Handler (we need it to be destroyed last!)
@@ -539,7 +586,7 @@ private:
     std::unordered_set<uint64_t> pending_idle_solvers_;
 
     // Pending external loads waiting for a solver
-    std::unordered_map<uint64_t, LiteAssignmentVector> pending_assgns_;
+    std::unordered_map<uint64_t, CandidateVector> pending_assgns_;
 
     // Mutex to protect shared task structures
     std::mutex mtx_;

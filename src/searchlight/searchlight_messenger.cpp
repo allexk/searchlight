@@ -703,7 +703,8 @@ void SearchlightMessenger::HandleGeneralMessage(
 }
 
 void SearchlightMessenger::SendSolution(const boost::shared_ptr<Query> &query,
-        const std::vector<int64_t> &vals) const {
+        const std::vector<int64_t> &vals,
+        const std::vector<int64_t> &add_vals) const {
 
     // determine the coordinator
     const InstanceID coord_id = query->getCoordinatorID();
@@ -720,8 +721,8 @@ void SearchlightMessenger::SendSolution(const boost::shared_ptr<Query> &query,
     boost::shared_ptr<SearchlightSolution> record =
             msg->getRecord<SearchlightSolution>();
 
-    // fill the record (only mins, since these are points)
-    PackAssignment(vals, nullptr, *record->mutable_solution());
+    // fill the record (values in mins, additional values in maxs)
+    PackAssignment(vals, add_vals, *record->mutable_solution());
 
     // log
     LOG4CXX_TRACE(logger, "Sending solution to the coordinator: qid=" <<
@@ -858,7 +859,7 @@ void SearchlightMessenger::RejectHelp(const boost::shared_ptr<Query> &query,
 }
 
 void SearchlightMessenger::DispatchWork(const boost::shared_ptr<Query> &query,
-        const LiteAssignmentVector &work,
+        const CandidateVector &work,
         uint64_t solver, InstanceID dest) const {
     // prepare the message
     boost::shared_ptr<scidb::MessageDesc> msg =
@@ -909,7 +910,7 @@ void SearchlightMessenger::AcceptHelp(const boost::shared_ptr<Query> &query,
 
 void SearchlightMessenger::ForwardCandidates(
         const boost::shared_ptr<Query> &query,
-        const LiteAssignmentVector &cands,
+        const CandidateVector &cands,
         const std::vector<int64_t> &zones,
         InstanceID dest,
         uint64_t forw_id) const {
@@ -984,8 +985,7 @@ void SearchlightMessenger::SendBalanceResult(
     record->set_result(result);
     if (!add_vals.empty()) {
 		VarAssignment *var_asgn = record->add_load();
-		LiteVarAssignment asgn{add_vals, {}};
-		PackAssignment(asgn, *var_asgn, {});
+		PackAssignment(add_vals, {}, *var_asgn);
     }
 
     // log
@@ -1044,6 +1044,26 @@ void SearchlightMessenger::BroadcastValidatorInfo(
     network_manager->broadcastLogical(msg);
 }
 
+void SearchlightMessenger::BroadcastRD(const boost::shared_ptr<Query> &query,
+                                       double rd) const {
+    // prepare the message
+    boost::shared_ptr<scidb::MessageDesc> msg =
+            PrepareMessage(query->getQueryID(), mtSLBalance);
+    boost::shared_ptr<SearchlightBalance> record =
+            msg->getRecord<SearchlightBalance>();
+
+    // fill the record
+    record->set_type(SearchlightBalance::LRD);
+    record->set_lrd(rd);
+
+    // log
+    LOG4CXX_TRACE(logger, "Broadcasting new RD: rd=" << rd);
+
+    // send
+    NetworkManager *network_manager = NetworkManager::getInstance();
+    network_manager->broadcastLogical(msg);
+}
+
 void SearchlightMessenger::BroadcastCommit(
         const boost::shared_ptr<Query> &query) const {
     // prepare the message
@@ -1078,66 +1098,61 @@ void SearchlightMessenger::Synchronize(const boost::shared_ptr<Query> &query) {
 }
 
 void SearchlightMessenger::PackAssignment(
-        const std::vector<int64_t> &mins, const std::vector<int64_t> *maxs,
+        const std::vector<int64_t> &mins, const std::vector<int64_t> &maxs,
         VarAssignment &msg) {
+    const bool is_range = !maxs.empty();
+    assert(!is_range || mins.size() == maxs.size());
     for (size_t i = 0; i < mins.size(); i++) {
         msg.add_var_min(mins[i]);
-        if (maxs) {
-            msg.add_var_max((*maxs)[i]);
+        if (is_range) {
+            msg.add_var_max(maxs[i]);
         }
     }
 }
 
 void SearchlightMessenger::UnpackAssignment(const VarAssignment &msg,
-        std::vector<int64_t> &mins, std::vector<int64_t> *maxs) {
+        std::vector<int64_t> &mins, std::vector<int64_t> &maxs) {
+    const bool is_range = msg.var_max_size();
     mins.resize(msg.var_min_size());
-    if (maxs) {
+    if (is_range) {
         assert(msg.var_min_size() == msg.var_max_size());
-        maxs->resize(msg.var_max_size());
+        maxs.resize(msg.var_max_size());
     }
     for (int i = 0; i < msg.var_min_size(); i++) {
         mins[i] = msg.var_min(i);
-        if (maxs) {
-            (*maxs)[i] = msg.var_max(i);
+        if (is_range) {
+            maxs[i] = msg.var_max(i);
         }
     }
 }
 
 void SearchlightMessenger::UnpackAssignment(const VarAssignment &msg,
-        LiteVarAssignment &asgn) {
-    const bool msg_is_range = msg.var_max_size();
-    assert(!msg_is_range || msg.var_min_size() == msg.var_max_size());
-
-    asgn.mins_.resize(msg.var_min_size());
-    if (msg_is_range) {
-        asgn.maxs_.resize(msg.var_max_size());
-    }
-
-    for (int i = 0; i < msg.var_min_size(); i++) {
-        asgn.mins_[i] = msg.var_min(i);
-        if (msg_is_range) {
-            asgn.maxs_[i] = msg.var_max(i);
+        CandidateAssignment &asgn) {
+    UnpackAssignment(msg, asgn.var_asgn_.mins_, asgn.var_asgn_.maxs_);
+    if (msg.rel_const_size()) {
+        asgn.relaxed_constrs_.resize(msg.rel_const_size());
+        for (int i = 0; i < msg.rel_const_size(); ++i) {
+            asgn.relaxed_constrs_[i] = msg.rel_const(i);
         }
     }
 }
 
-void SearchlightMessenger::PackAssignment(const LiteVarAssignment &asgn,
+void SearchlightMessenger::PackAssignment(const CandidateAssignment &asgn,
         VarAssignment &msg, const std::vector<int64_t> &aux) {
-    const bool asgn_is_range = !asgn.maxs_.empty();
-    for (int i = 0; i < asgn.mins_.size(); i++) {
-        msg.add_var_min(asgn.mins_[i]);
-        if (asgn_is_range) {
-            msg.add_var_max(asgn.maxs_[i]);
-        }
-    }
+    const LiteVarAssignment &var_asgn = asgn.var_asgn_;
+    PackAssignment(var_asgn.mins_, var_asgn.maxs_, msg);
     // Aux info, if any
     for (const auto x: aux) {
         msg.add_aux_info(x);
     }
+    // Relaxed constraint info
+    for (const auto x: asgn.relaxed_constrs_) {
+        msg.add_rel_const(x);
+    }
 }
 
 void SearchlightMessenger::FillBalanceMessage(SearchlightBalance &msg,
-        const LiteAssignmentVector &asgns,
+        const CandidateVector &asgns,
         const std::vector<int64_t> &aux) {
     if (aux.empty()) {
         FillBalanceMessage(msg, asgns);
@@ -1152,7 +1167,7 @@ void SearchlightMessenger::FillBalanceMessage(SearchlightBalance &msg,
 }
 
 void SearchlightMessenger::FillBalanceMessage(SearchlightBalance &msg,
-        const LiteAssignmentVector &asgns) {
+        const CandidateVector &asgns) {
     for (size_t i = 0; i < asgns.size(); ++i) {
         VarAssignment *var_asgn = msg.add_load();
         PackAssignment(asgns[i], *var_asgn, {});

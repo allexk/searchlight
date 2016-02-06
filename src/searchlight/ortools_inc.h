@@ -75,6 +75,21 @@ typedef std::vector<IntVar *> IntVarVector;
  */
 typedef std::unique_ptr<Assignment> AssignmentPtr;
 
+/**
+ * Information about the domain of an integer variable.
+ */
+struct IntVarDomainInfo {
+    /**
+     * Is it continuous variable (w/o holes)?
+     */
+    bool interval_;
+
+    /**
+     * Domain values: min/max for continuous; vector of values for the rest.
+     */
+    std::vector<int64> values_;
+};
+using IntVarDomainInfoVector = std::vector<IntVarDomainInfo>;
 
 /**
  * Converts a lite assignment to a full Assignment.

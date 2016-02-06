@@ -506,8 +506,8 @@ Decision* SLSearch::Next(Solver* const s) {
         LOG4CXX_DEBUG(logger, "Off-loading a region to a helper: "
                 << asgn->DebugString());
 
-        LiteAssignmentVector work(1);
-        FullAssignmentToLite(*asgn, 0, work.back());
+        CandidateVector work(1);
+        FullAssignmentToLite(*asgn, 0, work.back().var_asgn_);
         sl_solver_.DispatchWork(work);
 
         return s->MakeFailDecision();
@@ -781,8 +781,8 @@ void BalancingMonitor::BeginNextDecision(DecisionBuilder* const b) {
             LOG4CXX_DEBUG(logger, "General balancer: Off-loading a region to a"
                     "helper: " << snapshot_asgn_.DebugString());
 
-            LiteAssignmentVector work(1);
-            FullAssignmentToLite(snapshot_asgn_, 0, work.back());
+            CandidateVector work(1);
+            FullAssignmentToLite(snapshot_asgn_, 0, work.back().var_asgn_);
             sl_solver_.DispatchWork(work);
 
             // Fail will "detach" the tree from the current solver

@@ -49,16 +49,30 @@ public:
      * Constructs a restore assignment decision.
      *
      * @param asgn the assignment to restore
+     * @param relaxed_constrs relaxed constraints
+     * @param rcs relaxable constraints
      */
-    RestoreAssignment(Assignment *asgn) : asgn_(asgn) {}
+    RestoreAssignment(Assignment *asgn, const Int64Vector &relaxed_constrs,
+                      const RelaxableConstraints &rcs) :
+        asgn_(asgn),
+        relaxed_constrs_(relaxed_constrs),
+        constrs_(rcs) {}
 
     /**
      * The left branch. In this case it restores the assignment.
      *
      * @param s the solver
      */
-    virtual void Apply(Solver* const s) {
+    virtual void Apply(Solver* const s) override {
         LOG4CXX_TRACE(logger, "Validating: " << asgn_->DebugString());
+        // Set relaxation constraints
+        for (size_t i = 0; i < relaxed_constrs_.size(); i += 3) {
+            const int64_t cid = relaxed_constrs_[i];
+            const int64_t l_param = relaxed_constrs_[i + 1];
+            const int64_t h_param = relaxed_constrs_[i + 2];
+            constrs_[cid]->SetNewParams(l_param, h_param);
+        }
+        // Check the assignment
         asgn_->Restore();
     }
 
@@ -67,20 +81,26 @@ public:
      *
      * @param s the solver
      */
-    virtual void Refute(Solver* const s) {}
+    virtual void Refute(Solver* const s) override {}
 
     /**
      * Returns a string for debug logging.
      *
      * @return a debug string
      */
-    virtual std::string DebugString() const {
+    virtual std::string DebugString() const override {
         return "RestoreAssignmentDecision";
     }
 
 private:
     // The assignment to restore
     Assignment *asgn_;
+
+    // Relaxed constraints
+    const Int64Vector &relaxed_constrs_;
+
+    // Relaxable constraints
+    const RelaxableConstraints &constrs_;
 };
 
 /**
@@ -133,24 +153,31 @@ public:
      * @param validator servicing validator
      * @param adapter adapter used for access
      * @param s the solver
+     * @param rcs relaxable constraints
      * @param restart_period validator restart period
      * @param prototype prototype assignment to generate validations
+     * @param track_prototype tracking variables prototype
+     * @param relax_prototype relaxable constraints expressions prototype
      * @param asgns initial assignments to validate
      * @param slave true, if this is a slave builder for a helper
      */
     explicit RestoreAssignmentBuilder(Validator &validator,
             const AdapterPtr &adapter, Solver *s,
+            const RelaxableConstraints &rcs,
             int restart_period, const Assignment *prototype,
 			const Assignment &track_prototype,
-            Validator::CandidateVector &&asgns,
+			const Assignment &relax_prototype,
+            CandidateVector &&asgns,
             bool slave)
         : validator_(validator),
           adapter_{adapter},
+          constrs_{rcs},
           asgns_{std::move(asgns)},
           action_succeeded_(false),
           aux_monitor_(*this, s, restart_period),
           last_asgn_{new Assignment{prototype}},
 		  track_vars_asgn_{&track_prototype},
+		  relax_asgn_{&relax_prototype},
           slave_{slave} {}
 
 
@@ -177,13 +204,19 @@ public:
             // We performed some action: should handle the result
             if (last_action_.type_ == Action::Type::LOCAL_CHECK) {
                 if (action_succeeded_) {
-                    LiteVarAssignment lite_asgn;
-                    FullAssignmentToLite(*last_asgn_, 0, lite_asgn);
-                    FullAssignmentToLite(track_vars_asgn_,
-                    		last_asgn_->NumIntVars(), lite_asgn);
-                    validator_.sl_task_.ReportSolution(lite_asgn.mins_);
+                    if (validator_.CheckRelaxation(
+                            asgns_.back().var_asgn_, true)) {
+                        LiteVarAssignment lite_track_asgn;
+                        FullAssignmentToLite(track_vars_asgn_,
+                            0, lite_track_asgn);
+                        validator_.sl_task_.ReportSolution(
+                                asgns_.back().var_asgn_.mins_,
+                                lite_track_asgn.mins_);
+                    }
                 }
             } else if (last_action_.type_ == Action::Type::REMOTE_CHECK) {
+                action_succeeded_ = action_succeeded_ &&
+                      validator_.CheckRelaxation(asgns_.back().var_asgn_, true);
                 LiteVarAssignment lite_asgn;
                 if (action_succeeded_) {
                 	FullAssignmentToLite(track_vars_asgn_, 0, lite_asgn);
@@ -197,21 +230,25 @@ public:
                 const bool forwarded =
                         validator_.CheckForward(
                                 adapter_->GetCurrentStats().chunks_pos_,
-                                last_asgn_.get());
+                                asgns_.back());
                 if (!forwarded) {
                     if (validator_.LocalZonesNumber() > 1) {
                         validator_.PushToLocalZone(
                                 adapter_->GetCurrentStats().chunks_pos_,
-                                last_asgn_.get());
+                                asgns_.back());
                     } else {
                         // one zone, check here
                         last_action_.type_ = Action::Type::LOCAL_CHECK;
                         adapter_->SetAdapterMode(Adapter::EXACT);
                         return solver->RevAlloc(
-                                new RestoreAssignment{last_asgn_.get()});
+                                new RestoreAssignment{last_asgn_.get(),
+                                    asgns_.back().relaxed_constrs_,
+                                    constrs_});
                     }
                 }
             }
+            // Pop the assignment here, so we can use the info from it earlier
+            asgns_.pop_back();
         }
 
         // check for searchlight termination
@@ -222,31 +259,45 @@ public:
         }
 
         // pick the next assignment
-        if (asgns_.empty()) {
-            if (!slave_) {
-                // need to ask the validator
-                Validator::CandidateVector *new_asgns =
-                        validator_.GetNextAssignments();
-                if (!new_asgns) {
-                    // No more assignments: stop the validator search
-                    LOG4CXX_INFO(logger, "Stopping the validator search");
+        while (true) {
+            if (asgns_.empty()) {
+                if (!slave_) {
+                    // need to ask the validator
+                    CandidateVector *new_asgns =
+                            validator_.GetNextAssignments();
+                    if (!new_asgns) {
+                        // No more assignments: stop the validator search
+                        LOG4CXX_INFO(logger, "Stopping the validator search");
+                        solver->Fail();
+                    }
+                    asgns_.swap(*new_asgns);
+
+                    LOG4CXX_TRACE(logger, "Got " << asgns_.size()
+                            << " new assignments to check");
+                    delete new_asgns;
+                } else {
+                    LOG4CXX_INFO(logger, "Helper validator finished workload...");
                     solver->Fail();
                 }
-                asgns_.swap(*new_asgns);
-
-                LOG4CXX_TRACE(logger, "Got " << asgns_.size()
-                        << " new assignments to check");
-                delete new_asgns;
+            }
+            assert(!asgns_.empty());
+            const CandidateAssignment &ca = asgns_.back();
+            if (ca.relaxed_constrs_.empty() ||
+                    validator_.CheckRelaxation(ca.var_asgn_, false)) {
+                // Exit if this is not a relaxation or if it passes LRD
+                break;
             } else {
-                LOG4CXX_INFO(logger, "Helper validator finished workload...");
-                solver->Fail();
+                // Didn't pass the LRD check -- ignore
+                if (ca.forw_id_ >= 0) {
+                    validator_.SendForwardResult(ca.forw_id_, false, {});
+                }
+                asgns_.pop_back();
             }
         }
 
         // Prepare assignment
         const int64_t forw_id = asgns_.back().forw_id_;
         LiteToFullAssignment(*last_asgn_, asgns_.back().var_asgn_);
-        asgns_.pop_back();
 
         last_action_.forward_id_ = forw_id;
         if (forw_id >= 0) {
@@ -269,7 +320,8 @@ public:
             adapter_->SetAdapterMode(Adapter::EXACT);
         }
 
-        return solver->RevAlloc(new RestoreAssignment{last_asgn_.get()});
+        return solver->RevAlloc(new RestoreAssignment{last_asgn_.get(),
+            asgns_.back().relaxed_constrs_, constrs_});
     }
 
     /**
@@ -310,6 +362,7 @@ public:
                 restore_db_.action_succeeded_ = true;
                 if (restore_db_.last_action_.type_ != Action::Type::SIM) {
                 	restore_db_.track_vars_asgn_.Store();
+                	restore_db_.relax_asgn_.Store();
                 }
                 my_fail_ = true;
                 solver()->Fail();
@@ -347,8 +400,11 @@ public:
     // Adapter used for access
     AdapterPtr adapter_;
 
+    // Relaxable constraints
+    const RelaxableConstraints &constrs_;
+
     // Assignments to validate
-    Validator::CandidateVector asgns_;
+    CandidateVector asgns_;
 
     // True, if the last action was a success (no fail on solver)
     bool action_succeeded_;
@@ -361,6 +417,9 @@ public:
 
     // Additional tracking vars
     Assignment track_vars_asgn_;
+
+    // Relaxable constraints expressions prototype
+    Assignment relax_asgn_;
 
     // Last action taken by the DB
     Action last_action_;
@@ -376,7 +435,8 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
         solver_("validator solver"),
         adapter_(sl.CreateAdapter("validator")), // DUMB mode by default!
         search_vars_prototype_(&solver_),
-		track_vars_prototype_(&solver_) {
+		track_vars_prototype_(&solver_),
+		rel_const_prototype_(&solver_) {
 
     // First, clone the solver (solver 0 is always available)
     ExportModel(sl_.GetSearchSolver(0), &validator_model_);
@@ -399,10 +459,12 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
      * Now, we want to find all decision variables. We do this via a
      * custom visitor.
      */
-    VariableFinder var_finder;
+    ModelCollector var_finder;
     solver_.Accept(&var_finder);
     var_finder.FillAssignment(var_names, search_vars_prototype_);
     var_finder.FillAssignment(sl.GetTrackExprs(), track_vars_prototype_);
+    relaxable_constrs_ = var_finder.GetRelaxableConstraints();
+    var_finder.FillRelaxAssignment(rel_const_prototype_);
 
     const SearchlightConfig &sl_config = sl_task_.GetConfig();
     max_pending_validations_ =
@@ -502,14 +564,16 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
     validators_cands_info_.resize(active_validators.size());
 }
 
-void Validator::AddSolution(const Assignment &sol) {
+void Validator::AddSolution(const Assignment &sol,
+                            const Int64Vector &rel_const) {
     LiteVarAssignment lite_sol;
     FullAssignmentToLite(sol, 0, lite_sol);
 
     LOG4CXX_TRACE(logger, "New solution to validate: " << sol.DebugString());
 
     std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
-    PushCandidate({std::move(lite_sol), -1}, to_validate_.size() - 1);
+    PushCandidate({std::move(lite_sol), rel_const, -1},
+                  to_validate_.size() - 1);
 
     // We might have to wait -- flood control
     while (to_validate_total_.load(std::memory_order_relaxed) >
@@ -562,7 +626,7 @@ void Validator::BroadcastCandidatesCount() {
     }
 }
 
-void Validator::AddRemoteCandidates(LiteAssignmentVector &cands,
+void Validator::AddRemoteCandidates(CandidateVector &cands,
         const Int64Vector &zones,
         InstanceID src, uint64_t forw_id) {
     assert(cands.size() == zones.size());
@@ -570,7 +634,8 @@ void Validator::AddRemoteCandidates(LiteAssignmentVector &cands,
     std::lock_guard<std::mutex> validate_lock(to_validate_mtx_);
     for (size_t i = 0; i < cands.size(); i++) {
         const int64_t cand_id = remote_cand_id_++;
-        PushCandidate({std::move(cands[i]), cand_id}, zones[i]);
+        cands[i].forw_id_ = cand_id;
+        PushCandidate(std::move(cands[i]), zones[i]);
         remote_candidates_.emplace(cand_id, std::make_pair(src, forw_id++));
     }
     validate_cond_.notify_all();
@@ -595,10 +660,7 @@ void Validator::HandleForwardResult(uint64_t id, bool result,
         assert(forwarded_candidates_.find(id) != forwarded_candidates_.end());
         if (result) {
         	std::vector<int64_t> &sol = forwarded_candidates_[id].mins_;
-        	if (!add_vals.empty()) {
-        		sol.insert(sol.end(), add_vals.begin(), add_vals.end());
-        	}
-            sl_task_.ReportSolution(forwarded_candidates_[id].mins_);
+            sl_task_.ReportSolution(forwarded_candidates_[id].mins_, add_vals);
         }
         forwarded_candidates_.erase(id);
         if (forwarded_candidates_.empty()) {
@@ -634,20 +696,17 @@ int Validator::DetermineLocalZone(const CoordinatesSequence &chunks) const {
 }
 
 void Validator::PushToLocalZone(const CoordinateSet &chunks,
-        const Assignment *asgn) {
+                                const CandidateAssignment &asgn) {
     // Determine zone
     const size_t zone = DetermineLocalZone(chunks);
-
-    // Convert and push
-    LiteVarAssignment lite_sol;
-    FullAssignmentToLite(*asgn, 0, lite_sol);
-
+    CandidateAssignment new_asgn(asgn);
+    new_asgn.forw_id_ = -2;
     std::lock_guard<std::mutex> lock{to_validate_mtx_};
-    PushCandidate({std::move(lite_sol), -2}, zone);
+    PushCandidate(std::move(new_asgn), zone);
 }
 
 bool Validator::CheckForward(const CoordinateSet &chunks,
-        const Assignment *asgn) {
+                             const CandidateAssignment &asgn) {
     const auto &active_validators = sl_task_.GetActiveValidators();
     std::vector<int> inst_counts(active_validators.size());
 
@@ -710,13 +769,11 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
         validators_cands_info_[max_inst]++;
 
         // forward
-        LiteAssignmentVector asgns(1);
-        FullAssignmentToLite(*asgn, 0, asgns[0]);
         uint64_t cand_id;
         {
             std::lock_guard<std::mutex> lock{to_validate_mtx_};
             cand_id = forw_id_++;
-            forwarded_candidates_.emplace(cand_id, asgns[0]);
+            forwarded_candidates_.emplace(cand_id, asgn.var_asgn_);
         }
 
         /*
@@ -739,7 +796,7 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
 //            coords.emplace_back(dedup_coords.begin(), dedup_coords.end());
 //        }
 
-        sl_task_.ForwardCandidates(asgns, zones, active_validators[max_inst],
+        sl_task_.ForwardCandidates({asgn}, zones, active_validators[max_inst],
                 cand_id);
         return true;
     }
@@ -747,6 +804,25 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
     // This validator must be active here!
     assert(my_logical_id_ != -1);
     return false;
+}
+
+bool Validator::CheckRelaxation(const LiteVarAssignment &relax_asgn,
+                                bool report_rd) const {
+    Relaxator *relaxator = sl_.GetRelaxator();
+    if (!relaxator) {
+        // Not relaxing; check always passes
+        return true;
+    }
+    const double old_lrd = relaxator->GetLRD();
+    const double rd = relaxator->ComputeResultRelaxationDegree(relax_asgn.mins_);
+    const bool passes_lrd = rd <= old_lrd;
+    if (passes_lrd && report_rd) {
+        // Report to the local relaxator and...
+        relaxator->ReportResult(rd);
+        // tell the rest
+        sl_task_.BroadcastRD(rd);
+    }
+    return passes_lrd;
 }
 
 int Validator::FindValidatorForReforwards() {
@@ -812,8 +888,9 @@ void Validator::operator()() {
     LOG4CXX_INFO(logger, "Starting the validator search");
     DecisionBuilder *db =
             solver_.RevAlloc(new RestoreAssignmentBuilder(*this, adapter_,
-                    &solver_, restart_period_, &search_vars_prototype_,
-					track_vars_prototype_, {},
+                    &solver_, relaxable_constrs_,
+                    restart_period_, &search_vars_prototype_,
+					track_vars_prototype_, rel_const_prototype_, {},
                     false));
     try {
         solver_status_ = solver_.Solve(db);
@@ -841,7 +918,7 @@ void Validator::operator()() {
     LOG4CXX_INFO(logger, "Validator exited solve()");
 }
 
-Validator::CandidateVector *Validator::GetNextAssignments() {
+CandidateVector *Validator::GetNextAssignments() {
     /*
      * For now, a simple policy: wait until we get an assignment to
      * validate and then check it.
@@ -943,7 +1020,7 @@ void Validator::RebalanceAndSend(size_t cands, int validator) {
      * different id ranges for forwards and re-forwards. So, we send them
      * as two different batches.
      */
-    LiteAssignmentVector reforwards, forwards;
+    CandidateVector reforwards, forwards;
     Int64Vector reforwards_zones, forwards_zones;
     reforwards.reserve(cands);
     forwards.reserve(cands);
@@ -953,7 +1030,7 @@ void Validator::RebalanceAndSend(size_t cands, int validator) {
     const uint64_t start_reforw_id = reforw_id_;
 
     // Rebalance
-    FillInRebalnaceTransfer(cands, reforwards, reforwards_zones,
+    FillInRebalanceTransfer(cands, reforwards, reforwards_zones,
             forwards, forwards_zones);
     assert(!reforwards.empty() || !forwards.empty());
 
@@ -971,10 +1048,10 @@ void Validator::RebalanceAndSend(size_t cands, int validator) {
     }
 }
 
-void Validator::FillInRebalnaceTransfer(size_t cands,
-        LiteAssignmentVector &reforwards,
+void Validator::FillInRebalanceTransfer(size_t cands,
+        CandidateVector &reforwards,
         Int64Vector &reforwards_zones,
-        LiteAssignmentVector &forwards,
+        CandidateVector &forwards,
         Int64Vector &forwards_zones) {
     // Sanity checks
     assert(cands < CountNonSimulatedCandidates() && my_logical_id_ != -1);
@@ -989,16 +1066,16 @@ void Validator::FillInRebalnaceTransfer(size_t cands,
                 for (auto &cand: cands_batch) {
                     if (cand.forw_id_ >= 0) {
                         // Reforward
-                        reforwards.emplace_back(std::move(cand.var_asgn_));
-                        reforwards_zones.push_back(zone);
                         reforwarded_candidates_.emplace(
                                 reforw_id_++, cand.forw_id_);
+                        reforwards.emplace_back(std::move(cand));
+                        reforwards_zones.push_back(zone);
                     } else {
                         // Local
                         assert(cand.forw_id_ == -2);
                         forwarded_candidates_.emplace(
                                 forw_id_++, cand.var_asgn_);
-                        forwards.emplace_back(std::move(cand.var_asgn_));
+                        forwards.emplace_back(std::move(cand));
                         forwards_zones.push_back(zone);
                     }
                 }
@@ -1017,7 +1094,7 @@ void Validator::FillInRebalnaceTransfer(size_t cands,
     validators_cands_info_[my_logical_id_] -= total_rebalanced;
 }
 
-Validator::CandidateVector Validator::GetWorkload() {
+CandidateVector Validator::GetWorkload() {
     assert(to_validate_total_.load(std::memory_order_relaxed));
 
     CandidateVector res;
@@ -1138,6 +1215,7 @@ Validator::ValidatorHelper::ValidatorHelper(int id, Validator &parent,
                         "validator helper_" + std::to_string(id))},
                 prototype_{&solver_},
 				track_prototype_{&solver_},
+				rel_const_prototype_{&solver_},
                 id_{id} {
     /*
      *  First, clone the solver. It's crucial to create it from the model and
@@ -1154,7 +1232,7 @@ Validator::ValidatorHelper::ValidatorHelper(int id, Validator &parent,
      * Now, we want to find all decision variables. We do this via a
      * custom visitor.
      */
-    VariableFinder var_finder;
+    ModelCollector var_finder;
     solver_.Accept(&var_finder);
     StringVector search_var_names;
     for (const auto &elem: init_assignment.IntVarContainer().elements()) {
@@ -1162,6 +1240,8 @@ Validator::ValidatorHelper::ValidatorHelper(int id, Validator &parent,
     }
     var_finder.FillAssignment(search_var_names, prototype_);
     var_finder.FillAssignment(parent_.sl_.GetTrackExprs(), track_prototype_);
+    relaxable_constrs_ = var_finder.GetRelaxableConstraints();
+    var_finder.FillRelaxAssignment(rel_const_prototype_);
 }
 
 void Validator::ValidatorHelper::operator()() {
@@ -1174,7 +1254,9 @@ void Validator::ValidatorHelper::operator()() {
          */
         const std::unique_ptr<DecisionBuilder> db{
                 new RestoreAssignmentBuilder(parent_, adapter_,
-                        &solver_, 0, &prototype_, track_prototype_,
+                        &solver_, relaxable_constrs_,
+                        0, &prototype_, track_prototype_,
+                        rel_const_prototype_,
                         std::move(workload_), true)};
         adapter_->SetAdapterMode(Adapter::DUMB); // Will be switched in Next()
         try {

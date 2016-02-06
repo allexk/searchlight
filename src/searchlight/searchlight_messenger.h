@@ -236,6 +236,14 @@ public:
             size_t cands_num) const;
 
     /**
+     * Broadcast a new solution's RD
+     *
+     * @param query query context
+     * @param rd relaxation degree
+     */
+    void BroadcastRD(const boost::shared_ptr<Query> &query, double rd) const;
+
+    /**
      * Sends search commit control message to all instances.
      *
      * @param query the current query
@@ -250,9 +258,11 @@ public:
      * @param query current query
      * @param eor true, if the result has ended; false, otherwise
      * @param vals solution values
+     * @param add_vals additional values
      */
     void SendSolution(const boost::shared_ptr<Query> &query,
-            const std::vector<int64_t> &vals) const;
+            const std::vector<int64_t> &vals,
+            const std::vector<int64_t> &add_vals) const;
 
     /**
      * Dispatches a helper to a remote instance.
@@ -274,7 +284,7 @@ public:
      * @param dest destination instance
      */
     void DispatchWork(const boost::shared_ptr<Query> &query,
-            const LiteAssignmentVector &work,
+            const CandidateVector &work,
             uint64_t solver,
             InstanceID dest) const;
 
@@ -311,7 +321,7 @@ public:
      * @param forw_id id of this forward
      */
     void ForwardCandidates(const boost::shared_ptr<Query> &query,
-            const LiteAssignmentVector &cands,
+            const CandidateVector &cands,
             const std::vector<int64_t> &zones,
             InstanceID dest,
             uint64_t forw_id) const;
@@ -366,11 +376,11 @@ public:
      * for point assignments (e.g., where min[i] == max[i]).
      *
      * @param mins minimum values
-     * @param maxs maximum values (nullptr if not required)
+     * @param maxs maximum values (empty if not required)
      * @param msg message to store the values into
      */
     static void PackAssignment(const std::vector<int64_t> &mins,
-            const std::vector<int64_t> *maxs, VarAssignment &msg);
+            const std::vector<int64_t> &maxs, VarAssignment &msg);
 
     /**
      * Packs an assignment into a message.
@@ -382,7 +392,7 @@ public:
      * @param msg message to store the values into
      * @param aux info with the assignment
      */
-    static void PackAssignment(const LiteVarAssignment &asgn,
+    static void PackAssignment(const CandidateAssignment &asgn,
             VarAssignment &msg,
             const std::vector<int64_t> &aux);
 
@@ -394,10 +404,10 @@ public:
      *
      * @param msg message to get the values from
      * @param mins vector for minimum values
-     * @param maxs vector for maximum values (nullptr if not required)
+     * @param maxs vector for maximum values
      */
     static void UnpackAssignment(const VarAssignment &msg,
-            std::vector<int64_t> &mins, std::vector<int64_t> *maxs);
+            std::vector<int64_t> &mins, std::vector<int64_t> &maxs);
 
     /**
      * Unpacks a message assignment into assignment.
@@ -409,7 +419,7 @@ public:
      * @param asgn Assignment to unpack to
      */
     static void UnpackAssignment(const VarAssignment &msg,
-            LiteVarAssignment &asgn);
+        CandidateAssignment &asgn);
 
 private:
     /*
@@ -546,10 +556,10 @@ private:
 
     // Helpers to fill in a balance message
     static void FillBalanceMessage(SearchlightBalance &msg,
-            const LiteAssignmentVector &asgns,
+            const CandidateVector &asgns,
             const std::vector<int64_t> &aux);
     static void FillBalanceMessage(SearchlightBalance &msg,
-            const LiteAssignmentVector &asgns);
+            const CandidateVector &asgns);
 
     // Deactivates the messenger from the query
     void deactivate(const boost::shared_ptr<Query> &query);

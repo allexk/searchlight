@@ -12,6 +12,7 @@ message VarAssignment {
     repeated int64  var_min   = 1 [packed=true]; // min value
     repeated int64  var_max   = 2 [packed=true]; // max value
     repeated int64  aux_info  = 3 [packed=true]; // additional info (forw. coordinates for now)
+    repeated int64  rel_const = 4 [packed=true]; // relaxed constraints info
 }
 
 message SearchlightSolution {
@@ -42,12 +43,14 @@ message SearchlightBalance {
         CANDIDATE_FORWARD    = 6; // Forwarding of a candidate to a validator
         BALANCE_RESULT       = 7; // Result of balancing (e.g., for forwarder candidates)
         VALIDATOR_INFO       = 8; // Info about the validator's load
+        LRD                  = 9; // LRD changes
     }
 
     required Type type          = 1; // Type of the message
     repeated VarAssignment load = 2; // Load for the helper or validator
-    repeated uint64 id     = 3 [packed=true]; // ids (solvers, forwards)
+    repeated uint64 id          = 3 [packed=true]; // ids (solvers, forwards)
     optional bool result        = 4; // Result of the request (e.g., true if the validation succedeed)
+    optional double lrd         = 5; // New LRD
 }
 
 message SearchlightMeta {

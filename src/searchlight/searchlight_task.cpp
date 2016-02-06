@@ -89,26 +89,6 @@ std::map<K, V> ReadJSONMap(
     }
     return res;
 }
-
-/*
- * Solver id that is not equivalent to any valid id.
- */
-const uint64_t INVALID_SOLVER_ID = ~uint64_t(0);
-
-inline scidb::InstanceID GetInstanceFromSolverID(uint64_t id) {
-    // Just ignore low 32 bits
-    return id >> 32;
-}
-
-inline uint32_t GetLocalIDFromSolverID(uint64_t id) {
-    // Just ignore high 32 bits
-    return uint32_t(id);
-}
-
-inline uint64_t CreateSolverID(scidb::InstanceID inst, uint32_t ord) {
-    return (uint64_t(inst) << 32) + ord;
-}
-
 } /* namespace <anonymous> */
 
 namespace searchlight {
@@ -414,7 +394,7 @@ void SearchlightTask::HandleHelper(uint64_t helper, uint64_t helpee) {
                 LOG4CXX_DEBUG(logger, "Got the same instance helper for a"
                         "pending assignment, reject...");
             } else {
-                LiteAssignmentVector load_copy{std::move(iter->second)};
+                CandidateVector load_copy{std::move(iter->second)};
                 pending_assgns_.erase(iter);
                 lock.unlock();
                 DispatchWork(load_copy, helper);
@@ -523,9 +503,10 @@ void SearchlightTask::HandleRemoteSolution(InstanceID inst,
                 << "Invalid message at the SL Task remote result function!";
     }
 
-    std::vector<int64_t> vals;
-    SearchlightMessenger::UnpackAssignment(sol_msg->solution(), vals, nullptr);
-    ReportSolution(vals);
+    std::vector<int64_t> vals, add_vals;
+    SearchlightMessenger::UnpackAssignment(sol_msg->solution(), vals,
+        add_vals);
+    ReportSolution(vals, add_vals);
 }
 
 // Handles control messages
@@ -606,13 +587,14 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
             break;
         case SearchlightBalance::BALANCE_RESULT:
         {
-        	LiteVarAssignment add_vals;
+        	CandidateAssignment add_vals;
         	if (balance_msg->load_size()) {
         		SearchlightMessenger::UnpackAssignment(
         				balance_msg->load(0), add_vals);
         	}
             searchlight_.GetValidator().HandleForwardResult(
-                    balance_msg->id(0), balance_msg->result(), add_vals.mins_);
+                    balance_msg->id(0), balance_msg->result(),
+                    add_vals.var_asgn_.mins_);
             break;
         }
         case SearchlightBalance::ACCEPT_HELP:
@@ -622,6 +604,11 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
                         << std::hex << balance_msg->id(i));
                 HandleAcceptHelper(balance_msg->id(i));
             }
+            break;
+        case SearchlightBalance::LRD:
+            assert(balance_msg->has_lrd());
+            assert(searchlight_.GetRelaxator());
+            searchlight_.GetRelaxator()->ReportResult(balance_msg->lrd());
             break;
         case SearchlightBalance::VALIDATOR_INFO:
             assert(balance_msg->id_size());
@@ -646,7 +633,7 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
 void SearchlightTask::HandleRemoteLoad(const SearchlightBalance &msg,
         uint64_t helper) {
     // Prepare the load
-    LiteAssignmentVector load(msg.load_size());
+    CandidateVector load(msg.load_size());
     for (int i = 0; i < msg.load_size(); i++) {
         SearchlightMessenger::UnpackAssignment(msg.load(i), load[i]);
     }
@@ -658,7 +645,7 @@ void SearchlightTask::HandleRemoteLoad(const SearchlightBalance &msg,
 void SearchlightTask::HandleForwards(const SearchlightBalance &msg,
         InstanceID src) {
     // Prepare the load
-    LiteAssignmentVector load(msg.load_size());
+    CandidateVector load(msg.load_size());
     Int64Vector zones(msg.load_size()); // 0 is the default zone
     for (int i = 0; i < msg.load_size(); i++) {
         const auto &load_i = msg.load(i);
@@ -708,18 +695,20 @@ void SearchlightTask::RejectHelp(const std::vector<uint64_t> &helpers,
     }
 }
 
-void SearchlightTask::ReportSolution(const std::vector<int64_t> &values) {
+void SearchlightTask::ReportSolution(const std::vector<int64_t> &values,
+        const std::vector<int64_t> &add_values) {
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     if (query->isCoordinator()) {
         // We are at the coordinator -- add the solution to the queue
-        const std::string sol = searchlight_.SolutionToString(values);
+        const std::string sol = searchlight_.SolutionToString(values, add_values);
         LOG4CXX_INFO(result_logger, sol);
         std::lock_guard<std::mutex> lock(mtx_);
         solutions_queue_.push_back(sol);
         queue_cond_.notify_one();
     } else {
         // We are at a common instance -- send the solution to the coordinator
-        SearchlightMessenger::getInstance()->SendSolution(query, values);
+        SearchlightMessenger::getInstance()->SendSolution(query, values,
+                add_values);
     }
 }
 
@@ -781,7 +770,7 @@ void SearchlightTask::FreeThread() {
         if (!pending_assgns_.empty()) {
             // Have a pending load
             const auto load_it = pending_assgns_.begin();
-            LiteAssignmentVector load_copy{std::move(load_it->second)};
+            CandidateVector load_copy{std::move(load_it->second)};
             const uint64_t helper = load_it->first;
             pending_assgns_.erase(load_it);
             lock.unlock();
@@ -795,14 +784,14 @@ void SearchlightTask::FreeThread() {
     }
 }
 
-void SearchlightTask::DispatchWork(const LiteAssignmentVector &work,
+void SearchlightTask::DispatchWork(const CandidateVector &work,
         uint64_t dest_solver) {
     // First, dispatch work
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     const InstanceID dest_inst = GetInstanceFromSolverID(dest_solver);
     if (my_instance_id_ == dest_inst) {
         // helper is a local solver
-        LiteAssignmentVector work_copy{work};
+        CandidateVector work_copy{work};
         DispatchOrStoreLoad(work_copy, dest_solver);
     } else {
         SearchlightMessenger::getInstance()->DispatchWork(query, work,
@@ -817,7 +806,7 @@ void SearchlightTask::DispatchWork(const LiteAssignmentVector &work,
     }
 }
 
-void SearchlightTask::DispatchOrStoreLoad(LiteAssignmentVector &load,
+void SearchlightTask::DispatchOrStoreLoad(CandidateVector &load,
         uint64_t dest_solver) {
     if (dynamic_scheduling_) {
         std::lock_guard<std::mutex> lock{mtx_};
@@ -838,7 +827,7 @@ void SearchlightTask::DispatchOrStoreLoad(LiteAssignmentVector &load,
     searchlight_.PrepareHelper(load, GetLocalIDFromSolverID(dest_solver));
 }
 
-void SearchlightTask::ForwardCandidates(const LiteAssignmentVector &cands,
+void SearchlightTask::ForwardCandidates(const CandidateVector &cands,
         const std::vector<int64_t> &zones,
         InstanceID dest, uint64_t forw_id) const {
     // For now a helper is always a remote instance.
@@ -859,6 +848,11 @@ void SearchlightTask::BroadcastValidatorInfo(size_t cands_num) const {
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     SearchlightMessenger::getInstance()->BroadcastValidatorInfo(query,
             cands_num);
+}
+
+void SearchlightTask::BroadcastRD(double rd) const {
+    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+    SearchlightMessenger::getInstance()->BroadcastRD(query, rd);
 }
 
 void SearchlightTask::HandleSearchlightError(

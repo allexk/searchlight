@@ -41,6 +41,15 @@ namespace searchlight {
 static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.searchlight"));
 
+Searchlight::Searchlight(SearchlightTask &task,
+        DLLHandler &dll_handler) :
+    validator_(nullptr),
+    validator_thread_(nullptr),
+    array_desc_(nullptr),
+    dl_udf_handle_(dll_handler.LoadDLL("searchlight_udfs")),
+    sl_task_(task),
+    status_(Status::ACTIVE) {}
+
 void Searchlight::Cleanup() {
     // Wait for the solvers
     solvers_.clear();
@@ -150,6 +159,14 @@ const SearchlightConfig &Searchlight::GetConfig() const {
 
 void Searchlight::Prepare(const std::string &name, SLTaskFunc task_fun,
         uint64_t start_id, int solvers) {
+    // Create relaxator
+    const bool relax = GetConfig().get("relax.on", false);
+    if (relax) {
+        const double rel_dist_w = GetConfig().get("relax.dist_w", 0.5);
+        const double rel_card = GetConfig().get("relax.card", 10);
+        relaxator_.reset(new Relaxator(*this, solvers, rel_dist_w, rel_card));
+    }
+
     // Create solvers
     for (int i = 0; i < solvers; i++) {
         const uint64_t solver_id = start_id + i;
@@ -326,7 +343,7 @@ StringVector SearchlightSolver::ComputeVarNames() const {
     return var_names;
 }
 
-void SearchlightSolver::PrepareHelper(LiteAssignmentVector &load) {
+void SearchlightSolver::PrepareHelper(CandidateVector &load) {
     std::lock_guard<std::mutex> lock{mtx_};
 
     assert(status_ == Status::VOID);
@@ -341,6 +358,13 @@ void SearchlightSolver::PrepareHelper(LiteAssignmentVector &load) {
     status_ = Status::PREPARED;
 
     wait_cond_.notify_one();
+}
+
+bool SearchlightSolver::SolverHasWork() const {
+    return !local_load_.empty() ||
+           !helper_load_.empty() ||
+           non_solve_setup_ ||
+           (sl_.GetRelaxator() && sl_.GetRelaxator()->HasReplays());
 }
 
 void SearchlightSolver::DetermineLocalWorkload() {
@@ -400,7 +424,7 @@ void SearchlightSolver::DetermineLocalWorkload() {
         vars_leaf_.UnfreezeQueue();
         LOG4CXX_INFO(logger, "Loaded slices into the split var: "
                 << split_var->DebugString());
-        local_remote_override_ = true;
+        non_solve_setup_ = true;
     } else {
         for (int64_t start = split_var->Min() + slice_len * solver_id;
                 start <= split_var->Max();
@@ -442,24 +466,56 @@ std::vector<IntVarDomainInfo> SearchlightSolver::GetCurrentVarDomains() const {
 	return res;
 }
 
+void SearchlightSolver::SetVarDomains(const IntVarDomainInfoVector &dom_info) {
+    assert(dom_info.size() == all_vars_.size());
+    for (size_t i = 0; i < all_vars_.size(); ++i) {
+        const auto &var_info = dom_info[i];
+        IntVar * const var = all_vars_[i];
+        if (var_info.interval_) {
+            var->SetRange(var_info.values_[0], var_info.values_[1]);
+        } else {
+            var->SetValues(var_info.values_);
+        }
+    }
+}
+
+void SearchlightSolver::SetRelaxatorMonitor() {
+    if (Relaxator *relaxator = sl_.GetRelaxator()) {
+        // Add fail monitor
+        solver_.RevAlloc(new FailCollectorMonitor(solver_, *relaxator,
+            SearchlightTask::GetLocalIDFromSolverID(id_)))->Install();
+    }
+}
+
 void SearchlightSolver::Solve() {
     // Enter the search
     status_ = Status::SEARCHING;
 
     // Initially we always have work: local or remote
-    bool solver_has_work = !local_load_.empty() || !helper_load_.empty() ||
-            local_remote_override_;
+    bool solver_has_work = SolverHasWork();
     while (solver_has_work) {
-        if (!local_remote_override_) {
+        current_vc_spec_.clear();
+        if (!non_solve_setup_) {
             // Local load has priority
+            bool fail_replay = false;
+            IntVarDomainInfoVector domain_info;
             if (!local_load_.empty()) {
                 LiteToFullAssignment(vars_leaf_, local_load_.back());
                 local_load_.pop_back();
-
             } else if (!helper_load_.empty()) {
                 // Get a remote assignment from the remote load
-                LiteToFullAssignment(vars_leaf_, helper_load_.back());
+                LiteToFullAssignment(vars_leaf_, helper_load_.back().var_asgn_);
+                current_vc_spec_ = helper_load_.back().relaxed_constrs_;
                 helper_load_.pop_back();
+            } else if (Relaxator *relaxator = sl_.GetRelaxator()){
+                // Try a fail replay
+                fail_replay = relaxator->GetFailReplay(domain_info,
+                                                       current_vc_spec_);
+                // Might be false if somebody just went ahead of us
+                if (!fail_replay) {
+                    solver_has_work = SolverHasWork();
+                    continue;
+                }
             } else {
                 assert(false);
             }
@@ -473,11 +529,39 @@ void SearchlightSolver::Solve() {
              * finished it will roll-back everything up to this point.
              */
             solver_.NewSearch(db_, search_monitors_.GetSearchMonitors());
-            LOG4CXX_INFO(logger, "Setting up solver assignment: "
-                    << vars_leaf_.DebugString());
-            vars_leaf_.Restore();
+            assert(search_monitors_.validator_monitor_);
+            vars_leaf_.FreezeQueue();
+            if (!fail_replay) {
+                LOG4CXX_INFO(logger, "Setting up solver assignment: "
+                        << vars_leaf_.DebugString());
+                SetRelaxatorMonitor();
+                vars_leaf_.Restore();
+            } else {
+                // Fail replay
+                if (logger->isInfoEnabled()) {
+                    std::ostringstream os;
+                    os << "Setting up fail replay:";
+                    for (size_t i = 0; i < current_vc_spec_.size(); i += 3) {
+                        os << ' ' << current_vc_spec_[i + 1] << "<="
+                                << current_vc_spec_[i] << "<="
+                                << current_vc_spec_[i + 2];
+                    }
+                    logger->info(os.str(), LOG4CXX_LOCATION);
+                }
+                SetVarDomains(domain_info);
+            }
+            // Apply violated constraints changes, if any
+            if (!current_vc_spec_.empty()) {
+                assert(sl_.GetRelaxator());
+                sl_.GetRelaxator()->ApplyViolatedConstSpec(current_vc_spec_,
+                               SearchlightTask::GetLocalIDFromSolverID(id_));
+            }
+            search_monitors_.validator_monitor_->SetVCSpec(current_vc_spec_);
+            vars_leaf_.UnfreezeQueue();
         } else {
-            local_remote_override_ = false;
+            // Set the relaxator monitor for external setup as well
+            SetRelaxatorMonitor();
+            non_solve_setup_ = false;
         }
 
         // Starting the timer
@@ -499,8 +583,7 @@ void SearchlightSolver::Solve() {
                 solve_end_time - solve_start_time);
 
         // Continue only if we have another assignment to set up
-        solver_has_work = !local_load_.empty() || !helper_load_.empty() ||
-                local_remote_override_;
+        solver_has_work = SolverHasWork();
     }
 
     LOG4CXX_INFO(logger, "Finished solver's workload...");
@@ -522,27 +605,22 @@ void SearchlightSolver::Solve() {
 
 bool ValidatorMonitor::AtSolution() {
     Assignment * const asgn = prototype_.get();
-
     // Store the solution (assuming complete assignment)
     asgn->Store();
+    assert(ValidateSolutionComplete(*asgn));
     LOG4CXX_TRACE(logger, "Encountered a leaf: " << asgn->DebugString() <<
             ", depth=" << solver()->SearchDepth());
+    candidates_++;
+    validator_.AddSolution(*asgn, current_vc_spec_);
+    return true;
+}
 
-    // TODO: check if need this; a leaf should always be complete
-    bool complete = true;
-    for (const auto &var: asgn->IntVarContainer().elements()) {
+bool ValidatorMonitor::ValidateSolutionComplete(const Assignment &asgn) const {
+    for (const auto &var: asgn.IntVarContainer().elements()) {
         if (!var.Bound()) {
-            complete = false;
-            break;
+            return false;
         }
     }
-
-    assert(complete);
-    if (complete) {
-        candidates_++;
-        validator_.AddSolution(*asgn);
-    }
-
     return true;
 }
 
@@ -596,7 +674,7 @@ void SearchlightSolver::RejectHelpers(bool hard) {
 }
 
 void SearchlightSolver::DispatchWork(
-        const LiteAssignmentVector &work) {
+        CandidateVector &work) {
     assert(HelpAvailable());
     InstanceID helper;
     {
@@ -604,11 +682,18 @@ void SearchlightSolver::DispatchWork(
         helper = helpers_.front();
         helpers_.pop_front();
     }
+    if (!current_vc_spec_.empty()) {
+        // Add violated constraints spec, if any
+        for (auto &w: work) {
+            w.relaxed_constrs_ = current_vc_spec_;
+        }
+    }
     sl_.sl_task_.DispatchWork(work, helper);
 }
 
 std::string Searchlight::SolutionToString(
-        const std::vector<int64_t> &vals) const {
+        const std::vector<int64_t> &vals,
+        const std::vector<int64_t> &add_vals) const {
     // stringify the solution
     std::ostringstream sol_string;
     for (size_t i = 0; i < var_names_.size(); i++) {
@@ -619,9 +704,10 @@ std::string Searchlight::SolutionToString(
     }
     // Add tracking vars
     const StringVector track_var_names = GetTrackExprs();
+    assert(track_var_names.size() == add_vals.size());
     for (size_t i = 0; i < track_var_names.size(); ++i) {
     	sol_string << ", " << track_var_names[i] << '='
-    			<< vals[var_names_.size() + i];
+    			<< add_vals[i];
     }
     return sol_string.str();
 }

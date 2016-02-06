@@ -35,6 +35,7 @@
 
 #include "ortools_inc.h"
 #include "array_desc.h"
+#include "relax.h"
 
 #include <system/Config.h>
 
@@ -52,6 +53,7 @@ class Validator;
 class SearchlightCollector;
 class SearchlightTask;
 class Searchlight;
+class Relaxator;
 
 /**
  * Type of the task function (called from the library).
@@ -172,7 +174,22 @@ public:
         return candidates_;
     }
 
+    /**
+     * Set violated constraints specification.
+     *
+     * This vector will be used to propagate violated constraints info to
+     * the validator with each collected candidate.
+     *
+     * @param vc_spec violated constraints specification
+     */
+    void SetVCSpec(const Int64Vector &vc_spec) {
+        current_vc_spec_ = vc_spec;
+    }
+
 private:
+    // Validate if the solution is a complete one
+    bool ValidateSolutionComplete(const Assignment &asgn) const;
+
     // The validator to pass the solution to
     Validator &validator_;
 
@@ -181,6 +198,9 @@ private:
 
     // Candidates encountered
     int64_t candidates_ = 0;
+
+    // Violated constraints specification
+    Int64Vector current_vc_spec_;
 };
 
 /**
@@ -191,16 +211,6 @@ private:
  */
 typedef IntExpr *(* UDFFunctionCreator)(Solver *, AdapterPtr,
         const std::vector<IntVar *> &, const std::vector<int64> &);
-
-/**
- * Information about the domain of an integer variable.
- */
-struct IntVarDomainInfo {
-	// Is it a continuous variable?
-	bool interval_;
-	// Domain values (min, max if interval_ = true)
-	std::vector<int64> values_;
-};
 
 /*
  * This class encapsulates a single solver thread-instance. The model,
@@ -375,9 +385,12 @@ public:
      * It is assumed that a helper is available, which can be checked by
      * the HelpAvailable() function.
      *
+     * This function might write additional information into the vector before
+     * sending the work.
+     *
      * @param work assignments to off-load
      */
-    void DispatchWork(const LiteAssignmentVector &work);
+    void DispatchWork(CandidateVector &work);
 
     /**
      * Prepares this solver as a helper.
@@ -386,7 +399,7 @@ public:
      *
      * @param load remote load
      */
-    void PrepareHelper(LiteAssignmentVector &load);
+    void PrepareHelper(CandidateVector &load);
 
     /**
      * Return primary variables for the search.
@@ -478,6 +491,13 @@ public:
      */
     std::vector<IntVarDomainInfo> GetCurrentVarDomains() const;
 
+    /**
+     * Set decision variable domains.
+     *
+     * @param dom_info domains info
+     */
+    void SetVarDomains(const std::vector<IntVarDomainInfo> &dom_info);
+
 private:
     // Reject/release helpers
     void RejectHelpers(bool hard);
@@ -485,10 +505,16 @@ private:
     // Determines the local workload for this solver
     void DetermineLocalWorkload();
 
+    // True, if the solver might have some work to do
+    bool SolverHasWork() const;
+
     // Check if need to terminate
     bool CheckTerminate() const {
         return status_ == Status::TERMINATED;
     }
+
+    // Sets up the relaxator monitor
+    void SetRelaxatorMonitor();
 
     // Monitors participating in the search
     struct SearchMonitors {
@@ -546,16 +572,23 @@ private:
     std::list<uint64_t> helpers_;
 
     // Work given to us by another instance
-    LiteAssignmentVector helper_load_;
+    CandidateVector helper_load_;
 
     // Local work defined at the beginning
     LiteAssignmentVector local_load_;
 
+    // Violated constraints specification for the current search
+    Int64Vector current_vc_spec_;
+
     // Adapters issued by the solver
     std::vector<AdapterPtr> adapters_;
 
-    // If true, no local/remote assignment will be restored in Solve()
-    bool local_remote_override_ = false;
+    /*
+     *  If true, no local/remote assignment will be restored in Solve(). Used
+     *  when the solver has already been setup from the outside, e.g.,
+     *  initially, when we do roun-robin splitting of the search space.
+     */
+    bool non_solve_setup_ = false;
 
     // Do we accept help?
     bool solver_balancing_enabled_ = true;
@@ -605,14 +638,7 @@ public:
      * @param task Searchlight task performing the query
      * @param dll_handler handler for loading/unloading DLLs
      */
-    Searchlight(SearchlightTask &task,
-            DLLHandler &dll_handler) :
-        validator_(nullptr),
-        validator_thread_(nullptr),
-        array_desc_(nullptr),
-        dl_udf_handle_(dll_handler.LoadDLL("searchlight_udfs")),
-        sl_task_(task),
-        status_(Status::ACTIVE) {}
+    Searchlight(SearchlightTask &task, DLLHandler &dll_handler);
 
     /**
      * Registers a data array and the corresponding sample for the search.
@@ -626,6 +652,29 @@ public:
     void RegisterArray(ArrayPtr &data, const ArrayPtrVector &samples) {
         array_desc_.reset(new SearchArrayDesc(data, samples, *this));
     }
+
+
+    /**
+     * Register relaxable constraint.
+     *
+     * At this point the constraint is assumed to be interval-based. Hence,
+     * left/right relaxation parameters. If the query is not a relaxing one,
+     * no registration is performed, so the function is always safe to call.
+     *
+     * @param name constraint name
+     * @param solver_id local solver id
+     * @param constr constraint object
+     * @param max_l maximum relaxation to the left
+     * @param max_h maximum relaxation to the right
+     */
+    void RegisterConstraint(const std::string &name, size_t solver_id,
+            RelaxableConstraint *constr, int64 max_l, int64 max_h) {
+        if (relaxator_) {
+            relaxator_->RegisterConstraint(name, solver_id, constr, max_l,
+                    max_h);
+        }
+    }
+
 
     /**
      * Registers an attribute for the search. All further adapter data
@@ -814,9 +863,11 @@ public:
      * Converts the specified solution to a string representation.
      *
      * @param vals variable values
+     * @param add_vals additional values
      * @return string representation of the solution
      */
-    std::string SolutionToString(const std::vector<int64_t> &vals) const;
+    std::string SolutionToString(const std::vector<int64_t> &vals,
+        const std::vector<int64_t> &add_vals) const;
 
     /**
      * Returns config for the current task.
@@ -876,7 +927,7 @@ public:
      * @param load remote load
      * @param solver helper id
      */
-    void PrepareHelper(LiteAssignmentVector &load, uint32_t solver) {
+    void PrepareHelper(CandidateVector &load, uint32_t solver) {
         assert(solver < solvers_.size());
         if (status_ != Status::TERMINATED) {
             solvers_[solver]->PrepareHelper(load);
@@ -923,6 +974,17 @@ public:
      */
     void Cleanup();
 
+    /**
+     * Relaxator for the current query.
+     *
+     * If the query is not relaxing, return nullptr.
+     *
+     * @return query relaxator; nullptr if not relaxing
+     */
+    Relaxator *GetRelaxator() const {
+        return relaxator_.get();
+    }
+
 private:
 
     friend class SearchlightSolver;
@@ -946,6 +1008,9 @@ private:
 
     // The array descriptor
     std::unique_ptr<SearchArrayDesc> array_desc_;
+
+    // The relaxator
+    std::unique_ptr<Relaxator> relaxator_;
 
     // The udfs library
     void *dl_udf_handle_;

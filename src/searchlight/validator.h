@@ -68,8 +68,9 @@ public:
      * Adds a solution (assignment) to validate later.
      *
      * @param sol the solution to validate
+     * @param rel_consts relaxed constraints
      */
-    void AddSolution(const Assignment &sol);
+    void AddSolution(const Assignment &sol, const Int64Vector &rel_const);
 
     /**
      * Submits forwarded candidates for validation.
@@ -79,7 +80,7 @@ public:
      * @param forw_id remote forward id of the first candidate
      * @param zones candidates zones
      */
-    void AddRemoteCandidates(LiteAssignmentVector &cands,
+    void AddRemoteCandidates(CandidateVector &cands,
             const Int64Vector &zones,
             InstanceID src, uint64_t forw_id);
 
@@ -168,16 +169,6 @@ private:
         // Based on the chunks each validator has (static + dynamic)
         DYNAMIC
     };
-
-    // Info for a candidate assignment pending validation
-    struct CandidateAssignment {
-        // The assignment itself
-        LiteVarAssignment var_asgn_;
-
-        // Id >= 0, the candidate is remote; -1, needs simulation; -2, local
-        int64_t forw_id_;
-    };
-    using CandidateVector = std::vector<CandidateAssignment>;
 
     /*
      * We define the DB as a friend to grab the next portion of assignments
@@ -283,6 +274,12 @@ private:
         // The prototype assignment for tracking vars
         Assignment track_prototype_;
 
+        // The prototype for relaxable constraint expressions
+        Assignment rel_const_prototype_;
+
+        // Relaxable constraints in the model
+        RelaxableConstraints relaxable_constrs_;
+
         // Thread to run the helper
         std::thread thr_;
 
@@ -329,10 +326,16 @@ private:
     		const std::vector<int64_t> &add_vals);
 
     // Checks if we want to forward (returns true) and forwards if we can.
-    bool CheckForward(const CoordinateSet &chunks, const Assignment *asgn);
+    bool CheckForward(const CoordinateSet &chunks,
+                      const CandidateAssignment &asgn);
+
+    // Update relaxator (if needed) and check if the result passes LRD
+    bool CheckRelaxation(const LiteVarAssignment &relax_asgn,
+                         bool report_rd) const;
 
     // Determines the assignment's zone and pushes the candidate there
-    void PushToLocalZone(const CoordinateSet &chunks, const Assignment *asgn);
+    void PushToLocalZone(const CoordinateSet &chunks,
+                         const CandidateAssignment &asgn);
 
     // Determine the local zone to use
     template <typename CoordinatesSequence>
@@ -369,11 +372,11 @@ private:
     }
 
     // Fills is candidates lists to send to another validator for rebalancing
-    void FillInRebalnaceTransfer(size_t cands,
-            LiteAssignmentVector &reforwards,
-            Int64Vector &reforwards_zones,
-            LiteAssignmentVector &forwards,
-            Int64Vector &forwards_zones);
+    void FillInRebalanceTransfer(size_t cands,
+             CandidateVector &reforwards,
+             Int64Vector &reforwards_zones,
+             CandidateVector &forwards,
+             Int64Vector &forwards_zones);
 
     // Rebalance count candidates to the validator
     void RebalanceAndSend(size_t cands, int validator);
@@ -432,6 +435,12 @@ private:
     // The prototype for the additional tracking vars
     Assignment track_vars_prototype_;
 
+    // The prototype for relaxable constraint expressions
+    Assignment rel_const_prototype_;
+
+    // Relaxable constraints in the model
+    RelaxableConstraints relaxable_constrs_;
+
     // Condition var to wait for solutions to validate
     mutable std::condition_variable validate_cond_;
 
@@ -487,10 +496,17 @@ private:
 
 
 /**
- * This class is a visitor that collects all integer variables. It creates
- * a map that variable names to the addresses.
+ * This class is a visitor that collects all:
+ *
+ * 1) Integer variables. It creates
+ *   a map that variable names to the addresses.
+ *
+ * 2) Relaxable constraints. It stores them in an array with the ID order.
+ *  IDs are issued by the relaxator.
+ *
+ *
  */
-class VariableFinder : public ModelVisitor {
+class ModelCollector : public ModelVisitor {
 public:
     /**
      * A var_name --> var_address map.
@@ -537,12 +553,46 @@ public:
     }
 
     /**
+     * Beginning visiting a constraint.
+     *
+     * This visitor just collects relaxable constraints and stores them by ID.
+     *
+     * @param type_name constraint type
+     * @param constraint constraint itself
+     */
+    virtual void BeginVisitConstraint(const std::string &type_name,
+                              const Constraint *const constraint) override {
+        if (RelaxableConstraint::IsRelaxable(type_name)) {
+            const RelaxableConstraint *rc =
+                    dynamic_cast<const RelaxableConstraint *>(constraint);
+            assert(rc);
+            const int64 id = rc->Id();
+            if (id >= 0) {
+                if (id + 1 > rel_constrs_.size()) {
+                    rel_constrs_.resize(id + 1);
+                }
+                // const_cast is okay; cannot change the function's signature
+                rel_constrs_[id] = const_cast<RelaxableConstraint *>(rc);
+            }
+        }
+    }
+
+    /**
      * Return a mapping of var names to var addresses.
      *
      * @return the name->address variables map
      */
     const StringVarMap &GetVarMap() const {
         return var_map_;
+    }
+
+    /**
+     * Return relaxable constraints collected by the visitor.
+     *
+     * @return relaxable constraints
+     */
+    const RelaxableConstraints &GetRelaxableConstraints() const {
+        return rel_constrs_;
     }
 
     /**
@@ -575,9 +625,26 @@ public:
 		}
     }
 
+    /**
+     * Fill assignment for relaxable constraints' expressions.
+     *
+     * The assignment is filled in in the same order as relaxable constraints,
+     * which is the constraint ID order.
+     *
+     * @param asgn assignment to fill in
+     */
+    void FillRelaxAssignment(Assignment &asgn) const {
+        for (const auto rc: rel_constrs_) {
+            asgn.Add(rc->GetExpr()->Var());
+        }
+    }
+
 private:
     // The map containing vars found
     StringVarMap var_map_;
+
+    // Relaxable constraints ordered by ID
+    RelaxableConstraints rel_constrs_;
 };
 
 } /* namespace searchlight */

@@ -32,9 +32,14 @@
 #define SEARCHLIGHT_RELAX_H_
 
 #include "ortools_inc.h"
-#include "searchlight.h"
+
+#include <queue>
+#include <mutex>
+#include <atomic>
 
 namespace searchlight {
+
+class Searchlight;
 
 /**
  * Relaxable constraint. Represents a constraint that can be changed during the
@@ -48,6 +53,20 @@ public:
     static const char BetweenConstTag[];
     static const char LessEqConstTag[];
     static const char GreaterEqConstTag[];
+
+    /**
+     * Check if the constraint is relaxable.
+     *
+     * The check is based on the type name.
+     *
+     * @param type type name
+     * @return true, if the constraint is relaxable; false, otherwise
+     */
+    static bool IsRelaxable(const std::string &type) {
+        return type == BetweenConstTag ||
+               type == LessEqConstTag ||
+               type == GreaterEqConstTag;
+    }
 
     /**
      * Construct a new relaxable constraint.
@@ -112,6 +131,13 @@ private:
 	// Constraint id
 	int64 id_ = -1;
 };
+
+/**
+ * Relaxable constraints found in the model.
+ *
+ * Ordered by IDs, which are issued by the relaxator before serialization.
+ */
+using RelaxableConstraints = std::vector<RelaxableConstraint *>;
 
 /**
  * Relaxable between constraint.
@@ -504,13 +530,11 @@ public:
 	 * @param name constraint name
 	 * @param solver_id solver id
 	 * @param constr constraint object
-	 * @param expr constraint's expression object
-	 * @param max_l maximum relaxation for l
-	 * @param max_h maximum relaxation for h
+	 * @param max_l maximum relaxation for low bound
+	 * @param max_h maximum relaxation for high bound
 	 */
 	void RegisterConstraint(const std::string &name, size_t solver_id,
-			RelaxableConstraint *constr, IntExpr *expr,
-			int64 max_l, int64 max_h);
+			RelaxableConstraint *constr, int64 max_l, int64 max_h);
 
 	/**
 	 * Register a solver fail from a particular Searchlight solver.
@@ -521,17 +545,6 @@ public:
 	 * @param solver_id SearchlightSolver id
 	 */
 	void RegisterFail(size_t solver_id);
-
-	/**
-	 * Update Lower Relaxation Degree (LDR) bound.
-	 *
-	 * @param lrd new lower relaxation degree bound
-	 */
-	void UpdateLRD(double lrd) {
-		assert(lrd >= 0.0 && lrd <= 1.0);
-		// Relaxed is fine here; we don't need any specific ordering
-		lrd_.store(lrd, std::memory_order_relaxed);
-	}
 
 	/**
 	 * Return current LRD.
@@ -551,7 +564,71 @@ public:
 		return !orig_consts_.empty();
 	}
 
-	void AddResult(const std::vector<int64> &const_expr_vals);
+	/**
+	 * Compute the relaxation degree of the result.
+	 *
+	 * The result parameter is supposed to contain resulting values for all
+	 * relaxable constraints. This function checks if the constraint is really
+	 * violated.
+	 *
+	 * @param rel_result result for relaxable constraints
+	 * @return result's relaxation degree
+	 */
+	double ComputeResultRelaxationDegree(const Int64Vector &rel_result) const;
+
+	/**
+	 * Report a new result with the specified relaxation degree.
+	 *
+	 * @param rd relaxation degree
+	 */
+	void ReportResult(double rd);
+
+	/**
+	 * Check if there are any fail replays left
+	 *
+	 * @return true, if replays left; false, otherwise
+	 */
+	bool HasReplays() const {
+	    std::lock_guard<std::mutex> lock{mtx_};
+	    return !fail_replays_.empty();
+	}
+
+	/**
+	 * Apply violated constraints specification to the solver.
+	 *
+	 * @param vc_spec violated constraint specification
+	 * @param solver_id solver id
+	 */
+	void ApplyViolatedConstSpec(const Int64Vector &vc_spec,
+	                            size_t solver_id) const {
+	    for (size_t i = 0; i < vc_spec.size(); i += 3) {
+	        const size_t const_id = vc_spec[i];
+	        const int64_t l = vc_spec[i + 1];
+	        const int64_t h = vc_spec[i + 2];
+	        orig_consts_[const_id].solver_const_[solver_id]->SetNewParams(l, h);
+	    }
+	}
+
+	/**
+	 * Return the next fail replay, if available.
+	 *
+	 * @param dom_info variable domains info
+	 * @param vc_spec violated constraints spec
+	 * @return true, if there was a replay; false, otherwise
+	 */
+	bool GetFailReplay(std::vector<IntVarDomainInfo> &dom_info,
+	                   Int64Vector &vc_spec) {
+        std::lock_guard<std::mutex> lock{mtx_};
+        if (!fail_replays_.empty()) {
+            // Const cast is okay here; we get rid of the top object right away
+            FailReplay &fr = const_cast<FailReplay &>(fail_replays_.top());
+            vc_spec = fr.ViolConstSpec();
+            dom_info = std::move(fr.saved_vars_);
+            fail_replays_.pop();
+            return true;
+        }
+        return false;
+	}
 
 private:
 	/*
@@ -582,17 +659,13 @@ private:
 		// Pointers to each constraint object for each solver
 		std::vector<RelaxableConstraint *> solver_const_;
 
-		// Pointers to each constraint's expression object for each solver
-		std::vector<const IntExpr *> solver_exprs_;
-
 		// Construct a new constraint info.
 		ConstraintInfo(const IntervalConstraint &constr, size_t solver_num,
 				int64 max_l, int64 max_h) :
 			int_{constr},
 			max_l_{max_l},
 			max_h_{max_h},
-			solver_const_(solver_num),
-			solver_exprs_(solver_num) {}
+			solver_const_(solver_num) {}
 
 		// Return maximum relaxation distance to the left or right
 		int64 MaxRelaxDist(bool left) const {
@@ -609,6 +682,19 @@ private:
 					return max_h_ - int_.Max();
 				}
 			}
+		}
+
+		// Compute relative relaxation distance based on the point
+		double RelRelaxDist(int64 x) const {
+		    const int64 imin = int_.Min();
+            const int64 imax = int_.Max();
+		    if (x > imax) {
+		        return double(x - imax) / MaxRelaxDist(false);
+		    } else if (x < imin) {
+		        return double(imin - x) / MaxRelaxDist(true);
+		    } else {
+		        return 0;
+		    }
 		}
 	};
 
@@ -638,7 +724,27 @@ private:
 		bool operator>(const FailReplay &other) const {
 			return relax_degree_ > other.relax_degree_;
 		}
+
+		/*
+		 * Return violated constraint spec vector.
+		 *
+		 * The vector has the following format:
+		 *  <constraint id, left bound, right bound> triplet for each constraint
+		 */
+		Int64Vector ViolConstSpec() const {
+		    Int64Vector res;
+		    res.reserve(failed_const_.size() * 3);
+		    for (const auto &fc: failed_const_) {
+		        res.push_back(fc.const_id_);
+		        res.push_back(fc.rl_);
+                res.push_back(fc.rh_);
+		    }
+		    return res;
+		}
 	};
+	// To output the structure
+	friend std::ostream &operator<<(std::ostream &os,
+	    const Relaxator::FailReplay &fr);
 
 	// Queue of replays ranked by relaxation degree (lowest first)
 	std::priority_queue<FailReplay, std::vector<FailReplay>,
@@ -669,11 +775,11 @@ private:
 	// Maximum number of results to track
 	const size_t res_num_;
 
-	// Map of top results by relaxation degree
-	std::map<double, size_t> top_res_rd_;
+    // Min heap to count result relaxation degrees
+    std::priority_queue<double, std::vector<double>, std::greater<double>> top_results_;
 
 	// For concurrency control
-	std::mutex mtx_;
+	mutable std::mutex mtx_;
 };
 
 /**

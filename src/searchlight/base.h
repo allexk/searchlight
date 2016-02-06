@@ -103,10 +103,36 @@ struct LiteVarAssignment {
 };
 
 /**
- *  A vector of lite assignment pointers.
+ *  A vector of lite assignments.
  */
 typedef std::vector<LiteVarAssignment> LiteAssignmentVector;
 
+/**
+ *  Candidate assignment, including metadata.
+ */
+struct CandidateAssignment {
+    /**
+     * The assignment.
+     */
+    LiteVarAssignment var_asgn_;
+
+    /**
+     * Relaxed constraints (const. id, left param., right param.)
+     */
+    Int64Vector relaxed_constrs_;
+
+    /**
+     * Id >= 0, the candidate is remote; -1, needs simulation; -2, local.
+     *
+     * When we send candidates for forward, forw_id_ >=0
+     */
+    int64_t forw_id_;
+};
+
+/**
+ * Vector of candidate assignments.
+ */
+using CandidateVector = std::vector<CandidateAssignment>;
 
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_BASE_H_ */
