@@ -106,11 +106,9 @@ void LiteToFullAssignment(Assignment &asgn,
  * Elements are added starting from position pos.
  *
  * @param asgn full assignment
- * @param pos starting position for putting elements
  * @param lite_asgn lite assignment
  */
-void FullAssignmentToLite(const Assignment &asgn, size_t pos,
-        LiteVarAssignment &lite_asgn);
+void FullAssignmentToLite(const Assignment &asgn, LiteVarAssignment &lite_asgn);
 
 } /* namespace searchlight */
 

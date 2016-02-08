@@ -204,22 +204,24 @@ public:
             // We performed some action: should handle the result
             if (last_action_.type_ == Action::Type::LOCAL_CHECK) {
                 if (action_succeeded_) {
-                    if (validator_.CheckRelaxation(
-                            asgns_.back().var_asgn_, true)) {
-                        LiteVarAssignment lite_track_asgn;
-                        FullAssignmentToLite(track_vars_asgn_,
-                            0, lite_track_asgn);
+                    LiteVarAssignment lite_asgn;
+                    FullAssignmentToLite(relax_asgn_, lite_asgn);
+                    if (validator_.CheckRelaxation(lite_asgn, true)) {
+                        lite_asgn.clear();
+                        FullAssignmentToLite(track_vars_asgn_, lite_asgn);
                         validator_.sl_task_.ReportSolution(
                                 asgns_.back().var_asgn_.mins_,
-                                lite_track_asgn.mins_);
+                                lite_asgn.mins_);
                     }
                 }
             } else if (last_action_.type_ == Action::Type::REMOTE_CHECK) {
-                action_succeeded_ = action_succeeded_ &&
-                      validator_.CheckRelaxation(asgns_.back().var_asgn_, true);
                 LiteVarAssignment lite_asgn;
+                FullAssignmentToLite(relax_asgn_, lite_asgn);
+                action_succeeded_ = action_succeeded_ &&
+                      validator_.CheckRelaxation(lite_asgn, true);
                 if (action_succeeded_) {
-                	FullAssignmentToLite(track_vars_asgn_, 0, lite_asgn);
+                    lite_asgn.clear();
+                	FullAssignmentToLite(track_vars_asgn_, lite_asgn);
                 }
                 validator_.SendForwardResult(last_action_.forward_id_,
                         action_succeeded_, lite_asgn.mins_);
@@ -283,7 +285,7 @@ public:
             assert(!asgns_.empty());
             const CandidateAssignment &ca = asgns_.back();
             if (ca.relaxed_constrs_.empty() ||
-                    validator_.CheckRelaxation(ca.var_asgn_, false)) {
+                    validator_.CheckBestRelaxation(ca.relaxed_constrs_)) {
                 // Exit if this is not a relaxation or if it passes LRD
                 break;
             } else {
@@ -567,7 +569,7 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
 void Validator::AddSolution(const Assignment &sol,
                             const Int64Vector &rel_const) {
     LiteVarAssignment lite_sol;
-    FullAssignmentToLite(sol, 0, lite_sol);
+    FullAssignmentToLite(sol, lite_sol);
 
     LOG4CXX_TRACE(logger, "New solution to validate: " << sol.DebugString());
 
@@ -823,6 +825,17 @@ bool Validator::CheckRelaxation(const LiteVarAssignment &relax_asgn,
         sl_task_.BroadcastRD(rd);
     }
     return passes_lrd;
+}
+
+bool Validator::CheckBestRelaxation(const Int64Vector &vc) const {
+    Relaxator *relaxator = sl_.GetRelaxator();
+    if (!relaxator) {
+        // Not relaxing; check always passes
+        return true;
+    }
+    const double lrd = relaxator->GetLRD();
+    const double rd = relaxator->ComputeViolSpecBestRelaxationDegree(vc);
+    return rd <= lrd;
 }
 
 int Validator::FindValidatorForReforwards() {

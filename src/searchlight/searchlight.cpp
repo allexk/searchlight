@@ -434,7 +434,7 @@ void SearchlightSolver::DetermineLocalWorkload() {
 
             // we define the load in terms of initial vars + split_var intervals
             LiteVarAssignment asgn;
-            FullAssignmentToLite(vars_leaf_, 0, asgn);
+            FullAssignmentToLite(vars_leaf_, asgn);
             asgn.mins_[split_var_num] = start;
             asgn.maxs_[split_var_num] = end;
             local_load_.push_back(std::move(asgn));
@@ -507,7 +507,7 @@ void SearchlightSolver::Solve() {
                 LiteToFullAssignment(vars_leaf_, helper_load_.back().var_asgn_);
                 current_vc_spec_ = helper_load_.back().relaxed_constrs_;
                 helper_load_.pop_back();
-            } else if (Relaxator *relaxator = sl_.GetRelaxator()){
+            } else if (Relaxator *relaxator = sl_.GetRelaxator()) {
                 // Try a fail replay
                 fail_replay = relaxator->GetFailReplay(domain_info,
                                                        current_vc_spec_);

@@ -99,7 +99,18 @@ typedef std::vector<double> DoubleVector;
  * but a single value for each variable.
  */
 struct LiteVarAssignment {
+    /**
+     * Min/max values.
+     */
     Int64Vector mins_, maxs_;
+
+    /**
+     * Clears the entire assignment.
+     */
+    void clear() {
+        mins_.clear();
+        maxs_.clear();
+    }
 };
 
 /**

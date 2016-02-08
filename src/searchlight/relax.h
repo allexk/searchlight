@@ -461,6 +461,17 @@ public:
 	}
 
 	/**
+	 * Return relative position of the interval to this one.
+	 *
+	 * @param l left interval bound
+	 * @param h right interval bound
+	 * @return -1 -- to the left; 1 -- to the right; 0 -- intersect
+	 */
+	int RelIntervalPos(int64 l, int64 h) const {
+	    return l > max_? 1 : (h < min_ ? -1 : 0);
+	}
+
+	/**
 	 * Return constraint's minimum interval value.
 	 *
 	 * @return minimum interval value
@@ -577,6 +588,18 @@ public:
 	double ComputeResultRelaxationDegree(const Int64Vector &rel_result) const;
 
 	/**
+	 * Compute the best relaxation degree of the vc specification.
+	 *
+	 * Since vc specification contains relaxation intervals for the constraints,
+	 * we can compute the best and worst case relaxations. This function
+	 * returns the best one, based on the provided intervals.
+	 *
+	 * @param vc violated constraint specification
+	 * @return relaxation degree for vc
+	 */
+	double ComputeViolSpecBestRelaxationDegree(const Int64Vector &vc) const;
+
+	/**
 	 * Report a new result with the specified relaxation degree.
 	 *
 	 * @param rd relaxation degree
@@ -619,13 +642,23 @@ public:
 	bool GetFailReplay(std::vector<IntVarDomainInfo> &dom_info,
 	                   Int64Vector &vc_spec) {
         std::lock_guard<std::mutex> lock{mtx_};
-        if (!fail_replays_.empty()) {
+        const double lrd = lrd_.load(std::memory_order_relaxed);
+        while (!fail_replays_.empty()) {
             // Const cast is okay here; we get rid of the top object right away
             FailReplay &fr = const_cast<FailReplay &>(fail_replays_.top());
-            vc_spec = fr.ViolConstSpec();
-            dom_info = std::move(fr.saved_vars_);
-            fail_replays_.pop();
-            return true;
+            if (fr.best_relax_degree_ <= lrd) {
+                //if (fr.worst_relax_degree_ > lrd) {
+                    // FIXME: Tighten the relaxation (restore the fail replay distances first)
+                    //ComputeFailReplayRelaxation(fr, ComputeRelPos(fr));
+                //}
+                vc_spec = fr.ViolConstSpec();
+                dom_info = std::move(fr.saved_vars_);
+                fail_replays_.pop();
+                return true;
+            } else {
+                // Actually can clear the queue, since all others > lrd
+                fail_replays_ = decltype(fail_replays_)();
+            }
         }
         return false;
 	}
@@ -636,9 +669,9 @@ private:
 	 * of violated constraints.
 	 */
 	double MaxUnitRelaxDistance(size_t viol_constrs) const {
-		return lrd_.load(std::memory_order_relaxed) -
+		return (lrd_.load(std::memory_order_relaxed) -
 				(1 - distance_weight_) * double(viol_constrs) /
-				orig_consts_.size() / distance_weight_;
+				orig_consts_.size()) / distance_weight_;
 	}
 
 	// Compute relaxation distance
@@ -696,6 +729,24 @@ private:
 		        return 0;
 		    }
 		}
+
+		// Compute minimum relative relaxation distance for the interval
+		double MinRelRelaxDist(int64 l, int64 h) const {
+            const int64 imin = int_.Min();
+            const int64 imax = int_.Max();
+            /*
+             * We assume that the interval is either completely to the left or
+             * right of the original interval, since that is how we generate
+             * them.
+             */
+            if (l > imax) {
+                return double(l - imax) / MaxRelaxDist(false);
+            } else if (h < imin) {
+                return double(imin - h) / MaxRelaxDist(true);
+            } else {
+                return 0;
+            }
+		}
 	};
 
 	// Saved fail for later replay
@@ -717,12 +768,12 @@ private:
 		// Saved decision variables for the replay
 		std::vector<IntVarDomainInfo> saved_vars_;
 
-		// Relaxation degree
-		double relax_degree_;
+		// Relaxation degree: best and the worst one possible for the replay
+		double best_relax_degree_, worst_relax_degree_;
 
 		// relax degree-based comparison
 		bool operator>(const FailReplay &other) const {
-			return relax_degree_ > other.relax_degree_;
+			return best_relax_degree_ > other.best_relax_degree_;
 		}
 
 		/*
@@ -750,9 +801,17 @@ private:
 	std::priority_queue<FailReplay, std::vector<FailReplay>,
 		std::greater<FailReplay>> fail_replays_;
 
-	// Fill in new relaxation interval; return relaxation distance (-1 failed)
-	int64 ComputeNewReplayInterval(FailReplay::FailedConstraint &failed_const,
-			double max_relax_dist, int rel_pos);
+	// Fill in new relaxation interval; return true if possible to relax
+	bool ComputeNewReplayInterval(FailReplay &replay,
+	        FailReplay::FailedConstraint &failed_const,
+			double max_relax_dist, int rel_pos) const;
+
+    // Compute relative positions for the fail replay
+	std::vector<int> ComputeRelPos(const FailReplay &replay) const;
+
+	// Compute relaxation for replay (true, if possible to relax)
+	bool ComputeFailReplayRelaxation(FailReplay &replay,
+	    const std::vector<int> &rel_pos) const;
 
 	// Main Searchlight reference
 	Searchlight &sl_;

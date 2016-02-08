@@ -54,19 +54,18 @@ void LiteToFullAssignment(Assignment &asgn,
     }
 }
 
-void FullAssignmentToLite(const Assignment &asgn, size_t pos,
-        LiteVarAssignment &lite_asgn) {
+void FullAssignmentToLite(const Assignment &asgn, LiteVarAssignment &lite_asgn) {
     assert(lite_asgn.maxs_.empty() ||
             lite_asgn.mins_.size() == lite_asgn.maxs_.size());
 
     const auto &asgn_vars = asgn.IntVarContainer();
-    lite_asgn.mins_.resize(pos + asgn_vars.Size());
-    lite_asgn.maxs_.resize(pos + asgn_vars.Size());
+    lite_asgn.mins_.resize(asgn_vars.Size());
+    lite_asgn.maxs_.resize(asgn_vars.Size());
 
     for (int i = 0; i < asgn_vars.Size(); i++) {
         const auto &var = asgn_vars.Element(i);
-        lite_asgn.mins_[pos + i] = var.Min();
-        lite_asgn.maxs_[pos + i] = var.Max();
+        lite_asgn.mins_[i] = var.Min();
+        lite_asgn.maxs_[i] = var.Max();
     }
 }
 } /* namespace searchlight */

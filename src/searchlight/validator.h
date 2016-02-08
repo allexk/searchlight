@@ -333,6 +333,9 @@ private:
     bool CheckRelaxation(const LiteVarAssignment &relax_asgn,
                          bool report_rd) const;
 
+    // Check best relaxation degree for the violated constraint spec.
+    bool CheckBestRelaxation(const Int64Vector &vc) const;
+
     // Determines the assignment's zone and pushes the candidate there
     void PushToLocalZone(const CoordinateSet &chunks,
                          const CandidateAssignment &asgn);
