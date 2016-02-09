@@ -29,6 +29,7 @@
  */
 
 #include <searchlight/searchlight.h>
+#include <searchlight/relax.h>
 
 #include <boost/lexical_cast.hpp>
 
@@ -90,6 +91,8 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
     const int32 end_time   = config.get<int32>("mimic.u_time");
     const int32 avg_l   = config.get<int32>("mimic.avg_l");
     const int32 avg_u   = config.get<int32>("mimic.avg_u");
+    const int32 avg_relax_l   = config.get<int32>("mimic.avg_relax_l");
+    const int32 avg_relax_u   = config.get<int32>("mimic.avg_relax_u");
     const int32 len_l  = config.get<int32>("mimic.len_l");
     const int32 len_u  = config.get<int32>("mimic.len_u");
     const int32 step_len  = config.get<int32>("mimic.step_len", 1);
@@ -131,7 +134,16 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
     std::vector<int64> udf_params(1, int64(attr));
     IntExpr * const avg = solver.RevAlloc(avg_fab(&solver, adapter, all_vars,
             udf_params));
-    solver.AddConstraint(solver.MakeBetweenCt(avg, avg_l, avg_u));
+    if (config.get("relax.on", false)) {
+        RelaxableConstraint *avg_bt = solver.RevAlloc(
+                new searchlight::BetweenCt(
+                    &solver, avg, avg_l, avg_u));
+        sl->RegisterConstraint("avg_const", id, avg_bt, avg_relax_l,
+                avg_relax_u);
+        solver.AddConstraint(avg_bt);
+    } else {
+        solver.AddConstraint(solver.MakeBetweenCt(avg, avg_l, avg_u));
+    }
 
     // neighborhood
     const int32 lneighb_size  = config.get("mimic.neighborhood.l_size", 0);
