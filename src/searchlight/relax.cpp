@@ -79,48 +79,40 @@ void Relaxator::RegisterConstraint(const std::string &name, size_t solver_id,
 }
 
 bool Relaxator::ComputeNewReplayInterval(FailReplay &replay,
-		FailReplay::FailedConstraint &failed_const, double max_relax_dist,
-		int rel_pos) const {
+		FailReplay::FailedConstraint &failed_const,
+		double max_relax_dist) const {
 	const ConstraintInfo &ci = orig_consts_[failed_const.const_id_];
-	const int64 max_absolute_relax_dist_int = ci.MaxRelaxDist(rel_pos == -1);
+	// Maximum relaxation distance for the constraint
+	const int64 max_absolute_relax_dist_int =
+	        ci.MaxRelaxDist(failed_const.rel_pos_ == -1);
+	// Maximum relaxation distance with respect to the current lrd
 	const int64 max_relax_dist_int =
 	        max_absolute_relax_dist_int  * max_relax_dist;
 
-	// Compute the distance
-	const int64 min_r_dist = failed_const.rl_;
-	const int64 max_r_dist = failed_const.rh_;
-	int64 r_dist;
-	if (max_relax_dist_int > max_r_dist) {
-		r_dist = max_r_dist;
-	} else if (max_relax_dist_int >= min_r_dist) {
-		r_dist = max_relax_dist_int;
-	} else {
-		// Cannot relax
+    /*
+     *  Compute new interval. We have a choice here. We can just extend the
+     *  original interval or create a new one, based on the current (fail)
+     *  values. Instead, we store the minimum and maximum
+     *  relaxation distance, and the interval can be restored later in the way
+     *  we wish.
+     */
+	if (max_relax_dist_int >= failed_const.rl_ &&
+	        max_relax_dist_int < failed_const.rh_) {
+	    // Tighten the maximum relaxation
+	    failed_const.rh_ = max_relax_dist_int;
+	} else if (max_relax_dist_int < failed_const.rl_) {
+		// Cannot relax with respect to this fail
 		return false;
 	}
-	/*
-	 *  Compute new interval. We have a choice here. We can just extend the
-	 *  original interval or create a new one, based on the current (fail)
-	 *  values. The second option is better, since it saves information
-	 *  about the fail interval.
-	 */
-	if (rel_pos == 1) {
-		failed_const.rl_ = ci.int_.Max() + min_r_dist;
-		failed_const.rh_ = ci.int_.Max() + r_dist;
-	} else {
-		failed_const.rl_ = ci.int_.Min() - r_dist;
-		failed_const.rh_ = ci.int_.Min() - min_r_dist;
-	}
 	replay.best_relax_degree_ = std::max(replay.best_relax_degree_,
-	    double(min_r_dist) / max_absolute_relax_dist_int);
+	    double(failed_const.rl_) / max_absolute_relax_dist_int);
     replay.worst_relax_degree_ = std::max(replay.worst_relax_degree_,
-        double(r_dist) / max_absolute_relax_dist_int);
+        double(failed_const.rh_) / max_absolute_relax_dist_int);
     return true;
 }
 
 void Relaxator::RegisterFail(size_t solver_id) {
 	// Compute relaxation degree: first pass, determine violated constraints
-	std::vector<int> saved_rel_pos;
 	FailReplay replay;
 	for (size_t i = 0; i < orig_consts_.size(); ++i) {
 		const ConstraintInfo &ci = orig_consts_[i];
@@ -136,16 +128,15 @@ void Relaxator::RegisterFail(size_t solver_id) {
 		const int rel_pos = ci.int_.MinMaxDistance(cmin, cmax, min_d, max_d);
 		if (rel_pos != 0) {
 			// Violation
-			saved_rel_pos.push_back(rel_pos);
-			replay.failed_const_.push_back({i, cmin, cmax, min_d, max_d});
+			replay.failed_const_.push_back({i, rel_pos, min_d, max_d});
 		}
 	}
-	if (saved_rel_pos.empty()) {
+	if (replay.failed_const_.empty()) {
 	    // No violations: might be a "custom" fail
 	    return;
 	}
 	// Second pass: compute the degree
-	if (!ComputeFailReplayRelaxation(replay, saved_rel_pos)) {
+	if (!ComputeFailReplayRelaxation(replay)) {
         // Cannot relax: ignore the fail
 	    return;
 	}
@@ -219,31 +210,39 @@ void Relaxator::ReportResult(double rd) {
     }
 }
 
-std::vector<int> Relaxator::ComputeRelPos(const FailReplay &replay) const {
-    std::vector<int> res;
-    res.reserve(replay.failed_const_.size());
-    for (const auto &fc: replay.failed_const_) {
-        res.push_back(orig_consts_[fc.const_id_].int_.RelIntervalPos(
-                fc.rl_, fc.rh_));
-    }
-    return res;
-}
-
-bool Relaxator::ComputeFailReplayRelaxation(FailReplay &replay,
-    const std::vector<int> &rel_pos) const {
+bool Relaxator::ComputeFailReplayRelaxation(FailReplay &replay) const {
 
     const size_t viol_const_num = replay.failed_const_.size();
+    // Maximum relative relaxation based on the current LRD
     const double max_relax_dist = MaxUnitRelaxDistance(viol_const_num);
     replay.best_relax_degree_ = replay.worst_relax_degree_ = 0;
-    for (size_t i = 0; i < replay.failed_const_.size(); ++i) {
-        FailReplay::FailedConstraint &failed_const = replay.failed_const_[i];
-        if (!ComputeNewReplayInterval(replay, failed_const,
-                max_relax_dist, rel_pos[i]) ) {
+    for (auto &failed_const: replay.failed_const_) {
+        if (!ComputeNewReplayInterval(replay, failed_const, max_relax_dist) ) {
             // Cannot relax: ignore the fail
             return false;
         }
     }
     return true;
+}
+
+Int64Vector Relaxator::ViolConstSpec(const FailReplay &replay) const {
+    Int64Vector res;
+    res.reserve(replay.failed_const_.size() * 3);
+    for (const auto &fc: replay.failed_const_) {
+        const IntervalConstraint &ic = orig_consts_[fc.const_id_].int_;
+        res.push_back(fc.const_id_);
+        int64 l, h;
+        if (fc.rel_pos_ == 1) {
+            l = ic.Max() + fc.rl_;
+            h = ic.Max() + fc.rh_;
+        } else {
+            l = ic.Min() - fc.rh_;
+            h = ic.Min() - fc.rl_;
+        }
+        res.push_back(l);
+        res.push_back(h);
+    }
+    return res;
 }
 
 } /* namespace searchlight */

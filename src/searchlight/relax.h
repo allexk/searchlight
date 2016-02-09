@@ -647,11 +647,11 @@ public:
             // Const cast is okay here; we get rid of the top object right away
             FailReplay &fr = const_cast<FailReplay &>(fail_replays_.top());
             if (fr.best_relax_degree_ <= lrd) {
-                //if (fr.worst_relax_degree_ > lrd) {
-                    // FIXME: Tighten the relaxation (restore the fail replay distances first)
-                    //ComputeFailReplayRelaxation(fr, ComputeRelPos(fr));
-                //}
-                vc_spec = fr.ViolConstSpec();
+                if (fr.worst_relax_degree_ > lrd) {
+                    // Tighten the relaxation if possible
+                    ComputeFailReplayRelaxation(fr);
+                }
+                vc_spec = ViolConstSpec(fr);
                 dom_info = std::move(fr.saved_vars_);
                 fail_replays_.pop();
                 return true;
@@ -755,10 +755,10 @@ private:
 			// Constraint id
 			size_t const_id_;
 
-			// Low/high values at the fail point
-			int64 l_, h_;
+			// Left/right relaxation
+			int rel_pos_;
 
-			// Computed relaxation interval
+			// Computed relaxation distance (low/high)
 			int64 rl_, rh_;
 		};
 
@@ -775,27 +775,18 @@ private:
 		bool operator>(const FailReplay &other) const {
 			return best_relax_degree_ > other.best_relax_degree_;
 		}
-
-		/*
-		 * Return violated constraint spec vector.
-		 *
-		 * The vector has the following format:
-		 *  <constraint id, left bound, right bound> triplet for each constraint
-		 */
-		Int64Vector ViolConstSpec() const {
-		    Int64Vector res;
-		    res.reserve(failed_const_.size() * 3);
-		    for (const auto &fc: failed_const_) {
-		        res.push_back(fc.const_id_);
-		        res.push_back(fc.rl_);
-                res.push_back(fc.rh_);
-		    }
-		    return res;
-		}
 	};
 	// To output the structure
 	friend std::ostream &operator<<(std::ostream &os,
 	    const Relaxator::FailReplay &fr);
+
+    /*
+     * Return violated constraint spec vector.
+     *
+     * The vector has the following format:
+     *  <constraint id, left bound, right bound> triplet for each constraint
+     */
+	Int64Vector ViolConstSpec(const FailReplay &replay) const;
 
 	// Queue of replays ranked by relaxation degree (lowest first)
 	std::priority_queue<FailReplay, std::vector<FailReplay>,
@@ -804,14 +795,10 @@ private:
 	// Fill in new relaxation interval; return true if possible to relax
 	bool ComputeNewReplayInterval(FailReplay &replay,
 	        FailReplay::FailedConstraint &failed_const,
-			double max_relax_dist, int rel_pos) const;
-
-    // Compute relative positions for the fail replay
-	std::vector<int> ComputeRelPos(const FailReplay &replay) const;
+			double max_relax_dist) const;
 
 	// Compute relaxation for replay (true, if possible to relax)
-	bool ComputeFailReplayRelaxation(FailReplay &replay,
-	    const std::vector<int> &rel_pos) const;
+	bool ComputeFailReplayRelaxation(FailReplay &replay) const;
 
 	// Main Searchlight reference
 	Searchlight &sl_;
