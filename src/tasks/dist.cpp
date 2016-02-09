@@ -29,6 +29,7 @@
  */
 
 #include <searchlight/searchlight.h>
+#include <searchlight/relax.h>
 
 #include <boost/lexical_cast.hpp>
 
@@ -87,6 +88,7 @@ void Dist(Searchlight *sl, uint32_t id) {
     const int32 start_time = config.get<int32>("dist.l_time");
     const int32 end_time   = config.get<int32>("dist.u_time");
     const int32 query_dist = config.get<int32>("dist.dist", 0);
+    const int32 query_dist_relax = config.get<int32>("dist.dist_relax", 1);
     const std::string query_seq = config.get("dist.query", "");
     const int32 step_time  = config.get<int32>("dist.step_time", 1);
     const int32 time_limit = config.get("dist.time_limit", 3600);
@@ -114,8 +116,17 @@ void Dist(Searchlight *sl, uint32_t id) {
     IntExpr * const sqdist = solver.RevAlloc(sqdist_fab(&solver, adapter,
     		coords, udf_params));
     sl->AddTrackExpr(sqdist, "sqdist");
-    solver.AddConstraint(solver.MakeLessOrEqual(sqdist,
+    if (config.get("relax.on", false)) {
+        RelaxableConstraint *dist_leq = solver.RevAlloc(
+                new searchlight::LessEqExprCst(
+                    &solver, sqdist, query_dist * query_dist));
+        sl->RegisterConstraint("dist_const", id, dist_leq, 0,
+                query_dist * query_dist + query_dist_relax);
+        solver.AddConstraint(dist_leq);
+    } else {
+        solver.AddConstraint(solver.MakeLessOrEqual(sqdist,
     		query_dist * query_dist));
+    }
 
     // create the search phase
     const std::string search_heuristic = config.get<std::string>("dist.db");
