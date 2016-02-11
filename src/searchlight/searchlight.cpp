@@ -237,9 +237,15 @@ void SearchlightSolver::Prepare(Validator &validator) {
         SearchLimit *terminator = solver_.MakeCustomLimit(
                 NewPermanentCallback(this, &SearchlightSolver::CheckTerminate));
         search_monitors_.aux_monitors_.push_back(terminator);
-
         search_monitors_.validator_monitor_ = solver_.RevAlloc(
                 new ValidatorMonitor{all_vars_, &solver_, validator});
+        // Fail monitor if we're relaxing
+        if (Relaxator *relaxator = sl_.GetRelaxator()) {
+            // Add fail monitor
+            search_monitors_.fail_monitor_ = solver_.RevAlloc(
+                    new FailCollectorMonitor(solver_, *relaxator,
+                            SearchlightTask::GetLocalIDFromSolverID(id_)));
+        }
 
         // Determine the worload; it will be assigned at Solve()
         DetermineLocalWorkload();
@@ -480,10 +486,10 @@ void SearchlightSolver::SetVarDomains(const IntVarDomainInfoVector &dom_info) {
 }
 
 void SearchlightSolver::SetRelaxatorMonitor() {
-    if (Relaxator *relaxator = sl_.GetRelaxator()) {
-        // Add fail monitor
-        solver_.RevAlloc(new FailCollectorMonitor(solver_, *relaxator,
-            SearchlightTask::GetLocalIDFromSolverID(id_)))->Install();
+    if (sl_.GetRelaxator()) {
+        // Install fail monitor
+        assert(search_monitors_.fail_monitor_);
+        search_monitors_.fail_monitor_->Install();
     }
 }
 

@@ -521,6 +521,9 @@ private:
         // Validator monitor for the search (owned by the solver -- no delete)
         ValidatorMonitor *validator_monitor_ = nullptr;
 
+        // Fail monitor for relaxator (owned by CP solver -- no delete)
+        FailCollectorMonitor *fail_monitor_ = nullptr;
+
         // User monitors
         std::vector<SearchMonitor *> user_monitors_;
 
