@@ -540,7 +540,6 @@ void SearchlightSolver::Solve() {
             if (!fail_replay) {
                 LOG4CXX_INFO(logger, "Setting up solver assignment: "
                         << vars_leaf_.DebugString());
-                SetRelaxatorMonitor();
                 vars_leaf_.Restore();
             } else {
                 // Fail replay
@@ -566,9 +565,15 @@ void SearchlightSolver::Solve() {
             vars_leaf_.UnfreezeQueue();
         } else {
             // Set the relaxator monitor for external setup as well
-            SetRelaxatorMonitor();
             non_solve_setup_ = false;
         }
+
+        /*
+         * Set the relaxator monitor (if needed). We need it for fail replays
+         * as well as for common loads, since even a replay might have another
+         * fail, which might result in further relaxation (or ignoring it).
+         */
+        SetRelaxatorMonitor();
 
         // Starting the timer
         const auto solve_start_time = std::chrono::steady_clock::now();

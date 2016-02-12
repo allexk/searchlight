@@ -966,7 +966,7 @@ IntExpr* UDFBuilder(UDFFunctionCreator udf_creator, const AdapterPtr &adapter,
 Constraint *BuildRelaxableLessOrEqual(CPModelLoader* const builder,
                              const CPConstraintProto& proto) {
     int64 id;
-    if (!builder->ScanArguments(ModelVisitor::kValueArgument, proto, &id)) {
+    if (!builder->ScanArguments(RelaxableConstraint::ModelIDTag, proto, &id)) {
     	return nullptr;
     }
     IntExpr *expr;
@@ -990,7 +990,7 @@ Constraint *BuildRelaxableLessOrEqual(CPModelLoader* const builder,
 Constraint *BuildRelaxableGreaterOrEqual(CPModelLoader* const builder,
                              const CPConstraintProto& proto) {
     int64 id;
-    if (!builder->ScanArguments(ModelVisitor::kValueArgument, proto, &id)) {
+    if (!builder->ScanArguments(RelaxableConstraint::ModelIDTag, proto, &id)) {
     	return nullptr;
     }
     IntExpr *expr;
@@ -1014,7 +1014,7 @@ Constraint *BuildRelaxableGreaterOrEqual(CPModelLoader* const builder,
 Constraint *BuildRelaxableBetween(CPModelLoader* const builder,
                              const CPConstraintProto& proto) {
     int64 id;
-    if (!builder->ScanArguments(ModelVisitor::kValueArgument, proto, &id)) {
+    if (!builder->ScanArguments(RelaxableConstraint::ModelIDTag, proto, &id)) {
     	return nullptr;
     }
 	int64 min_value;

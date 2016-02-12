@@ -178,7 +178,10 @@ public:
           last_asgn_{new Assignment{prototype}},
 		  track_vars_asgn_{&track_prototype},
 		  relax_asgn_{&relax_prototype},
-          slave_{slave} {}
+          slave_{slave} {
+              // Initial VC (See comment for the same call at Next())
+              validator_.GetMaximumRelaxationVC(maximum_relax_vc_);
+          }
 
 
     /**
@@ -244,7 +247,7 @@ public:
                         adapter_->SetAdapterMode(Adapter::EXACT);
                         return solver->RevAlloc(
                                 new RestoreAssignment{last_asgn_.get(),
-                                    asgns_.back().relaxed_constrs_,
+                                    maximum_relax_vc_,
                                     constrs_});
                     }
                 }
@@ -273,6 +276,18 @@ public:
                         solver->Fail();
                     }
                     asgns_.swap(*new_asgns);
+                    /*
+                     * If we're relaxing get the new maximum relaxation VC.
+                     * We need this, since candidates might fail the currently
+                     * non-relaxed constraint, but still qualify for a relaxed
+                     * result (by passing the LRD check).
+                     *
+                     * Strictly speaking, we could obtain this vector for
+                     * before validating every candidate or at every LRD change,
+                     * but as a small performance optimization, we do it once
+                     * per batch
+                     */
+                    validator_.GetMaximumRelaxationVC(maximum_relax_vc_);
 
                     LOG4CXX_TRACE(logger, "Got " << asgns_.size()
                             << " new assignments to check");
@@ -323,7 +338,7 @@ public:
         }
 
         return solver->RevAlloc(new RestoreAssignment{last_asgn_.get(),
-            asgns_.back().relaxed_constrs_, constrs_});
+            maximum_relax_vc_, constrs_});
     }
 
     /**
@@ -404,6 +419,9 @@ public:
 
     // Relaxable constraints
     const RelaxableConstraints &constrs_;
+
+    // Maximum relaxation VC specification
+    Int64Vector maximum_relax_vc_;
 
     // Assignments to validate
     CandidateVector asgns_;
@@ -836,6 +854,12 @@ bool Validator::CheckBestRelaxation(const Int64Vector &vc) const {
     const double lrd = relaxator->GetLRD();
     const double rd = relaxator->ComputeViolSpecBestRelaxationDegree(vc);
     return rd <= lrd;
+}
+
+void Validator::GetMaximumRelaxationVC(Int64Vector &vc) const {
+    if (Relaxator *relaxator = sl_.GetRelaxator()) {
+        vc = relaxator->GetMaximumRelaxationVCSpec();
+    }
 }
 
 int Validator::FindValidatorForReforwards() {

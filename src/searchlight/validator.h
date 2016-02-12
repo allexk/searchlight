@@ -336,6 +336,9 @@ private:
     // Check best relaxation degree for the violated constraint spec.
     bool CheckBestRelaxation(const Int64Vector &vc) const;
 
+    // Compute maximum relaxation VC
+    void GetMaximumRelaxationVC(Int64Vector &vc) const;
+
     // Determines the assignment's zone and pushes the candidate there
     void PushToLocalZone(const CoordinateSet &chunks,
                          const CandidateAssignment &asgn);

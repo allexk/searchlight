@@ -55,6 +55,11 @@ public:
     static const char GreaterEqConstTag[];
 
     /**
+     * Model parameter tags for Protobuf import/export.
+     */
+    static const char ModelIDTag[];
+
+    /**
      * Check if the constraint is relaxable.
      *
      * The check is based on the type name.
@@ -106,7 +111,7 @@ public:
      * @param visitor model visitor
      */
     virtual void Accept(ModelVisitor* const visitor) const override {
-        visitor->VisitIntegerArgument(ModelVisitor::kValueArgument, id_);
+        visitor->VisitIntegerArgument(ModelIDTag, id_);
     }
 
     /**
@@ -172,7 +177,7 @@ public:
         h = max_;
     }
 
-    virtual void Post() {
+    virtual void Post() override {
         if (!expr_->IsVar()) {
             Demon* const d = solver()->
                     MakeConstraintInitialPropagateCallback(this);
@@ -180,17 +185,17 @@ public:
         }
     }
 
-    virtual void InitialPropagate() {
+    virtual void InitialPropagate() override {
         expr_->SetRange(min_, max_);
     }
 
-    virtual std::string DebugString() const {
+    virtual std::string DebugString() const override {
         return StringPrintf(
                 "RelaxableBetweenCt(%s, %" GG_LL_FORMAT "d, %" GG_LL_FORMAT "d)",
                 expr_->DebugString().c_str(), min_, max_);
     }
 
-    virtual void Accept(ModelVisitor* const visitor) const {
+    virtual void Accept(ModelVisitor* const visitor) const override {
         visitor->BeginVisitConstraint(
                 RelaxableConstraint::BetweenConstTag, this);
         RelaxableConstraint::Accept(visitor);
@@ -198,7 +203,7 @@ public:
         visitor->VisitIntegerExpressionArgument(
                 ModelVisitor::kExpressionArgument, expr_);
         visitor->VisitIntegerArgument(ModelVisitor::kMaxArgument, max_);
-        visitor->EndVisitConstraint(ModelVisitor::kBetween, this);
+        visitor->EndVisitConstraint(RelaxableConstraint::BetweenConstTag, this);
     }
 
     virtual IntExpr *GetExpr() const override {
@@ -222,7 +227,7 @@ public:
         value_(v),
         demon_(nullptr) {}
 
-    virtual void Post() {
+    virtual void Post() override {
         if (!expr_->IsVar() && expr_->Min() < value_) {
             demon_ = solver()->MakeConstraintInitialPropagateCallback(this);
             expr_->WhenRange(demon_);
@@ -236,30 +241,27 @@ public:
         return expr_;
     }
 
-    virtual void InitialPropagate() {
+    virtual void InitialPropagate() override {
         expr_->SetMin(value_);
         if (demon_ != nullptr && expr_->Min() >= value_) {
             demon_->inhibit(solver());
         }
     }
 
-    virtual std::string DebugString() const {
+    virtual std::string DebugString() const override {
         return StringPrintf("(relaxable %s >= %" GG_LL_FORMAT "d)",
                             expr_->DebugString().c_str(), value_);
     }
 
-    virtual IntVar* Var() {
-        return solver()->MakeIsGreaterOrEqualCstVar(expr_->Var(), value_);
-    }
-
-    virtual void Accept(ModelVisitor* const visitor) const {
+    virtual void Accept(ModelVisitor* const visitor) const override {
         visitor->BeginVisitConstraint(
                 RelaxableConstraint::GreaterEqConstTag, this);
         RelaxableConstraint::Accept(visitor);
         visitor->VisitIntegerExpressionArgument(
                 ModelVisitor::kExpressionArgument, expr_);
         visitor->VisitIntegerArgument(ModelVisitor::kValueArgument, value_);
-        visitor->EndVisitConstraint(ModelVisitor::kGreaterOrEqual, this);
+        visitor->EndVisitConstraint(
+                RelaxableConstraint::GreaterEqConstTag, this);
     }
 
     /**
@@ -304,7 +306,7 @@ public:
         value_(v),
         demon_(nullptr) {}
 
-    virtual void Post() {
+    virtual void Post() override {
         if (!expr_->IsVar() && expr_->Max() > value_) {
             demon_ = solver()->MakeConstraintInitialPropagateCallback(this);
             expr_->WhenRange(demon_);
@@ -314,30 +316,26 @@ public:
         }
     }
 
-    virtual void InitialPropagate() {
+    virtual void InitialPropagate() override {
         expr_->SetMax(value_);
         if (demon_ != nullptr && expr_->Max() <= value_) {
           demon_->inhibit(solver());
         }
     }
 
-    virtual std::string DebugString() const {
+    virtual std::string DebugString() const override {
         return StringPrintf("(relaxable %s <= %" GG_LL_FORMAT "d)",
                             expr_->DebugString().c_str(), value_);
     }
 
-    virtual IntVar* Var() {
-        return solver()->MakeIsLessOrEqualCstVar(expr_->Var(), value_);
-    }
-
-    virtual void Accept(ModelVisitor* const visitor) const {
+    virtual void Accept(ModelVisitor* const visitor) const override {
         visitor->BeginVisitConstraint(
                 RelaxableConstraint::LessEqConstTag, this);
         RelaxableConstraint::Accept(visitor);
         visitor->VisitIntegerExpressionArgument(
                 ModelVisitor::kExpressionArgument, expr_);
         visitor->VisitIntegerArgument(ModelVisitor::kValueArgument, value_);
-        visitor->EndVisitConstraint(ModelVisitor::kLessOrEqual, this);
+        visitor->EndVisitConstraint(RelaxableConstraint::LessEqConstTag, this);
     }
 
     virtual IntExpr *GetExpr() const override {
@@ -663,6 +661,17 @@ public:
         return false;
 	}
 
+	/**
+	 * Compute VC specification with the maximum relaxation possible.
+	 *
+	 * The maximum relaxation assumes all constraints are violated and
+	 * corresponds to the maximum possible relaxation distances for each
+	 * according to the LRD.
+	 *
+	 * @return VC specification with maximal relaxation
+	 */
+	Int64Vector GetMaximumRelaxationVCSpec() const;
+
 private:
 	/*
 	 * Compute the maximum [0, 1] relaxation distance for the specified number
@@ -715,6 +724,21 @@ private:
 					return max_h_ - int_.Max();
 				}
 			}
+		}
+
+		// Compute maximum relaxation interval with respect to max_relax degree
+		void MaxRelaxDist(double max_relax, int64_t &l, int64_t &h) const {
+		    assert(max_relax >= 0.0 && max_relax <= 1.0);
+		    // Left point
+		    l = MaxRelaxDist(true);
+		    if (l != kint64min) {
+		        l = int_.Min() - l * max_relax;
+		    }
+		    // Right point
+		    h = MaxRelaxDist(false);
+		    if (h != kint64max) {
+                h = int_.Max() + h * max_relax;
+		    }
 		}
 
 		// Compute relative relaxation distance based on the point

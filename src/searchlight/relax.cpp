@@ -19,6 +19,10 @@ const char RelaxableConstraint::BetweenConstTag[] = "RelaxableBetween";
 const char RelaxableConstraint::LessEqConstTag[] = "RelaxableLEQ";
 const char RelaxableConstraint::GreaterEqConstTag[] = "RelaxableGEQ";
 
+// Model tags
+const char RelaxableConstraint::ModelIDTag[] = "constraint_id";
+
+
 // Output to a stream
 std::ostream &operator<<(std::ostream &os, const Relaxator::FailReplay &fr) {
     os << "Fail replay:";
@@ -241,6 +245,18 @@ Int64Vector Relaxator::ViolConstSpec(const FailReplay &replay) const {
         }
         res.push_back(l);
         res.push_back(h);
+    }
+    return res;
+}
+
+Int64Vector Relaxator::GetMaximumRelaxationVCSpec() const {
+    Int64Vector res(orig_consts_.size() * 3);
+    // Assume all are violated
+    const double max_relax_dist = MaxUnitRelaxDistance(orig_consts_.size());
+    for (size_t i = 0; i < orig_consts_.size(); ++i) {
+        res[3 * i] = i;
+        orig_consts_[i].MaxRelaxDist(max_relax_dist, res[3 * i + 1],
+                res[3 * i + 2]);
     }
     return res;
 }
