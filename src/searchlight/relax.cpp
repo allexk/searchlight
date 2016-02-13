@@ -197,19 +197,21 @@ double Relaxator::ComputeViolSpecBestRelaxationDegree(
 
 void Relaxator::ReportResult(double rd) {
     std::lock_guard<std::mutex> lock{mtx_};
+    bool lrd_might_change = false;
     if (top_results_.size() < res_num_) {
         top_results_.push(rd);
-    } else {
-        double min_rd = top_results_.top();
-        if (min_rd >= rd) {
-            top_results_.pop();
-            top_results_.push(rd);
-            min_rd = top_results_.top();
-            if (min_rd + 0.001 < lrd_.load(std::memory_order_relaxed)) {
-                // change LRD (use some EPSILON to avoid near close changes)
-                lrd_.store(min_rd, std::memory_order_relaxed);
-                LOG4CXX_DEBUG(logger, "LRD changed to " << min_rd);
-            }
+        lrd_might_change = top_results_.size() == res_num_;
+    } else if (top_results_.top() > rd) {
+        top_results_.pop();
+        top_results_.push(rd);
+        lrd_might_change = true;
+    }
+    if (lrd_might_change) {
+        const double min_rd = top_results_.top();
+        if (min_rd + 0.001 < lrd_.load(std::memory_order_relaxed)) {
+            // change LRD (use some EPSILON to avoid near close changes)
+            lrd_.store(min_rd, std::memory_order_relaxed);
+            LOG4CXX_DEBUG(logger, "LRD changed to " << min_rd);
         }
     }
 }
