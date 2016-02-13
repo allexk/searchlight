@@ -678,6 +678,7 @@ private:
 	 * of violated constraints.
 	 */
 	double MaxUnitRelaxDistance(size_t viol_constrs) const {
+	    assert(viol_constrs);
 		return (lrd_.load(std::memory_order_relaxed) -
 				(1 - distance_weight_) * double(viol_constrs) /
 				orig_consts_.size()) / distance_weight_;
@@ -685,6 +686,7 @@ private:
 
 	// Compute relaxation distance
 	double RelaxDistance(double relax_dist, size_t viol_const_num) const {
+	    assert(relax_dist >= 0.0 && relax_dist <= 1.0);
 		return distance_weight_ * relax_dist +
 				(1 - distance_weight_) *
 				double(viol_const_num) / orig_consts_.size();
@@ -845,8 +847,8 @@ private:
 	// Maximum number of results to track
 	const size_t res_num_;
 
-    // Min heap to count result relaxation degrees
-    std::priority_queue<double, std::vector<double>, std::greater<double>> top_results_;
+    // Max heap to count result relaxation degrees
+    std::priority_queue<double> top_results_;
 
 	// For concurrency control
 	mutable std::mutex mtx_;
