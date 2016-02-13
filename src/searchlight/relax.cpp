@@ -217,13 +217,17 @@ void Relaxator::ReportResult(double rd) {
 }
 
 bool Relaxator::ComputeFailReplayRelaxation(FailReplay &replay) const {
-
     const size_t viol_const_num = replay.failed_const_.size();
+    assert(viol_const_num);
     // Maximum relative relaxation based on the current LRD
     const double max_relax_dist = MaxUnitRelaxDistance(viol_const_num);
+    if (max_relax_dist <= 0.0) {
+        // Cannot relax with this number of violations
+        return false;
+    }
     replay.best_relax_degree_ = replay.worst_relax_degree_ = 0;
     for (auto &failed_const: replay.failed_const_) {
-        if (!ComputeNewReplayInterval(replay, failed_const, max_relax_dist) ) {
+        if (!ComputeNewReplayInterval(replay, failed_const, max_relax_dist)) {
             // Cannot relax: ignore the fail
             return false;
         }
@@ -253,8 +257,13 @@ Int64Vector Relaxator::ViolConstSpec(const FailReplay &replay) const {
 
 Int64Vector Relaxator::GetMaximumRelaxationVCSpec() const {
     Int64Vector res(orig_consts_.size() * 3);
-    // Assume all are violated
-    const double max_relax_dist = MaxUnitRelaxDistance(orig_consts_.size());
+    // Maximum distance is reached when only 1 constraint is violated
+    const double max_relax_dist = MaxUnitRelaxDistance(1);
+    if (max_relax_dist <= 0.0) {
+        // No violations possible
+        res.clear();
+        return res;
+    }
     for (size_t i = 0; i < orig_consts_.size(); ++i) {
         res[3 * i] = i;
         orig_consts_[i].MaxRelaxDist(max_relax_dist, res[3 * i + 1],
