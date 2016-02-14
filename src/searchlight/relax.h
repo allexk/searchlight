@@ -679,9 +679,15 @@ private:
 	 */
 	double MaxUnitRelaxDistance(size_t viol_constrs) const {
 	    assert(viol_constrs);
-		return (lrd_.load(std::memory_order_relaxed) -
+	    const double res = (lrd_.load(std::memory_order_relaxed) -
 				(1 - distance_weight_) * double(viol_constrs) /
 				orig_consts_.size()) / distance_weight_;
+	    /*
+	     * The value might be greater than 1.0 in case the number of violated
+	     * constraints is small and the LRD is still large. Still, the
+	     * distance should not be greater than 1.0 -- the maximum one.
+	     */
+	    return std::min(res, 1.0);
 	}
 
 	// Compute relaxation distance
