@@ -134,6 +134,7 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
     std::vector<int64> udf_params(1, int64(attr));
     IntExpr * const avg = solver.RevAlloc(avg_fab(&solver, adapter, all_vars,
             udf_params));
+    sl->AddTrackExpr(avg, "avg");
     if (config.get("relax.on", false)) {
         RelaxableConstraint *avg_bt = solver.RevAlloc(
                 new searchlight::BetweenCt(
