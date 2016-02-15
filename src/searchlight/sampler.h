@@ -698,6 +698,17 @@ private:
         void CheckAndCorrectBounds(Coordinates &low, Coordinates &high) const;
 
         /**
+         * Check if the region is valid for the synopsis.
+         *
+         * The region is valid if it intersects with the synopsis region.
+         *
+         * @param low low coordinates of the region
+         * @param high high coordinates of the region
+         * @return true, if valid; false, otherwise
+         */
+        bool CheckIfValid(const Coordinates &low, const Coordinates &high) const;
+
+        /**
          * Check if the point's coordinates are within the synopsis area.
          *
          * @param point point's coordinates

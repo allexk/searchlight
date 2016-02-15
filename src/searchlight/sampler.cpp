@@ -1075,9 +1075,15 @@ void Sampler::Synopsis::FillCellFromArray(const Coordinates &pos,
         }
 
         cell.count_ = iters.count_it_->getItem().getUint64();
-        cell.min_ = iters.min_it_->getItem().getDouble();
-        cell.max_ = iters.max_it_->getItem().getDouble();
-        cell.sum_ = iters.sum_it_->getItem().getDouble();
+        /*
+         * We might still have an empty cell, e.g., when all values are null
+         * there.
+         */
+        if (cell.count_) {
+            cell.min_ = iters.min_it_->getItem().getDouble();
+            cell.max_ = iters.max_it_->getItem().getDouble();
+            cell.sum_ = iters.sum_it_->getItem().getDouble();
+        }
     }
 }
 
@@ -1366,16 +1372,8 @@ size_t Sampler::Synopsis::ComputeMemoryFootprint() const {
 
 void Sampler::Synopsis::CheckAndCorrectBounds(
         Coordinates &low, Coordinates &high) const {
-    if (low.size() != high.size()) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Specified region has inconsistent dimensions!";
-    }
-
-    for (size_t i = 0; i < low.size(); i++) {
-        if (low[i] > high[i]) {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << "Specified region has low > high coordinates!";
-        }
+    const size_t dims = synopsis_origin_.size();
+    for (size_t i = 0; i < dims; i++) {
         if (low[i] < synopsis_origin_[i]) {
             low[i] = synopsis_origin_[i];
         }
@@ -1383,6 +1381,25 @@ void Sampler::Synopsis::CheckAndCorrectBounds(
             high[i] = synopsis_end_[i];
         }
     }
+}
+
+bool Sampler::Synopsis::CheckIfValid(const Coordinates &low,
+        const Coordinates &high) const {
+    const size_t dims = synopsis_origin_.size();
+    if (low.size() != high.size() || low.size() != dims) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << "Specified region has inconsistent dimensions!";
+    }
+    for (size_t i = 0; i < dims; ++i) {
+        if (low[i] > high[i]) {
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                    << "Specified region has inconsistent dimensions!";
+        }
+        if (high[i] < synopsis_origin_[i] || low[i] > synopsis_end_[i]) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool Sampler::Synopsis::CheckBounds(const Coordinates &point) const {
@@ -1402,7 +1419,7 @@ bool Sampler::Synopsis::CheckBounds(const Coordinates &point) const {
 
 bool Sampler::Synopsis::RegionValidForSample(const Coordinates &low,
         const Coordinates &high) const {
-    // copy to check correctness and align
+    // copy to align
     Coordinates inlow(low), inhigh(high);
     CheckAndCorrectBounds(inlow, inhigh);
 
@@ -1524,6 +1541,14 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
         aggs[i].reset(it->second());
     }
 
+    // Check if the region is valid
+    IntervalValueVector res(aggs.size());
+    assert(!synopses_[s_attr].empty());
+    if (!synopses_[s_attr][0]->CheckIfValid(low, high)) {
+        // Not valid region, return nulls
+        return res;
+    }
+
     // Choose synopsis
     Synopsis *syn = nullptr;
     if (exact) {
@@ -1538,7 +1563,7 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
          * computation cannot be performed by the sampler.
          */
         if (!syn) {
-            return IntervalValueVector();
+            return res;
         } else {
             syn->ComputeAggregate(low, high, aggs);
         }
@@ -1547,9 +1572,9 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
         assert(!synopses_[s_attr].empty());
         auto &syns = synopses_[s_attr];
 
-        const Region orig_region{low, high};
+        Region orig_region{low, high};
+        syns[0]->CheckAndCorrectBounds(orig_region.low_, orig_region.high_);
         std::vector<Region> regions{orig_region};
-        syns[0]->CheckAndCorrectBounds(regions[0].low_, regions[0].high_);
         std::vector<Region> left_regions;
 
         for (size_t i = 0; i < syns.size(); i++) {
@@ -1578,7 +1603,6 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
     }
 
     // finalize the result
-    IntervalValueVector res(aggs.size());
     for (size_t i = 0; i < aggs.size(); i++) {
         aggs[i].get()->Finalize(res[i]);
     }
