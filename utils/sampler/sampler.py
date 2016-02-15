@@ -74,7 +74,7 @@ parser = argparse.ArgumentParser(description='''Samples the specified SciDb
     array, dumps the sample into a CSV file and creates a script for loading''')
 
 # command line parameters
-parser.add_argument('--method', metavar='http/iquery', default='iquery,',
+parser.add_argument('--method', metavar='http/iquery', default='iquery',
                     help='Method to connect.')
 parser.add_argument('--host', metavar='hostname', default='localhost',
                     help='Host to connect to')
