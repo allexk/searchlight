@@ -260,7 +260,7 @@ public:
         if (validator_.CheckTerminate()) {
             // this will stop the search by failing the right branch
             LOG4CXX_INFO(logger, "Terminating the validator by force");
-            solver->Fail();
+            return solver->MakeFailDecision();
         }
 
         // pick the next assignment
@@ -273,7 +273,7 @@ public:
                     if (!new_asgns) {
                         // No more assignments: stop the validator search
                         LOG4CXX_INFO(logger, "Stopping the validator search");
-                        solver->Fail();
+                        return solver->MakeFailDecision();
                     }
                     asgns_.swap(*new_asgns);
                     /*
@@ -294,7 +294,7 @@ public:
                     delete new_asgns;
                 } else {
                     LOG4CXX_INFO(logger, "Helper validator finished workload...");
-                    solver->Fail();
+                    return solver->MakeFailDecision();
                 }
             }
             assert(!asgns_.empty());
