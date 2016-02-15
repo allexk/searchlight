@@ -272,4 +272,18 @@ Int64Vector Relaxator::GetMaximumRelaxationVCSpec() const {
     return res;
 }
 
+FailCollectorMonitor::FailCollectorMonitor(Solver &solver,
+        const SearchlightSolver &sl_solver,
+        Relaxator &rel) :
+    SearchMonitor(&solver),
+    relaxator_(rel),
+    sl_solver_(sl_solver),
+    solver_id_(sl_solver.GetLocalID()) {}
+
+void FailCollectorMonitor::BeginFail() {
+    if (!sl_solver_.LastFailCustom()) {
+        relaxator_.RegisterFail(solver_id_);
+    }
+}
+
 } /* namespace searchlight */

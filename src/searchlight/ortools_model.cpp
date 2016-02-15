@@ -1018,7 +1018,7 @@ Constraint *BuildRelaxableBetween(CPModelLoader* const builder,
     	return nullptr;
     }
 	int64 min_value;
-	if (!builder->ScanArguments(ModelVisitor::kValueArgument, proto,
+	if (!builder->ScanArguments(ModelVisitor::kMinArgument, proto,
 			&min_value)) {
 		return nullptr;
 	}
@@ -1028,7 +1028,7 @@ Constraint *BuildRelaxableBetween(CPModelLoader* const builder,
     	return nullptr;
     }
 	int64 max_value;
-	if (!builder->ScanArguments(ModelVisitor::kValueArgument, proto,
+	if (!builder->ScanArguments(ModelVisitor::kMaxArgument, proto,
 			&max_value)) {
 		return nullptr;
 	}

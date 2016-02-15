@@ -860,6 +860,8 @@ private:
 	mutable std::mutex mtx_;
 };
 
+class SearchlightSolver;
+
 /**
  * This search monitor catches fails and calls relaxator to record them for
  * possible future replays.
@@ -871,28 +873,27 @@ public:
 	 *
 	 * @param solver CP solver
 	 * @param rel query relaxator
-	 * @param sid Searchlight solver id
+	 * @param sl_solver Searchlight solver
 	 */
-	FailCollectorMonitor(Solver &solver, Relaxator &rel, size_t sid) :
-		SearchMonitor(&solver),
-		relaxator_(rel),
-		solver_id_(sid) {}
+	FailCollectorMonitor(Solver &solver, const SearchlightSolver &sl_solver,
+	        Relaxator &rel);
 
     /**
      * Called at the beginning of a fail.
      *
      * Just call the relaxator. It knows what to do.
      */
-	virtual void BeginFail() override {
-    	relaxator_.RegisterFail(solver_id_);
-    }
+	virtual void BeginFail() override;
 
 private:
 	// Query relaxator
 	Relaxator &relaxator_;
 
+	// Searchlight solver instance
+	const SearchlightSolver &sl_solver_;
+
 	// Searchlight solver id
-	size_t solver_id_;
+	const size_t solver_id_;
 };
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_RELAX_H_ */

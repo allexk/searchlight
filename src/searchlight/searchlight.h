@@ -498,6 +498,34 @@ public:
      */
     void SetVarDomains(const std::vector<IntVarDomainInfo> &dom_info);
 
+    /**
+     * Sets the last fail to be a "custom" one.
+     *
+     * A "custom" fail will be ignored to some monitors who depend on it.
+     * Notably, the relaxator ignores custom fails. The value will be reversed
+     * after the fail is completed. The function itself is supposed to be
+     * called before the actual Fail().
+     */
+    void BeginCustomFail() {
+        solver_.SaveAndSetValue(&last_fail_custom_, true);
+    }
+
+    /**
+     * Check if the last fail is custom.
+     *
+     * @return true, if the last fail is custom; false, otherwise
+     */
+    bool LastFailCustom() const {
+        return last_fail_custom_;
+    }
+
+    /**
+     * Return local instance ID for this solver.
+     *
+     * @return local instance solver id
+     */
+    uint32_t GetLocalID() const;
+
 private:
     // Reject/release helpers
     void RejectHelpers(bool hard);
@@ -592,6 +620,9 @@ private:
      *  initially, when we do roun-robin splitting of the search space.
      */
     bool non_solve_setup_ = false;
+
+    // True, if the last fail is a custom one
+    bool last_fail_custom_ = false;
 
     // Do we accept help?
     bool solver_balancing_enabled_ = true;

@@ -786,6 +786,7 @@ void BalancingMonitor::BeginNextDecision(DecisionBuilder* const b) {
             sl_solver_.DispatchWork(work);
 
             // Fail will "detach" the tree from the current solver
+            sl_solver_.BeginCustomFail();
             solver()->Fail();
         } else {
             // Cannot detach; try again later

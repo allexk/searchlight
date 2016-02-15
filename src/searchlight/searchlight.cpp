@@ -243,8 +243,7 @@ void SearchlightSolver::Prepare(Validator &validator) {
         if (Relaxator *relaxator = sl_.GetRelaxator()) {
             // Add fail monitor
             search_monitors_.fail_monitor_ = solver_.RevAlloc(
-                    new FailCollectorMonitor(solver_, *relaxator,
-                            SearchlightTask::GetLocalIDFromSolverID(id_)));
+                    new FailCollectorMonitor(solver_, *this, *relaxator));
         }
 
         // Determine the worload; it will be assigned at Solve()
@@ -721,6 +720,10 @@ std::string Searchlight::SolutionToString(
     			<< add_vals[i];
     }
     return sol_string.str();
+}
+
+uint32_t SearchlightSolver::GetLocalID() const {
+    return SearchlightTask::GetLocalIDFromSolverID(id_);
 }
 
 DecisionBuilder *SearchlightSolver::CreateDefaultHeuristic(
