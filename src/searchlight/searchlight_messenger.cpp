@@ -721,8 +721,14 @@ void SearchlightMessenger::SendSolution(const boost::shared_ptr<Query> &query,
     boost::shared_ptr<SearchlightSolution> record =
             msg->getRecord<SearchlightSolution>();
 
-    // fill the record (values in mins, additional values in maxs)
-    PackAssignment(vals, add_vals, *record->mutable_solution());
+    // fill the record (values in mins, additional values in aux_info)
+    VarAssignment &var_asgn = *record->mutable_solution();
+    PackAssignment(vals, {}, var_asgn);
+    if (!add_vals.empty()) {
+        for (int64_t v: add_vals) {
+            var_asgn.add_aux_info(v);
+        }
+    }
 
     // log
     LOG4CXX_TRACE(logger, "Sending solution to the coordinator: qid=" <<

@@ -504,8 +504,12 @@ void SearchlightTask::HandleRemoteSolution(InstanceID inst,
     }
 
     std::vector<int64_t> vals, add_vals;
-    SearchlightMessenger::UnpackAssignment(sol_msg->solution(), vals,
-        add_vals);
+    const VarAssignment &var_asgn = sol_msg->solution();
+    SearchlightMessenger::UnpackAssignment(var_asgn, vals, vals /* dummy */);
+    add_vals.resize(var_asgn.aux_info_size());
+    for (int i = 0; i < var_asgn.aux_info_size(); ++i) {
+        add_vals[i] = var_asgn.aux_info(i);
+    }
     ReportSolution(vals, add_vals);
 }
 
