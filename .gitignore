@@ -4,3 +4,6 @@
 *.pyc
 *.json
 *.afl
+.cproject
+.project
+.settings
