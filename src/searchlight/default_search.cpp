@@ -822,12 +822,8 @@ bool BalancingMonitor::CanDetachSubTree() const {
              * false.
              */
             auto hole_iter = var->MakeHoleIterator(true);
-            int holes = 0;
-            while (hole_iter->Ok()) {
-                holes++;
-                hole_iter->Next();
-            }
-            if (holes) {
+            hole_iter->Init();
+            if (hole_iter->Ok()) {
                 return false;
             }
         }
