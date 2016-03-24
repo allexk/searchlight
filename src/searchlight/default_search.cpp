@@ -517,8 +517,18 @@ Decision* SLSearch::Next(Solver* const s) {
 
     // All variables are bound to intervals -- random search with restarts
     // We are going to conduct a random search...
-    DecisionBuilder * const random_db = s->MakePhase(all_vars_,
-            Solver::CHOOSE_RANDOM, Solver::ASSIGN_RANDOM_VALUE);
+    DecisionBuilder *interval_db;
+    switch (search_config_.int_search_) {
+        case SLConfig::SPLIT:
+            interval_db = s->MakePhase(all_vars_,Solver::CHOOSE_MAX_SIZE,
+                    Solver::SPLIT_LOWER_HALF);
+            break;
+        case SLConfig::RANDOM:
+            interval_db = s->MakePhase(all_vars_,Solver::CHOOSE_RANDOM,
+                    Solver::ASSIGN_RANDOM_VALUE);
+            break;
+    }
+    assert(interval_db);
 
     // set the time limit if needed
     std::vector<SearchMonitor *> monitors(sl_solver_.GetAuxMonitors());
@@ -550,13 +560,15 @@ Decision* SLSearch::Next(Solver* const s) {
      * Note, we don't establish Luby restarts if we don't have a time limit,
      * since the search will run infinitely long.
      */
-    monitors.push_back(s->RevAlloc(new FinishOnFailsMonitor{s,
-        search_config_.fails_restart_probes_,
-        search_config_.fails_restart_thr_}));
+    if (search_config_.fails_restart_thr_ > 0) {
+        monitors.push_back(s->RevAlloc(new FinishOnFailsMonitor{s,
+            search_config_.fails_restart_probes_,
+            search_config_.fails_restart_thr_}));
+    }
 
     // starting the timer
     const auto solve_start_time = std::chrono::steady_clock::now();
-    s->Solve(random_db, monitors);
+    s->Solve(interval_db, monitors);
     const auto solve_end_time = std::chrono::steady_clock::now();
 
     // time elapsed (might be less than a half of search_time_limit_, if
@@ -827,6 +839,9 @@ bool BalancingMonitor::CanDetachSubTree() const {
                 return false;
             }
         }
+        LOG4CXX_DEBUG(logger, "Variable holes checker info (" << var->name()
+            << "): min=" << var->Min() << ", max=" << var->Max() << ", size="
+            << var->Size());
     }
 
     return true;

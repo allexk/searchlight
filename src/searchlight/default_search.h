@@ -131,6 +131,13 @@ private:
         };
         TimeStrategy time_strategy_;
 
+        // What strategy to use for the in-interval search
+        enum InIntervalSearch {
+            RANDOM,
+            SPLIT
+        };
+        InIntervalSearch int_search_;
+
         // The length of the time interval (or down coeff. for EXP)
         int64_t time_interval_;
 
@@ -167,7 +174,7 @@ private:
         SLConfig(const SearchlightConfig &sl_config) {
             const std::string time_strategy =
                     sl_config.get("searchlight.sl.time_strategy",
-                            std::string("exp"));
+                            std::string("fin"));
             int64_t def_time_interval;
             if (time_strategy == "exp") {
                 time_strategy_ = EXP;
@@ -181,6 +188,19 @@ private:
             } else {
                 throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
                         SCIDB_LE_ILLEGAL_OPERATION) << "unknown time strategy";
+            }
+
+            const std::string int_search = sl_config.get(
+                    "searchlight.sl.int_search",
+                    std::string("split"));
+            if (int_search == "random") {
+                int_search_ = RANDOM;
+            } else if (int_search == "split") {
+                int_search_ = SPLIT;
+            } else {
+                throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                        SCIDB_LE_ILLEGAL_OPERATION)
+                                << "unknown in-interval search";
             }
 
             time_interval_ = sl_config.get("searchlight.sl.time_interval",
