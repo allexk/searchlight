@@ -90,6 +90,8 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
     const int32 end_y   = config.get<int32>("sw.uy");
     const int32 avg_l   = config.get<int32>("sw.avg_l");
     const int32 avg_u   = config.get<int32>("sw.avg_u");
+    const int32 avg_relax_l   = config.get<int32>("sw.avg_relax_l", avg_l);
+    const int32 avg_relax_u   = config.get<int32>("sw.avg_relax_u", avg_u);
     const int32 size_l  = config.get<int32>("sw.size_l");
     const int32 size_u  = config.get<int32>("sw.size_u");
     const int32 len_lx  = config.get<int32>("sw.len_lx");
@@ -136,7 +138,17 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
     std::vector<int64> udf_params(1, int64(attr));
     IntExpr * const avg = solver.RevAlloc(avg_fab(&solver, adapter, all_vars,
             udf_params));
-    solver.AddConstraint(solver.MakeBetweenCt(avg, avg_l, avg_u));
+    sl->AddTrackExpr(avg, "avg");
+    if (config.get("relax.on", false)) {
+        RelaxableConstraint *avg_bt = solver.RevAlloc(
+                new searchlight::BetweenCt(
+                    &solver, avg, avg_l, avg_u));
+        sl->RegisterConstraint("avg_const", id, avg_bt, avg_relax_l,
+                avg_relax_u);
+        solver.AddConstraint(avg_bt);
+    } else {
+        solver.AddConstraint(solver.MakeBetweenCt(avg, avg_l, avg_u));
+    }
 
     // neighborhood
     const int32 neighb_size  = config.get("sw.neighborhood.size", 0);
@@ -185,21 +197,45 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
         IntExpr * const nmax = solver.MakeMax(part_maxs);
 
         const int32 max_diff  = config.get("sw.neighborhood.max_diff", 0);
+        const int32 max_relax_diff  = config.get(
+                "sw.neighborhood.max_relax_diff", max_diff);
         if (max_diff) {
             // max of the region
             IntExpr * const rmax = solver.RevAlloc(max_fab(&solver, adapter,
                     all_vars, udf_params));
-            solver.AddConstraint(solver.MakeGreater(
-                    solver.MakeDifference(rmax, nmax), max_diff));
+            IntExpr * const rn_max_diff = solver.MakeDifference(rmax, nmax);
+            sl->AddTrackExpr(rn_max_diff, "max_diff");
+            if (config.get("relax.on", false)) {
+                RelaxableConstraint *max_diff_gt = solver.RevAlloc(
+                        new searchlight::GreaterEqExprCst(
+                            &solver, rn_max_diff, max_diff));
+                sl->RegisterConstraint("max_diff_const", id, max_diff_gt,
+                        max_relax_diff, max_relax_diff);
+                solver.AddConstraint(max_diff_gt);
+            } else {
+                solver.AddConstraint(solver.MakeGreater(rn_max_diff, max_diff));
+            }
         }
 
         const int32 min_diff  = config.get("sw.neighborhood.min_diff", 0);
+        const int32 min_relax_diff  = config.get(
+                "sw.neighborhood.min_relax_diff", min_diff);
         if (min_diff) {
             // min of the region
             IntExpr * const rmin = solver.RevAlloc(min_fab(&solver, adapter,
                     all_vars, udf_params));
-            solver.AddConstraint(solver.MakeGreater(
-                    solver.MakeDifference(rmin, nmax), min_diff));
+            IntExpr * const rn_min_diff = solver.MakeDifference(rmin, nmax);
+            sl->AddTrackExpr(rn_min_diff, "min_diff");
+            if (config.get("relax.on", false)) {
+                RelaxableConstraint *min_diff_gt = solver.RevAlloc(
+                        new searchlight::GreaterEqExprCst(
+                            &solver, rn_min_diff, max_diff));
+                sl->RegisterConstraint("min_diff_const", id, min_diff_gt,
+                        min_relax_diff, min_relax_diff);
+                solver.AddConstraint(min_diff_gt);
+            } else {
+                solver.AddConstraint(solver.MakeGreater(rn_min_diff, min_diff));
+            }
         }
     }
 
