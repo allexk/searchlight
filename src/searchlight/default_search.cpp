@@ -485,6 +485,8 @@ Decision* SLSearch::Next(Solver* const s) {
             // cannot find a suitable interval: exhausted
             LOG4CXX_TRACE(logger,
                     "Could not find the next best interval: exhausted");
+            // This fail is going to be custom, is should be ignored by some monitors.
+            sl_solver_.BeginCustomFail();
             return s->MakeFailDecision();
         }
     }
@@ -510,6 +512,8 @@ Decision* SLSearch::Next(Solver* const s) {
         FullAssignmentToLite(*asgn, work.back().var_asgn_);
         sl_solver_.DispatchWork(work);
 
+        // This fail is going to be custom, is should be ignored by some monitors.
+        sl_solver_.BeginCustomFail();
         return s->MakeFailDecision();
     }
 
@@ -595,6 +599,8 @@ Decision* SLSearch::Next(Solver* const s) {
         dummy_monitor_.RestartCurrentSearch();
     }
 
+    // This fail is going to be custom, is should be ignored by some monitors.
+    sl_solver_.BeginCustomFail();
     return s->MakeFailDecision();
 }
 
