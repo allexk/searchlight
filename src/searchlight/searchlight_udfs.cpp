@@ -393,7 +393,8 @@ bool SqDistFuncExpr::ComputeMinMax() const {
      */
     Solver * const s = solver();
     if (new_min.state_ == IntervalValue::NUL) {
-        return false;
+        // If NUL, set the "never possible" value
+        new_min.min_ = kint64max;
     }
 
     /*
@@ -807,17 +808,17 @@ bool AggrFuncExpr::ComputeMinMax() const {
                 if (new_min_max.state_ == IntervalValue::NUL) {
                     new_min_max = val;
                     new_min_support_low = new_max_support_low = low;
-                    new_min_support_lens = new_max_support_lens = high;
+                    new_min_support_lens = new_max_support_lens = lens;
                 } else if (val.state_ != IntervalValue::NUL) {
                     if (val.min_ < new_min_max.min_) {
                         new_min_max.min_ = val.min_;
                         new_min_support_low = low;
-                        new_min_support_lens = high;
+                        new_min_support_lens = lens;
                     }
                     if (val.max_ > new_min_max.max_) {
                         new_min_max.max_ = val.max_;
                         new_max_support_low = low;
-                        new_max_support_lens = high;
+                        new_max_support_lens = lens;
                     }
                     if (val.state_ == IntervalValue::MAY_NULL) {
                         new_min_max.state_ = IntervalValue::MAY_NULL;
@@ -901,7 +902,9 @@ bool AggrFuncExpr::ComputeMinMax() const {
      */
     Solver * const s = solver();
     if (new_min_max.state_ == IntervalValue::NUL) {
-        return false;
+        // If NUL, set the "always fail" values
+        new_min_max.min_ = kint64max;
+        new_min_max.max_ = kint64min;
     }
 
     /*
