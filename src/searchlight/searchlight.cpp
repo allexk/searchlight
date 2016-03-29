@@ -542,6 +542,11 @@ void SearchlightSolver::Solve() {
                 vars_leaf_.Restore();
             } else {
                 // Fail replay
+                SetVarDomains(domain_info);
+            }
+            // Apply violated constraints changes, if any
+            if (!current_vc_spec_.empty()) {
+                assert(sl_.GetRelaxator());
                 if (logger->isInfoEnabled()) {
                     std::ostringstream os;
                     os << "Setting up fail replay:";
@@ -552,11 +557,6 @@ void SearchlightSolver::Solve() {
                     }
                     logger->info(os.str(), LOG4CXX_LOCATION);
                 }
-                SetVarDomains(domain_info);
-            }
-            // Apply violated constraints changes, if any
-            if (!current_vc_spec_.empty()) {
-                assert(sl_.GetRelaxator());
                 sl_.GetRelaxator()->ApplyViolatedConstSpec(current_vc_spec_,
                                SearchlightTask::GetLocalIDFromSolverID(id_));
             }
