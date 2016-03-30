@@ -28,6 +28,7 @@
  * @author Alexander Kalinin
  */
 
+#include "searchlight.h"
 #include "adapter.h"
 #include "array_desc.h"
 
@@ -288,6 +289,12 @@ IntervalValue Adapter::SqDist(const Coordinates &low, const Coordinates &high,
     LOG4CXX_TRACE(logger, "Computed square distance: " << res);
 
     return res;
+}
+
+void Adapter::SetCustomFail() const {
+    if (sl_solver_id_ != -1) {
+        sl_.GetSLSolver(sl_solver_id_).BeginCustomFail();
+    }
 }
 
 std::ostream &operator<<(std::ostream &os, const IntervalValue &iv) {

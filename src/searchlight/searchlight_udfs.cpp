@@ -106,8 +106,9 @@ public:
      */
     virtual int64 Min() const {
         if (!ComputeMinMax()) {
-            //solver()->Fail();
-        	return kint64max;
+            adapter_->SetCustomFail();
+            solver()->Fail();
+        	//return kint64max;
         }
         return min_;
     }
@@ -121,7 +122,10 @@ public:
      * @param m the minimum to set
      */
     virtual void SetMin(int64 m) {
-        if (!ComputeMinMax() || m > max_) {
+        if (!ComputeMinMax()) {
+            adapter_->SetCustomFail();
+            solver()->Fail();
+        } else if (m > max_) {
             solver()->Fail();
         }
     }
@@ -133,8 +137,9 @@ public:
      */
     virtual int64 Max() const {
         if (!ComputeMinMax()) {
-            //solver()->Fail();
-        	return kint64min;
+            adapter_->SetCustomFail();
+            solver()->Fail();
+        	//return kint64min;
         }
         return max_;
     }
@@ -148,7 +153,10 @@ public:
      * @param m the maximum to set
      */
     virtual void SetMax(int64 m) {
-        if (!ComputeMinMax() || m < min_) {
+        if (!ComputeMinMax()) {
+            adapter_->SetCustomFail();
+            solver()->Fail();
+        } else if (m < min_) {
             solver()->Fail();
         }
     }
@@ -487,8 +495,9 @@ public:
      */
     virtual int64 Min() const {
         if (!ComputeMinMax()) {
-            //solver()->Fail();
-        	return kint64max;
+            adapter_->SetCustomFail();
+            solver()->Fail();
+        	//return kint64max;
         }
         return min_;
     }
@@ -502,7 +511,10 @@ public:
      * @param m the minimum to set
      */
     virtual void SetMin(int64 m) {
-        if (!ComputeMinMax() || m > max_) {
+        if (!ComputeMinMax()) {
+            adapter_->SetCustomFail();
+            solver()->Fail();
+        } else if (m > max_) {
             solver()->Fail();
         }
     }
@@ -514,8 +526,9 @@ public:
      */
     virtual int64 Max() const {
         if (!ComputeMinMax()) {
-            //solver()->Fail();
-        	return kint64min;
+            adapter_->SetCustomFail();
+            solver()->Fail();
+        	//return kint64min;
         }
         return max_;
     }
@@ -529,7 +542,10 @@ public:
      * @param m the maximum to set
      */
     virtual void SetMax(int64 m) {
-        if (!ComputeMinMax() || m < min_) {
+        if (!ComputeMinMax()) {
+            adapter_->SetCustomFail();
+            solver()->Fail();
+        } else if (m < min_) {
             solver()->Fail();
         }
     }

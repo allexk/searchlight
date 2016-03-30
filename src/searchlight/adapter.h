@@ -42,6 +42,7 @@
 namespace searchlight {
 
 class SearchArrayDesc;
+class Searchlight;
 
 /**
  * Approximate value, returned by an estimator.
@@ -153,9 +154,14 @@ public:
     /**
      * Creates an adapter for a SciDb array.
      *
+     * @param sl Searchlight instance
      * @param array the SciDb data array
+     * @param name adapter name
      */
-    Adapter(const SearchArrayDesc &array, const std::string &name) :
+    Adapter(Searchlight &sl, const SearchArrayDesc &array,
+        const std::string &name) :
+
+        sl_(sl),
         array_desc_(array),
         mode_(Mode::DUMB),
         name_(name),
@@ -270,6 +276,23 @@ public:
         return array_desc_;
     }
 
+    /**
+     * Set SL solver id for this adapter.
+     *
+     * @param id local SL solver id
+     */
+    void SetSLSolverId(uint32_t id) {
+        sl_solver_id_ = id;
+    }
+
+    /**
+     * Set the next fail to be custom.
+     *
+     * This can be used by UDFs that cannot compute their values and want to
+     * fail so that the fail is not caught for the replay.
+     */
+    void SetCustomFail() const;
+
 private:
     /*
      * Iterates over chunks of the specified region. Chunks correspond to
@@ -354,6 +377,9 @@ private:
     void UpdateStatsWithRegion(const Coordinates &low,
             const Coordinates &high) const;
 
+    // The Searchlight instance
+    Searchlight &sl_;
+
     // The search array descriptor
     const SearchArrayDesc &array_desc_;
 
@@ -371,6 +397,9 @@ private:
 
     // True, if collecting stats is enabled
     bool stats_enabled_;
+
+    // SL solver id this adapter belongs to (-1 if it's not solver's)
+    uint32_t sl_solver_id_ = -1;
 };
 
 /**

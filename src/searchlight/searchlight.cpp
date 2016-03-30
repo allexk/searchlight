@@ -744,6 +744,7 @@ SearchMonitor *SearchlightSolver::CreateBalancingMonitor(
 
 AdapterPtr SearchlightSolver::CreateAdapter(const std::string &name) {
     auto res = sl_.CreateAdapter(name + "_" + std::to_string(id_));
+    res->SetSLSolverId(GetLocalID());
     adapters_.push_back(res);
     return res;
 }

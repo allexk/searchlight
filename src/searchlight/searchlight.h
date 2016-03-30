@@ -975,7 +975,7 @@ public:
      * @return access adapter
      */
     AdapterPtr CreateAdapter(const std::string &name) {
-        return std::make_shared<Adapter>(*array_desc_, name);
+        return std::make_shared<Adapter>(*this, *array_desc_, name);
     }
 
     /**
