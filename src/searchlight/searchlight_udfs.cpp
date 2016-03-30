@@ -392,19 +392,20 @@ bool SqDistFuncExpr::ComputeMinMax() const {
      * to analyze the value and properly save it.
      */
     Solver * const s = solver();
+    int64 new_min_rounded;
     if (new_min.state_ == IntervalValue::NUL) {
         // If NUL, set the "never possible" value
-        new_min.min_ = kint64max;
+        new_min_rounded = kint64max;
+    } else {
+        /*
+         * Need to convert from double to int64, since or-tools do not support
+         * floating values. For now, just round them to the nearest integer for the
+         * exact value case or "nearest" interval for the interval case.
+         *
+         * TODO: revisit later if floats/doubles become available in or-tools.
+         */
+        new_min_rounded = RBoundToInt64(new_min.min_);
     }
-
-    /*
-     * Need to convert from double to int64, since or-tools do not support
-     * floating values. For now, just round them to the nearest integer for the
-     * exact value case or "nearest" interval for the interval case.
-     *
-     * TODO: revisit later if floats/doubles become available in or-tools.
-     */
-    int64 new_min_rounded = RBoundToInt64(new_min.min_);
 
     // save the values and supports
     s->SaveAndSetValue(&min_, new_min_rounded);
@@ -901,23 +902,25 @@ bool AggrFuncExpr::ComputeMinMax() const {
      * to analyze the value and properly save it.
      */
     Solver * const s = solver();
+    int64 new_min, new_max;
     if (new_min_max.state_ == IntervalValue::NUL) {
-        // If NUL, set the "always fail" values
-        new_min_max.min_ = kint64max;
-        new_min_max.max_ = kint64min;
-    }
-
-    /*
-     * Need to convert from double to int64, since or-tools do not support
-     * floating values. For now, just round them to the nearest integer for the
-     * exact value case or "nearest" interval for the interval case.
-     *
-     * TODO: revisit later if floats/doubles become available in or-tools.
-     */
-    int64 new_min = LBoundToInt64(new_min_max.min_);
-    int64 new_max = RBoundToInt64(new_min_max.max_);
-    if (new_min_max.min_ == new_min_max.max_) {
-        new_min = new_max = round(new_min_max.min_);
+        // If NULL, set the "always fail" values
+        new_min = kint64max;
+        new_max = kint64min;
+    } else {
+        /*
+         * Need to convert from double to int64, since or-tools do not support
+         * floating values. For now, just round them to the nearest integer for the
+         * exact value case or "nearest" interval for the interval case.
+         *
+         * TODO: revisit later if floats/doubles become available in or-tools.
+         */
+        if (new_min_max.min_ == new_min_max.max_) {
+            new_min = new_max = round(new_min_max.min_);
+        } else {
+            new_min = LBoundToInt64(new_min_max.min_);
+            new_max = RBoundToInt64(new_min_max.max_);
+        }
     }
 
     // save the values and supports
