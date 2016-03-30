@@ -611,8 +611,10 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
             break;
         case SearchlightBalance::LRD:
             assert(balance_msg->has_lrd());
-            assert(searchlight_.GetRelaxator());
-            searchlight_.GetRelaxator()->ReportResult(balance_msg->lrd());
+            if (Relaxator *relaxator = searchlight_.GetRelaxator()) {
+                // Relaxator might be NULL if we don't run anything here
+                relaxator->ReportResult(balance_msg->lrd());
+            }
             break;
         case SearchlightBalance::VALIDATOR_INFO:
             assert(balance_msg->id_size());
