@@ -403,7 +403,10 @@ bool SqDistFuncExpr::ComputeMinMax() const {
     int64 new_min_rounded;
     if (new_min.state_ == IntervalValue::NUL) {
         // If NUL, set the "never possible" value
-        new_min_rounded = kint64max;
+        //new_min_rounded = kint64max;
+        s->SaveAndSetValue(&min_, kint64max);
+        s->SaveAndSetValue(&min_max_init_, false);
+        return false;
     } else {
         /*
          * Need to convert from double to int64, since or-tools do not support
@@ -921,8 +924,12 @@ bool AggrFuncExpr::ComputeMinMax() const {
     int64 new_min, new_max;
     if (new_min_max.state_ == IntervalValue::NUL) {
         // If NULL, set the "always fail" values
-        new_min = kint64max;
-        new_max = kint64min;
+        //new_min = kint64max;
+        //new_max = kint64min;
+        s->SaveAndSetValue(&min_, kint64max);
+        s->SaveAndSetValue(&max_, kint64min);
+        s->SaveAndSetValue(&min_max_init_, false);
+        return false;
     } else {
         /*
          * Need to convert from double to int64, since or-tools do not support
