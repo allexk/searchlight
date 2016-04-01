@@ -419,11 +419,14 @@ bool SqDistFuncExpr::ComputeMinMax() const {
     }
 
     // save the values and supports
+    const bool can_cache = adapter_->CanCacheResults();
     s->SaveAndSetValue(&min_, new_min_rounded);
-    s->SaveAndSetValue(&min_max_init_, true);
-    for (size_t i = 0; i < dims_; i++) {
-    	SaveCoordinate(&min_support_low_[i], new_min_support_low[i]);
-    	SaveCoordinate(&min_support_high_[i], new_min_support_high[i]);
+    s->SaveAndSetValue(&min_max_init_, can_cache);
+    if (can_cache) {
+        for (size_t i = 0; i < dims_; i++) {
+            SaveCoordinate(&min_support_low_[i], new_min_support_low[i]);
+            SaveCoordinate(&min_support_high_[i], new_min_support_high[i]);
+        }
     }
 
     return true;
@@ -947,14 +950,17 @@ bool AggrFuncExpr::ComputeMinMax() const {
     }
 
     // save the values and supports
+    const bool can_cache = adapter_->CanCacheResults();
     s->SaveAndSetValue(&min_, new_min);
     s->SaveAndSetValue(&max_, new_max);
-    s->SaveAndSetValue(&min_max_init_, true);
-    for (size_t i = 0; i < dims_; i++) {
-        SaveCoordinate(&min_support_low_[i], new_min_support_low[i]);
-        SaveCoordinate(&min_support_lens_[i], new_min_support_lens[i]);
-        SaveCoordinate(&max_support_low_[i], new_max_support_low[i]);
-        SaveCoordinate(&max_support_lens_[i], new_max_support_lens[i]);
+    s->SaveAndSetValue(&min_max_init_, can_cache);
+    if (can_cache) {
+        for (size_t i = 0; i < dims_; i++) {
+            SaveCoordinate(&min_support_low_[i], new_min_support_low[i]);
+            SaveCoordinate(&min_support_lens_[i], new_min_support_lens[i]);
+            SaveCoordinate(&max_support_low_[i], new_max_support_low[i]);
+            SaveCoordinate(&max_support_lens_[i], new_max_support_lens[i]);
+        }
     }
 
     return true;

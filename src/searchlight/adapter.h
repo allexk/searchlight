@@ -293,6 +293,20 @@ public:
      */
     void SetCustomFail() const;
 
+    /**
+     * Check if the caller can cache these adapter's results.
+     *
+     * The caller can usually cache the results, assuming they won't change
+     * for the same parameters. Sometimes, though, the results are volatile.
+     * One example is the "dumb" adapter, which does not go to the data, but
+     * outputs trivial values.
+     *
+     * @return true, if the caller can cache results; false, otherwise
+     */
+    bool CanCacheResults() const {
+        return mode_ != Adapter::DUMB;
+    }
+
 private:
     /*
      * Iterates over chunks of the specified region. Chunks correspond to
