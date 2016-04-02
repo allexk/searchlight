@@ -159,7 +159,7 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
         UDFFunctionCreator max_fab = sl->GetUDFFunctionCreator("max");
         UDFFunctionCreator min_fab = sl->GetUDFFunctionCreator("min");
         std::vector<IntVar *> part_vars(4);
-        std::vector<IntVar *> part_maxs(4);
+        std::vector<IntExpr *> part_maxs(4);
 
         // left
         part_vars[0] = solver.MakeSum(coords[0], -neighb_size)->Var();
@@ -167,7 +167,7 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
         part_vars[2] = solver.MakeIntConst(neighb_size);
         part_vars[3] = lens[1];
         part_maxs[0] = solver.RevAlloc(max_fab(&solver,
-                adapter, part_vars, udf_params))->Var();
+                adapter, part_vars, udf_params));
 
         // top
         part_vars[0] = solver.MakeSum(coords[0], -neighb_size)->Var();
@@ -175,7 +175,7 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
         part_vars[2] = solver.MakeSum(lens[0], 2 * neighb_size)->Var();
         part_vars[3] = solver.MakeIntConst(neighb_size);
         part_maxs[1] = solver.RevAlloc(max_fab(&solver,
-                adapter, part_vars, udf_params))->Var();
+                adapter, part_vars, udf_params));
 
         // right
         part_vars[0] = solver.MakeSum(coords[0], lens[0])->Var();
@@ -183,7 +183,7 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
         part_vars[2] = solver.MakeIntConst(neighb_size);
         part_vars[3] = lens[1];
         part_maxs[2] = solver.RevAlloc(max_fab(&solver,
-                adapter, part_vars, udf_params))->Var();
+                adapter, part_vars, udf_params));
 
         // bottom
         part_vars[0] = solver.MakeSum(coords[0], -neighb_size)->Var();
@@ -191,10 +191,16 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
         part_vars[2] = solver.MakeSum(lens[0], 2 * neighb_size)->Var();
         part_vars[3] = solver.MakeIntConst(neighb_size);
         part_maxs[3] = solver.RevAlloc(max_fab(&solver,
-                adapter, part_vars, udf_params))->Var();
+                adapter, part_vars, udf_params));
 
-        // max of the neighborhood
-        IntExpr * const nmax = solver.MakeMax(part_maxs);
+        /*
+         * Max of the neighborhood. We do the explicit nested maxs here to
+         * avoid cast constraints. Cast constraints mess up the relaxation
+         * process.
+         */
+        IntExpr * const nmax = solver.MakeMax(
+                solver.MakeMax(part_maxs[0], part_maxs[1]),
+                solver.MakeMax(part_maxs[2], part_maxs[3]));
 
         const int32 max_diff  = config.get("sw.neighborhood.max_diff", 0);
         const int32 max_relax_diff  = config.get(
