@@ -521,7 +521,7 @@ Decision* SLSearch::Next(Solver* const s) {
 
     // All variables are bound to intervals -- random search with restarts
     // We are going to conduct a random search...
-    DecisionBuilder *interval_db;
+    DecisionBuilder *interval_db = nullptr;
     switch (search_config_.int_search_) {
         case SLConfig::SPLIT:
             interval_db = s->MakePhase(all_vars_,Solver::CHOOSE_MAX_SIZE,
@@ -642,8 +642,8 @@ void SLSearch::InitIntervals(Solver * const s) {
                         explorer_monitor.GetTotalFails());
                 s->SaveAndSetValue(&imp.succ_assigns_,
                         explorer_monitor.GetLeavesReached());
-                if (explorer.ProblemInfeasible()) {
-                    // We should deactivate the interval
+                if (explorer.ProblemInfeasible() && !sl_.GetRelaxator()) {
+                    // We should deactivate the interval, if we're not relaxing
                     LOG4CXX_TRACE(logger, "The interval is infeasible");
                     s->SaveAndSetValue(&imp.active, false);
                 }
