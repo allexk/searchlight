@@ -232,10 +232,10 @@ public:
      * @param s the solver
      */
     virtual void Apply(Solver* const s) override {
-        LOG4CXX_TRACE(logger, "Setting interval for  " <<
+        LOG4CXX_DEBUG(logger, "Setting interval for  " <<
                 var_->DebugString() << " to: [" << min_ << ", " << max_ << "]");
         var_->SetRange(min_, max_);
-        LOG4CXX_TRACE(logger, "Interval set");
+        LOG4CXX_DEBUG(logger, "Interval set");
     }
 
     /**
@@ -255,7 +255,7 @@ public:
         var_->UnfreezeQueue();
         // Temporarily deactivate the interval
         sl_search_.DeactivateVarInterval(var_, var_int_ind_, true);
-        LOG4CXX_TRACE(logger, "Interval removed and deacrivated");
+        LOG4CXX_TRACE(logger, "Interval removed and deactivated");
     }
 
     /**
@@ -470,7 +470,7 @@ Decision* SLSearch::Next(Solver* const s) {
             const int64 int_max = int_min +
                     var_impacts_[var_ind].interval_length_ - 1;
 
-            LOG4CXX_TRACE(logger, "Determined the next best interval for " <<
+            LOG4CXX_DEBUG(logger, "Determined the next best interval for " <<
                     var << ", [" << int_min << ", " <<
                     int_max << "]" << ", Impact: " << impact);
 
@@ -483,7 +483,7 @@ Decision* SLSearch::Next(Solver* const s) {
                     var, int_min, int_max));
         } else {
             // cannot find a suitable interval: exhausted
-            LOG4CXX_TRACE(logger,
+            LOG4CXX_DEBUG(logger,
                     "Could not find the next best interval: exhausted");
             // This fail is going to be custom, is should be ignored by some monitors.
             sl_solver_.BeginCustomFail();
@@ -568,6 +568,11 @@ Decision* SLSearch::Next(Solver* const s) {
         monitors.push_back(s->RevAlloc(new FinishOnFailsMonitor{s,
             search_config_.fails_restart_probes_,
             search_config_.fails_restart_thr_}));
+    }
+
+    // Get the relaxator monitor, if any
+    if (SearchMonitor *rm = sl_solver_.GetRelaxatorMonitor()) {
+        monitors.push_back(rm);
     }
 
     // starting the timer

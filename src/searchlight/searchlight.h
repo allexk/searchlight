@@ -335,6 +335,15 @@ public:
     }
 
     /**
+     * Return relaxator monitor.
+     *
+     * @return relaxator monitor; nullptr, if not relaxing
+     */
+    SearchMonitor *GetRelaxatorMonitor() const {
+        return search_monitors_.fail_monitor_;
+    }
+
+    /**
      * Returns monitors established by Searchlight during the search.
      * Since this function returns a reference to the internal list, it is safe
      * to call before the Solve(). The list will be populated there. This also
