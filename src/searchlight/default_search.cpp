@@ -234,7 +234,18 @@ public:
     virtual void Apply(Solver* const s) override {
         LOG4CXX_DEBUG(logger, "Setting interval for  " <<
                 var_->DebugString() << " to: [" << min_ << ", " << max_ << "]");
+        /*
+         * A bit of a hack here. There are situations when setting the range
+         * might result in fail inside SetRange(), not at a constraint. Such
+         * a fail must be ignored. So, we exploit the fact that constraints
+         * are not processed for the frozen queue, but fails inside SetRange()
+         * will still fire...
+         */
+        var_->FreezeQueue();
+        sl_search_.sl_solver_.BeginCustomFail();
         var_->SetRange(min_, max_);
+        sl_search_.sl_solver_.CancelCustomFail();
+        var_->UnfreezeQueue();
         LOG4CXX_DEBUG(logger, "Interval set");
     }
 

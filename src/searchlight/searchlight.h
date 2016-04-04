@@ -520,6 +520,17 @@ public:
     }
 
     /**
+     * Cancel the last fail to be custom.
+     *
+     * This is useful when the caller wants the next fail to be custom, but
+     * at some point, before the fail happens, wants to cancel this decision
+     * and make the fail relaxable again.
+     */
+    void CancelCustomFail() {
+        last_fail_custom_ = false;
+    }
+
+    /**
      * Check if the last fail is custom.
      *
      * @return true, if the last fail is custom; false, otherwise
