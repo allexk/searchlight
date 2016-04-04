@@ -238,7 +238,7 @@ void SearchlightSolver::Prepare(Validator &validator) {
                 NewPermanentCallback(this, &SearchlightSolver::CheckTerminate));
         search_monitors_.aux_monitors_.push_back(terminator);
         search_monitors_.validator_monitor_ = solver_.RevAlloc(
-                new ValidatorMonitor{all_vars_, &solver_, validator});
+                new ValidatorMonitor{all_vars_, *this, &solver_, validator});
         // Fail monitor if we're relaxing
         if (Relaxator *relaxator = sl_.GetRelaxator()) {
             // Add fail monitor
@@ -622,6 +622,8 @@ bool ValidatorMonitor::AtSolution() {
             ", depth=" << solver()->SearchDepth());
     candidates_++;
     validator_.AddSolution(*asgn, current_vc_spec_);
+    // Make the leaf fail custom -- we never want catching that
+    sl_solver_.BeginCustomFail();
     return true;
 }
 

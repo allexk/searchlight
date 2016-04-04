@@ -142,12 +142,16 @@ public:
      * assignments during the search and passed them along to the validator.
      *
      * @param vars a vector of decision variables (externally managed)
+     * @param sl_solver Searchlight solver instance
      * @param solver the main solver
      * @param validator validator to connect
      */
-    ValidatorMonitor(const IntVarVector &vars, Solver *solver,
+    ValidatorMonitor(const IntVarVector &vars,
+            SearchlightSolver &sl_solver,
+            Solver *solver,
             Validator &validator) :
         SolutionCollector(solver),
+        sl_solver_(sl_solver),
         validator_(validator),
         vars_(vars) {
         Add(vars);
@@ -189,6 +193,9 @@ public:
 private:
     // Validate if the solution is a complete one
     bool ValidateSolutionComplete(const Assignment &asgn) const;
+
+    // Searchlight solver instance we belong to
+    SearchlightSolver &sl_solver_;
 
     // The validator to pass the solution to
     Validator &validator_;
