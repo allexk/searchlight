@@ -577,7 +577,14 @@ Decision* SLSearch::Next(Solver* const s) {
 
     // starting the timer
     const auto solve_start_time = std::chrono::steady_clock::now();
-    s->Solve(interval_db, monitors);
+    /*
+     * We need to call NewSearch and NextSolution explicitly here instead
+     * of just Solve. This is to avoid in-leaf Fails, which mess up the
+     * relaxation machinery.
+     */
+    s->NewSearch(interval_db, monitors);
+    while (s->NextSolution());
+    s->EndSearch();
     const auto solve_end_time = std::chrono::steady_clock::now();
 
     // time elapsed (might be less than a half of search_time_limit_, if
