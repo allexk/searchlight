@@ -66,6 +66,14 @@ void Relaxator::RegisterConstraint(const std::string &name, size_t solver_id,
 		if (max_h < h) {
 			max_h = h;
 		}
+		/*
+		 * Check if the constraint can be relaxed at all. If not, ignore.
+		 */
+		if (l == max_l && h == max_h) {
+		    LOG4CXX_INFO(logger, "Constraint (" << name <<
+		            ") cannot be relaxed due to user's values. Ignoring...");
+		    return;
+		}
 
 		// Create a new constraint info
 		orig_consts_.emplace_back(IntervalConstraint(constr_type, l, h),
