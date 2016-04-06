@@ -67,14 +67,22 @@ void Relaxator::RegisterConstraint(const std::string &name, size_t solver_id,
 			max_h = h;
 		}
 		/*
-		 * Check if the constraint can be relaxed at all. If not, ignore.
+		 * Note, we have to register the constraint even if it cannot be
+		 * relaxed, since at RegisterFail we have to understand if this
+		 * constraint is satisfied or not to avoid replays that cannot be
+		 * remedied.
+		 *
+		 * TODO: this is a larger issue of mixing relaxable and usual
+		 * constraints in the same query. If the "common" and relaxable one
+		 * fail at the same time, the fail might get registered, but
+		 * will fail again immediately, resulting in an infinite loop.
+		 * Should try to avoid this. For now the only way to do this is to
+		 * make all constraints Relaxable. Another way is to record the
+		 * last replay for every solver and check if the new fail is equal
+		 * to the last replay -- if the replay was due to the non-relaxable
+		 * constraint, it will fail immediately at the replay and the new
+		 * replay will equal to the last one.
 		 */
-		if (l == max_l && h == max_h) {
-		    LOG4CXX_INFO(logger, "Constraint (" << name <<
-		            ") cannot be relaxed due to user's values. Ignoring...");
-		    return;
-		}
-
 		// Create a new constraint info
 		orig_consts_.emplace_back(IntervalConstraint(constr_type, l, h),
 				solvers_num_, max_l, max_h);
