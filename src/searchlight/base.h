@@ -111,6 +111,17 @@ struct LiteVarAssignment {
         mins_.clear();
         maxs_.clear();
     }
+
+    /**
+     * Adds a value pair to the vector.
+     *
+     * @param val_min minimum value
+     * @param val_max maximum value
+     */
+    void add_val(int64_t val_min, int64_t val_max) {
+        mins_.push_back(val_min);
+        maxs_.push_back(val_max);
+    }
 };
 
 /**

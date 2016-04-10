@@ -209,9 +209,14 @@ public:
                 if (action_succeeded_) {
                     LiteVarAssignment lite_asgn;
                     FullAssignmentToLite(relax_asgn_, lite_asgn);
-                    if (validator_.CheckRelaxation(lite_asgn, true)) {
+                    double asgn_rd = -1;
+                    if (validator_.CheckRelaxation(lite_asgn, asgn_rd, true)) {
                         lite_asgn.clear();
                         FullAssignmentToLite(track_vars_asgn_, lite_asgn);
+                        if (asgn_rd != -1) {
+                            // multiply by 100, since we don't accept doubles
+                            lite_asgn.add_val(asgn_rd * 100, 0);
+                        }
                         validator_.sl_task_.ReportSolution(
                                 asgns_.back().var_asgn_.mins_,
                                 lite_asgn.mins_);
@@ -220,11 +225,16 @@ public:
             } else if (last_action_.type_ == Action::Type::REMOTE_CHECK) {
                 LiteVarAssignment lite_asgn;
                 FullAssignmentToLite(relax_asgn_, lite_asgn);
+                double asgn_rd = -1;
                 action_succeeded_ = action_succeeded_ &&
-                      validator_.CheckRelaxation(lite_asgn, true);
+                      validator_.CheckRelaxation(lite_asgn, asgn_rd, true);
                 if (action_succeeded_) {
                     lite_asgn.clear();
                 	FullAssignmentToLite(track_vars_asgn_, lite_asgn);
+                	if (asgn_rd != -1) {
+                        // multiply by 100, since we don't accept doubles
+                        lite_asgn.add_val(asgn_rd * 100, 0);
+                	}
                 }
                 validator_.SendForwardResult(last_action_.forward_id_,
                         action_succeeded_, lite_asgn.mins_);
@@ -452,6 +462,7 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
         const StringVector &var_names) :
         sl_(sl),
         sl_task_(sl_task),
+        relaxator_(sl.GetRelaxator()),
         solver_("validator solver"),
         adapter_(sl.CreateAdapter("validator")), // DUMB mode by default!
         search_vars_prototype_(&solver_),
@@ -826,19 +837,18 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
     return false;
 }
 
-bool Validator::CheckRelaxation(const LiteVarAssignment &relax_asgn,
+bool Validator::CheckRelaxation(const LiteVarAssignment &relax_asgn, double &rd,
                                 bool report_rd) const {
-    Relaxator *relaxator = sl_.GetRelaxator();
-    if (!relaxator) {
+    if (!relaxator_) {
         // Not relaxing; check always passes
         return true;
     }
-    const double old_lrd = relaxator->GetLRD();
-    const double rd = relaxator->ComputeResultRelaxationDegree(relax_asgn.mins_);
+    const double old_lrd = relaxator_->GetLRD();
+    rd = relaxator_->ComputeResultRelaxationDegree(relax_asgn.mins_);
     const bool passes_lrd = rd <= old_lrd;
     if (passes_lrd && report_rd) {
         // Report to the local relaxator and...
-        relaxator->ReportResult(rd);
+        relaxator_->ReportResult(rd);
         // tell the rest
         sl_task_.BroadcastRD(rd);
     }
@@ -846,19 +856,18 @@ bool Validator::CheckRelaxation(const LiteVarAssignment &relax_asgn,
 }
 
 bool Validator::CheckBestRelaxation(const Int64Vector &vc) const {
-    Relaxator *relaxator = sl_.GetRelaxator();
-    if (!relaxator) {
+    if (!relaxator_) {
         // Not relaxing; check always passes
         return true;
     }
-    const double lrd = relaxator->GetLRD();
-    const double rd = relaxator->ComputeViolSpecBestRelaxationDegree(vc);
+    const double lrd = relaxator_->GetLRD();
+    const double rd = relaxator_->ComputeViolSpecBestRelaxationDegree(vc);
     return rd <= lrd;
 }
 
 void Validator::GetMaximumRelaxationVC(Int64Vector &vc) const {
-    if (Relaxator *relaxator = sl_.GetRelaxator()) {
-        vc = relaxator->GetMaximumRelaxationVCSpec();
+    if (relaxator_) {
+        vc = relaxator_->GetMaximumRelaxationVCSpec();
     }
 }
 

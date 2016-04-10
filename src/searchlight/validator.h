@@ -330,7 +330,7 @@ private:
                       const CandidateAssignment &asgn);
 
     // Update relaxator (if needed) and check if the result passes LRD
-    bool CheckRelaxation(const LiteVarAssignment &relax_asgn,
+    bool CheckRelaxation(const LiteVarAssignment &relax_asgn, double &rd,
                          bool report_rd) const;
 
     // Check best relaxation degree for the violated constraint spec.
@@ -398,6 +398,9 @@ private:
 
     // Validator model for later cloning
     CPModelProto validator_model_;
+
+    // Relaxator pointer (nullptrt, if not relaxing)
+    Relaxator * const relaxator_;
 
     // Pending validations and their count (vector of zones)
     std::vector<std::deque<CandidateVector>> to_validate_;

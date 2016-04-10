@@ -716,10 +716,17 @@ std::string Searchlight::SolutionToString(
     }
     // Add tracking vars
     const StringVector track_var_names = GetTrackExprs();
-    assert(track_var_names.size() == add_vals.size());
-    for (size_t i = 0; i < track_var_names.size(); ++i) {
-    	sol_string << ", " << track_var_names[i] << '='
-    			<< add_vals[i];
+    assert(track_var_names.size() < add_vals.size());
+    size_t add_vals_ind = 0;
+    for (; add_vals_ind < track_var_names.size(); ++add_vals_ind) {
+    	sol_string << ", " << track_var_names[add_vals_ind] << '='
+    			<< add_vals[add_vals_ind];
+    }
+    // If we're relaxing, we have RD as well...
+    if (relaxator_) {
+        assert(add_vals_ind < add_vals.size());
+        sol_string << ", " << "rd=" << std::setprecision(3) <<
+            double(add_vals[add_vals_ind]) / 100;
     }
     return sol_string.str();
 }
