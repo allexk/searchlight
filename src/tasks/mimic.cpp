@@ -91,8 +91,8 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
     const int32 end_time   = config.get<int32>("mimic.u_time");
     const int32 avg_l   = config.get<int32>("mimic.avg_l");
     const int32 avg_u   = config.get<int32>("mimic.avg_u");
-    const int32 avg_relax_l   = config.get<int32>("mimic.avg_relax_l");
-    const int32 avg_relax_u   = config.get<int32>("mimic.avg_relax_u");
+    const int32 avg_relax_l   = config.get<int32>("mimic.avg_relax_l", avg_l);
+    const int32 avg_relax_u   = config.get<int32>("mimic.avg_relax_u", avg_u);
     const int32 len_l  = config.get<int32>("mimic.len_l");
     const int32 len_u  = config.get<int32>("mimic.len_u");
     const int32 step_len  = config.get<int32>("mimic.step_len", 1);
@@ -174,10 +174,25 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
             // difference of maximums
             const int32 left_max_diff  = config.get(
                     "mimic.neighborhood.left_max_diff", 0);
+            const int32 left_relax_diff  = config.get(
+                    "sw.neighborhood.left_relax_diff", left_max_diff);
+            // expressions
             IntVar * const left_max = solver.RevAlloc(max_fab(&solver,
                     adapter, part_vars, udf_params))->Var();
-            solver.AddConstraint(solver.MakeGreater(solver.MakeDifference(
-                    region_max, left_max), left_max_diff));
+            IntExpr * const rl_max_diff = solver.MakeDifference(
+                    region_max, left_max);
+            sl->AddTrackExpr(rl_max_diff, "left_diff");
+            if (config.get("relax.on", false)) {
+                RelaxableConstraint *l_diff_gt = solver.RevAlloc(
+                        new searchlight::GreaterEqExprCst(
+                            &solver, rl_max_diff, left_max_diff));
+                sl->RegisterConstraint("left_diff_const", id, l_diff_gt,
+                        left_relax_diff, left_relax_diff);
+                solver.AddConstraint(l_diff_gt);
+            } else {
+                solver.AddConstraint(solver.MakeGreater(rl_max_diff,
+                        left_max_diff));
+            }
         }
 
         // right
@@ -196,10 +211,25 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
             // difference of maximums
             const int32 right_max_diff = config.get(
                     "mimic.neighborhood.right_max_diff", 0);
+            const int32 right_relax_diff  = config.get(
+                    "sw.neighborhood.right_relax_diff", right_max_diff);
+            // expressions
             IntVar * const right_max = solver.RevAlloc(max_fab(&solver,
                     adapter, part_vars, udf_params))->Var();
-            solver.AddConstraint(solver.MakeGreater(solver.MakeDifference(
-                    region_max, right_max), right_max_diff));
+            IntExpr * const rr_max_diff = solver.MakeDifference(
+                    region_max, right_max);
+            sl->AddTrackExpr(rr_max_diff, "right_diff");
+            if (config.get("relax.on", false)) {
+                RelaxableConstraint *r_diff_gt = solver.RevAlloc(
+                        new searchlight::GreaterEqExprCst(
+                            &solver, rr_max_diff, right_max_diff));
+                sl->RegisterConstraint("right_diff_const", id, r_diff_gt,
+                        right_relax_diff, right_relax_diff);
+                solver.AddConstraint(r_diff_gt);
+            } else {
+                solver.AddConstraint(solver.MakeGreater(rr_max_diff,
+                        right_max_diff));
+            }
         }
     }
 
