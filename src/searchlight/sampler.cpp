@@ -1083,6 +1083,11 @@ void Sampler::Synopsis::FillCellFromArray(const Coordinates &pos,
             cell.min_ = iters.min_it_->getItem().getDouble();
             cell.max_ = iters.max_it_->getItem().getDouble();
             cell.sum_ = iters.sum_it_->getItem().getDouble();
+            if (std::isnan(cell.min_) || std::isnan(cell.max_) ||
+                    std::isnan(cell.sum_)) {
+                // Treat cells with NANs as "corrupted"; just count as empty
+                cell.count_ = 0;
+            }
         }
     }
 }
