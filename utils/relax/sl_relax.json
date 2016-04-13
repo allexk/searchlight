@@ -1,0 +1,62 @@
+{
+    "constraints": [
+        {
+            "id": 0,
+            "params": {
+                    "avg_l": {
+                        "start": 95,
+                        "step": -5,
+                        "limit": 45
+                    },
+                    "avg_u": {
+                        "start": 105,
+                        "step": 5,
+                        "limit": 155
+                    }
+            }
+        },
+        {
+            "id": 1,
+            "params": {
+                "max_diff": {
+                    "start": 10,
+                    "step": -2,
+                    "limit": -10
+                },
+                "min_diff": {
+                    "start": 10,
+                    "step": -2,
+                    "limit": -10
+                }
+            }
+        }
+    ],
+
+    "config": {
+        "query_file": "sl_query.afl",
+        "task_file": "sl.jsi",
+
+        "hosts": ["hades", "artemis"],
+        "shared_task_dir": "/tmp",
+        "shared_task_file": "rel_sl.js",
+
+        "method": "rr",
+        "card": 10
+    },
+
+    "rd": {
+        "avg": {
+            "valid": [95, 105],
+            "relax": [45, 155]
+        },
+        "left_diff": {
+            "valid": [10, 10000000],
+            "relax": [-10, 10000000]
+        },
+        "right_diff": {
+            "valid": [10, 10000000],
+            "relax": [-10, 10000000]
+        }
+    }
+}
+
