@@ -208,8 +208,9 @@ class QueryRunner(object):
         result_list = []
         try:
             while True:
-                next_res = query_array.next()
-                result_list.append((time.time(), self._str_to_map(next_res)))
+                (pos, next_res) = query_array.next()
+                # results come as tuples: (pos_attr, value_attr), we need the first attribute from the value_attr
+                result_list.append((time.time(), self._str_to_map(str(next_res[0]))))
         except StopIteration:
             # no more results
             pass
