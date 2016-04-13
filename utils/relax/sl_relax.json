@@ -22,7 +22,12 @@
                     "start": 10,
                     "step": -2,
                     "limit": -10
-                },
+                }
+            }
+        },
+        {
+            "id": 2,
+            "params": {
                 "min_diff": {
                     "start": 10,
                     "step": -2,
@@ -34,7 +39,7 @@
 
     "config": {
         "query_file": "sl_query.afl",
-        "task_file": "sl.jsi",
+        "task_file": "sl.js",
 
         "hosts": ["hades", "artemis"],
         "shared_task_dir": "/tmp",
@@ -57,6 +62,7 @@
             "valid": [10, 10000000],
             "relax": [-10, 10000000]
         }
-    }
+    },
+    "dist_w": 0.5
 }
 

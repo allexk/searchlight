@@ -259,6 +259,8 @@ class Relaxator(object):
             elif self.method == 'rr':
                 # round-robin
                 self.last_relaxed_ind += 1
+                if self.last_relaxed_ind == len(self.constraints):
+                    self.last_relaxed_ind = 0
                 # we definitely can_relax(), so we have a constraint...
                 while not self.constraints[self.last_relaxed_ind].can_relax():
                     self.last_relaxed_ind += 1
@@ -275,7 +277,7 @@ class Relaxator(object):
         for c in self.constraints:
             c.dump_to_jc(self.query)
         start_time = time.time()
-        self.logger.info('Querying with constraints: %s' % ' '.join([str(c) for c in self.constraints]))
+        self.logger.info('Querying with constraints: %s' % '|'.join([str(c) for c in self.constraints]))
         query_res = self.query_runner.run_query(str(self.query))
         # query_res consists of tuples: (time, result)
         end_time = time.time()
