@@ -61,7 +61,7 @@ class JsonConfig(object):
         return self.get_param(item)
 
     def __str__(self):
-        return self.js
+        return str(self.js)
 
 
 class RelaxDegree(object):
@@ -302,15 +302,15 @@ class Relaxator(object):
                 time_first = qr['res'][0][0] - relax_start
             for i, rd in enumerate(qr['rd']):
                 if rd not in rd_times:
-                    rd_times[rd] = qr['res'][i] [0]- relax_start
+                    rd_times[rd] = qr['res'][i][0] - relax_start
         return {'total_time': total_time, 'ttf': time_first, 'rd': rd_times}
 
     def dump_res(self, f):
         for qr in self.query_res:
             f.write('Run (time=%.3f, res_num=%d):\n' % (qr['end'] - qr['start'], len(qr['res'])))
             for i, r in enumerate(qr['res']):
-                r_str = ','.join(['%s=%s' % (k, str(v)) for k, v in r.items()])
-                r_str += 'rd=%.3f' % qr['rds'][i][1]
+                r_str = ','.join(['%s=%s' % (k, str(v)) for k, v in r[1].items()])
+                r_str += 'rd=%.3f' % qr['rds'][i]
                 f.write(r_str)
                 f.write('\n\nTask:\n')
                 f.write(str(qr['task']))
