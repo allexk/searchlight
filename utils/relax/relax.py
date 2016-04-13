@@ -60,6 +60,9 @@ class JsonConfig(object):
     def __getitem__(self, item):
         return self.get_param(item)
 
+    def __str__(self):
+        return self.js
+
 
 class RelaxDegree(object):
     """
@@ -157,7 +160,7 @@ class Constraint(object):
             ref[path[-1]] = p.val
 
     def __str__(self):
-        return ','.join([str(p) for p in self.params])
+        return 'id=%d,' % self.id + ','.join([str(p) for p in self.params])
 
 
 class QueryRunner(object):
@@ -225,8 +228,7 @@ class Relaxator(object):
         self.config = config
         self.logger = logging.getLogger('relax.relaxator')
         query_file_name = self.config.get_param('config.task_file')
-        with open(query_file_name, 'r') as f:
-            self.query = json.load(f)
+        self.query = JsonConfig(query_file_name)
         self.method = self.config.get_param('config.method')
         if self.method not in ['all', 'rr', 'random']:
             raise ValueError('Unknown relaxation method ' + self.method)
@@ -268,15 +270,16 @@ class Relaxator(object):
                 const = random.choice(const_can_relax)
                 const.relax()
 
-    def query(self):
+    def query_db(self):
         """Query with the current relaxation."""
         for c in self.constraints:
             c.dump_to_jc(self.query)
         start_time = time.time()
         self.logger.info('Querying with constraints: %s' % ' '.join([str(c) for c in self.constraints]))
-        query_res = self.query_runner.run_query(self.query)
+        query_res = self.query_runner.run_query(str(self.query))
+        # query_res consists of tuples: (time, result)
         end_time = time.time()
-        rds = [self.rd_compute.rd(r) for r in query_res]
+        rds = [self.rd_compute.rd(r[1]) for r in query_res]
         self.query_res.append({'task': self.query, 'start': start_time, 'end': end_time, 'res': query_res, 'rds': rds})
 
     def goal_ok(self):
@@ -294,10 +297,10 @@ class Relaxator(object):
         for qr in self.query_res:
             total_time += qr['end'] - qr['start']
             if time_first == -1.0 and len(qr['res']) > 0:
-                time_first = qr['res'][0] - relax_start
+                time_first = qr['res'][0][0] - relax_start
             for i, rd in enumerate(qr['rd']):
                 if rd not in rd_times:
-                    rd_times[rd] = qr['res'][i] - relax_start
+                    rd_times[rd] = qr['res'][i] [0]- relax_start
         return {'total_time': total_time, 'ttf': time_first, 'rd': rd_times}
 
     def dump_res(self, f):
@@ -305,9 +308,11 @@ class Relaxator(object):
             f.write('Run (time=%.3f, res_num=%d):\n' % (qr['end'] - qr['start'], len(qr['res'])))
             for i, r in enumerate(qr['res']):
                 r_str = ','.join(['%s=%s' % (k, str(v)) for k, v in r.items()])
-                r_str += 'rd=%.3f' % qr['rds'][i]
+                r_str += 'rd=%.3f' % qr['rds'][i][1]
                 f.write(r_str)
-                f.write('\n')
+                f.write('\n\nTask:\n')
+                f.write(str(qr['task']))
+                f.write('\n----------------\n')
         f.write('\nStats follows:\n')
         f.write(str(self.stats()))
 
@@ -315,10 +320,10 @@ class Relaxator(object):
 def _main(config_file):
     config = JsonConfig(config_file)
     relax = Relaxator(config)
-    relax.query()
+    relax.query_db()
     while not relax.goal_ok() and relax.can_relax():
         relax.relax()
-        relax.query()
+        relax.query_db()
     if not relax.goal_ok():
         logger.info('Goal not completed')
     else:
