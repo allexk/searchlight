@@ -300,7 +300,7 @@ class Relaxator(object):
             total_time += qr['end'] - qr['start']
             if time_first == -1.0 and len(qr['res']) > 0:
                 time_first = qr['res'][0][0] - relax_start
-            for i, rd in enumerate(qr['rd']):
+            for i, rd in enumerate(qr['rds']):
                 if rd not in rd_times:
                     rd_times[rd] = qr['res'][i][0] - relax_start
         return {'total_time': total_time, 'ttf': time_first, 'rd': rd_times}
@@ -310,7 +310,7 @@ class Relaxator(object):
             f.write('Run (time=%.3f, res_num=%d):\n' % (qr['end'] - qr['start'], len(qr['res'])))
             for i, r in enumerate(qr['res']):
                 r_str = ','.join(['%s=%s' % (k, str(v)) for k, v in r[1].items()])
-                r_str += 'rd=%.3f' % qr['rds'][i]
+                r_str += ',rd=%.3f' % qr['rds'][i]
                 f.write(r_str)
                 f.write('\n\nTask:\n')
                 f.write(str(qr['task']))
