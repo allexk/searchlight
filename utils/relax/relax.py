@@ -61,7 +61,7 @@ class JsonConfig(object):
         return self.get_param(item)
 
     def __str__(self):
-        return str(self.js)
+        return json.dumps(self.js, sort_keys=True, indent=4)
 
 
 class RelaxDegree(object):
@@ -183,7 +183,7 @@ class QueryRunner(object):
         # dunp the JSON task locally
         with open(local_task_path, 'wb') as f:
             self.logger.info('Dumping task to ' + local_task_path)
-            json.dump(task_json, f, sort_keys=True, indent=4)
+            f.write(task_json)
         # copy task remotely via scp
         scp_args = ['scp', local_task_path]
         for host in self.remote_hosts:
