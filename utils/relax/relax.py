@@ -312,9 +312,9 @@ class Relaxator(object):
                 r_str = ','.join(['%s=%s' % (k, str(v)) for k, v in r[1].items()])
                 r_str += ',rd=%.3f' % qr['rds'][i]
                 f.write(r_str)
-                f.write('\n\nTask:\n')
-                f.write(str(qr['task']))
-                f.write('\n----------------\n')
+        f.write('\n\nTask:\n')
+        f.write(str(qr['task']))
+        f.write('\n----------------\n')
         f.write('\nStats follows:\n')
         f.write(str(self.stats()))
 
