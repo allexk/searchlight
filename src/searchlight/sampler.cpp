@@ -1333,6 +1333,7 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
     	        LOG4CXX_INFO(logger,
     	            "Synopsis found in the cache: " << syn_name);
                 skip_synopses.insert(loaded_synopses.size());
+                emplaced.first->ReplaceArray(syn);
     	    }
             loaded_synopses.push_back(emplaced.first);
     	}
@@ -1364,7 +1365,7 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
 
     // Set cache type and preload for DFT synopses
     if (!loaded_dft_synopses.empty()) {
-        std::unordered_set<size_t> dummy_dft_skip;
+        const std::unordered_set<size_t> dummy_dft_skip;
 		const size_t memory_limit_mb =
 				sl_config_.get("searchlight.sampler.memory_per_attr_dft", 1024);
     	PrepareSynopses(loaded_dft_synopses, dummy_dft_skip, cache_type,

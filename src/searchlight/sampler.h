@@ -840,6 +840,20 @@ private:
          */
         size_t GetRegionCost(const Region &reg) const;
 
+        /**
+         * Replace physical synopsis array with the new one.
+         *
+         * This is actually useful for synopses cached in the inter-query
+         * cache, since arrays are tied to scidb::Query.
+         *
+         * Note, the cell cache remains intact.
+         *
+         * @param array new synopsis array
+         */
+        void ReplaceArray(const ArrayPtr &array) {
+            synopsis_array_ = array;
+        }
+
     private:
         /*
          * Make RegionIterator a friend since it requires frequent access
@@ -991,7 +1005,7 @@ private:
         AttributeID min_id_, max_id_, count_id_, sum_id_;
 
         // The sample array
-        const ArrayPtr synopsis_array_;
+        ArrayPtr synopsis_array_;
 
         // The size of a cell (one per dimension)
         Coordinates cell_size_;
