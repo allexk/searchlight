@@ -3,12 +3,12 @@
         {
             "id": 0,
             "params": {
-                    "avg_l": {
+                    "sl.avg_l": {
                         "start": 95,
                         "step": -5,
                         "limit": 45
                     },
-                    "avg_u": {
+                    "sl.avg_u": {
                         "start": 105,
                         "step": 5,
                         "limit": 155
@@ -18,7 +18,7 @@
         {
             "id": 1,
             "params": {
-                "max_diff": {
+                "sl.neighborhood.max_diff": {
                     "start": 10,
                     "step": -2,
                     "limit": -10
@@ -28,7 +28,7 @@
         {
             "id": 2,
             "params": {
-                "min_diff": {
+                "sl.neighborhood.min_diff": {
                     "start": 10,
                     "step": -2,
                     "limit": -10
@@ -54,11 +54,11 @@
             "valid": [95, 105],
             "relax": [45, 155]
         },
-        "left_diff": {
+        "min_diff": {
             "valid": [10, 10000000],
             "relax": [-10, 10000000]
         },
-        "right_diff": {
+        "max_diff": {
             "valid": [10, 10000000],
             "relax": [-10, 10000000]
         },

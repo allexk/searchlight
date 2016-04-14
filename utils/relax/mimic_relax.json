@@ -1,0 +1,67 @@
+{
+    "constraints": [
+        {
+            "id": 0,
+            "params": {
+                    "mimic.avg_l": {
+                        "start": 220,
+                        "step": -10,
+                        "limit": 150
+                    },
+                    "mimic.avg_u": {
+                        "start": 250,
+                        "step": 10,
+                        "limit": 300
+                    }
+            }
+        },
+        {
+            "id": 1,
+            "params": {
+                "mimic.neighborhood.left_max_diff": {
+                    "start": 100,
+                    "step": -5,
+                    "limit": 50
+                }
+            }
+        },
+        {
+            "id": 2,
+            "params": {
+                "mimic.neighborhood.right_max_diff": {
+                    "start": 200,
+                    "step": -5,
+                    "limit": 100
+                }
+            }
+        }
+    ],
+
+    "config": {
+        "query_file": "mimic_query.afl",
+        "task_file": "mimic.js",
+
+        "hosts": ["hades", "artemis"],
+        "shared_task_dir": "/tmp",
+        "shared_task_file": "rel_mimic.js",
+
+        "method": "rr",
+        "card": 10
+    },
+
+    "rd": {
+        "avg": {
+            "valid": [220, 250],
+            "relax": [150, 300]
+        },
+        "left_diff": {
+            "valid": [100, 10000000],
+            "relax": [50, 10000000]
+        },
+        "right_diff": {
+            "valid": [200, 10000000],
+            "relax": [100, 10000000]
+        },
+        "dist_w": 0.5
+    }
+}
