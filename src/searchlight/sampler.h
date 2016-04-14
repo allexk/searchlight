@@ -34,6 +34,7 @@
 #include "base.h"
 #include "adapter.h"
 #include "scidb_inc.h"
+#include "cache.h"
 
 #include <mutex>
 
@@ -119,6 +120,15 @@ public:
      */
     void LoadSampleForAttribute(const std::string &attr_name,
             AttributeID attr_search_id);
+
+    /**
+     * Clears the persistent synopsis cache.
+     *
+     * Note, all current clients using synopses previously cached won't be
+     * affected. However, when they release their arrays, those will be lost
+     * until created again. This is expected functionality.
+     */
+    static void ClearPersistentCache();
 
     /**
      * Registers a new sample aggregate.
@@ -1023,6 +1033,8 @@ private:
      */
     using SynopsisPtr = std::unique_ptr<Synopsis>;
     using DFTSynopsisPtr = std::unique_ptr<DFTSynopsis>;
+    using SynopsisSharedPtr = std::shared_ptr<Synopsis>;
+    using SynopsisCache = SearchlightCache<std::string, Synopsis>;
 
     /*
      *  Iterator over the cells of a region. We assume that cells are
@@ -1249,10 +1261,14 @@ private:
     static StringVector ParseArrayParamsFromName(const std::string &array_name);
 
     /*
-     * Prepares synopses (sorts by cell size, caches, preloads)
+     * Prepares synopses (sorts by cell size, caches, preloads).
+     *
+     * skip_synopses specifies synopses to SKIP from prepare. Others are
+     * prepared, which is usefule for inter-query cached synopses.
      */
     template<class T>
     void PrepareSynopses(std::vector<T> &synopses,
+            const std::unordered_set<size_t> &skip_synopses,
     		CachingType cache_type, bool preload, size_t mem_limit,
 			const std::string &attr_name, AttributeID attr_search_id);
 
@@ -1275,8 +1291,13 @@ private:
      * attribute ids, second vector contains synopses ranged by the cell
      * size in decreasing order.
      */
-    std::vector<std::vector<SynopsisPtr>> synopses_;
+    std::vector<std::vector<SynopsisSharedPtr>> synopses_;
     std::vector<std::vector<DFTSynopsisPtr>> dft_synopses_;
+
+    /*
+     * Searchlight inter-query cache for synopses.
+     */
+    static SynopsisCache synopsis_cache_;
 
     // Descriptor of the data array we store synopses for
     const ArrayDesc data_desc_;
@@ -1296,6 +1317,9 @@ private:
 
     // Limit on the total number of cells to use for estimations
     size_t cell_limit_;
+
+    // Do we cache synopses between queries?
+    bool cache_synopses_;
 
     /*
      *  Query sequences DFT cache types and routines.

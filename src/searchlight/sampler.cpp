@@ -1141,6 +1141,7 @@ Sampler::Sampler(const ArrayDesc &data_desc,
     cell_thr_ = sl_config_.get("searchlight.sampler.cell_thr", 0.0);
     mbr_thr_ = sl_config_.get("searchlight.sampler.mbr_thr", 0.0);
     cell_limit_ = sl_config_.get("searchlight.sampler.cell_limit", 0);
+    cache_synopses_ = sl_config_.get("searchlight.sampler.cache_query", 1);
 }
 
 Sampler::~Sampler() {
@@ -1252,6 +1253,7 @@ StringVector Sampler::ParseArrayParamsFromName(
 
 template<class T>
 void Sampler::PrepareSynopses(std::vector<T> &synopses,
+        const std::unordered_set<size_t> &skip_synopses,
 		CachingType cache_type, bool preload, size_t mem_limit,
 		const std::string &attr_name, AttributeID attr_search_id) {
 	// First, sort synopses by their cell sizes
@@ -1261,16 +1263,19 @@ void Sampler::PrepareSynopses(std::vector<T> &synopses,
     });
 
     // Then set cache type and preload
-	for (const auto &syn: synopses) {
+    for (size_t i = 0; i < synopses.size(); ++i) {
+	    const auto &syn = synopses[i];
 		const size_t syn_mem_mb = syn->MemorySize() / 1024 / 1024; // in MB
 		if (syn_mem_mb <= mem_limit) {
-			// Cache the synopsis
-			syn->SetCacheType(cache_type);
-			// .. and preload it if needed
-			if (preload) {
-				LOG4CXX_INFO(logger, "Preloading synopsis: "<< syn->GetName());
-				syn->Preload();
-			}
+		    if (skip_synopses.find(i) == skip_synopses.end()) {
+                // Cache the synopsis
+                syn->SetCacheType(cache_type);
+                // .. and preload it if needed
+                if (preload) {
+                    LOG4CXX_INFO(logger, "Preloading synopsis: "<< syn->GetName());
+                    syn->Preload();
+                }
+		    }
 			mem_limit -= syn_mem_mb;
 		} else {
 			break;
@@ -1313,6 +1318,7 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
     // See what we have for the attribute
     const auto &synops = array_synopses_[attr_name];
     auto &loaded_dft_synopses = dft_synopses_[attr_search_id];
+    std::unordered_set<size_t> skip_synopses;
     for (const auto &syn: synops) {
     	// Determine if we're loading a DFT synopsis: they start as "dft_"
         const std::string &syn_name =
@@ -1320,7 +1326,15 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
     	if (ParseArrayParamsFromName(syn_name)[0] == "dft") {
     		loaded_dft_synopses.emplace_back(new DFTSynopsis{data_desc_, syn});
     	} else {
-    		loaded_synopses.emplace_back(new Synopsis{data_desc_, syn});
+    	    const auto emplaced = synopsis_cache_.emplace(syn_name,
+    	            data_desc_, syn);
+    	    if (!emplaced.second) {
+    	        // Found in the cache
+    	        LOG4CXX_INFO(logger,
+    	            "Synopsis found in the cache: " << syn_name);
+                skip_synopses.insert(loaded_synopses.size());
+    	    }
+            loaded_synopses.push_back(emplaced.first);
     	}
     }
 
@@ -1344,16 +1358,17 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
     if (!loaded_synopses.empty()) {
 		const size_t memory_limit_mb =
 				sl_config_.get("searchlight.sampler.memory_per_attr", 1024);
-    	PrepareSynopses(loaded_synopses, cache_type, preload_syns,
-    			memory_limit_mb, attr_name, attr_search_id);
+    	PrepareSynopses(loaded_synopses, skip_synopses, cache_type,
+    	        preload_syns, memory_limit_mb, attr_name, attr_search_id);
     }
 
     // Set cache type and preload for DFT synopses
     if (!loaded_dft_synopses.empty()) {
+        std::unordered_set<size_t> dummy_dft_skip;
 		const size_t memory_limit_mb =
 				sl_config_.get("searchlight.sampler.memory_per_attr_dft", 1024);
-    	PrepareSynopses(loaded_dft_synopses, cache_type, preload_syns,
-    			memory_limit_mb, attr_name, attr_search_id);
+    	PrepareSynopses(loaded_dft_synopses, dummy_dft_skip, cache_type,
+    	        preload_syns, memory_limit_mb, attr_name, attr_search_id);
     }
 }
 
@@ -1676,4 +1691,13 @@ IntervalValue Sampler::SqDist(AttributeID attr, Coordinate low, Coordinate high,
 	const auto &query_points = dft_seq_cache_.at(cache_id);
 	return syn->SqDist(low, high, query_points);
 }
+
+void Sampler::ClearPersistentCache() {
+    LOG4CXX_INFO(logger, "Clearing cache for Sampler...");
+    synopsis_cache_.Clear();
+}
+
+// Synopsis cache
+Sampler::SynopsisCache Sampler::synopsis_cache_;
+
 } /* namespace searchlight */

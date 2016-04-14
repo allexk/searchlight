@@ -149,8 +149,10 @@ public:
                 ((boost::shared_ptr<OperatorParamPhysicalExpression> &)
                         _parameters[0])->getExpression()->
                         evaluate().getString()};
-        if (action == "clear_cache") {
+        if (action == "clear_dep_cache") {
             searchlight::DepartArray::ClearPersistentCache();
+        } else if (action == "clear_syn_cache") {
+            searchlight::Sampler::ClearPersistentCache();
         }
 
         // sync messengers (barrier)
