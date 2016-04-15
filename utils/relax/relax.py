@@ -68,12 +68,12 @@ class RelaxDegree(object):
     """
     Computes relaxation degree for given result tuples.
     """
-    def __init__(self, relax_config):
+    def __init__(self, relax_config, total_const):
         """"Init a new RD computer.
         Initialized by the relaxation configuration.
         """
         self.config = relax_config
-        self.total_constraints = len(self.config)
+        self.total_constraints = total_const
         self.dist_w = float(self.config['dist_w'])
 
     def _violated(self, name, val):
@@ -240,7 +240,7 @@ class Relaxator(object):
         self.query_res = []  # tuples: (start_time, end_time, JSON task, all results)
         self.query_runner = QueryRunner(config)
         self.last_relaxed_ind = -1  # index of the last relaxed constraint (for round-robin)
-        self.rd_compute = RelaxDegree(self.config['rd'])
+        self.rd_compute = RelaxDegree(self.config['rd'], len(self.constraints))
 
     def can_relax(self):
         """Check if we can relax further."""
@@ -281,6 +281,7 @@ class Relaxator(object):
         self.logger.info('Querying with constraints: %s' % '|'.join([str(c) for c in self.constraints]))
         query_res = self.query_runner.run_query(str(self.query))
         # query_res consists of tuples: (time, result)
+        self.logger.info('Found %d results' % len(query_res))
         end_time = time.time()
         rds = [self.rd_compute.rd(r[1]) for r in query_res]
         self.query_res.append({'task': self.query, 'start': start_time, 'end': end_time, 'res': query_res, 'rds': rds})
@@ -319,6 +320,7 @@ class Relaxator(object):
             f.write('\n----------------\n')
         f.write('\nStats follows:\n')
         f.write(str(self.stats()))
+        f.write('\n')
 
 
 def _main(config_file):
