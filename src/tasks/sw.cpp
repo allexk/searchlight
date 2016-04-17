@@ -235,7 +235,7 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
             if (config.get("relax.on", false)) {
                 RelaxableConstraint *min_diff_gt = solver.RevAlloc(
                         new searchlight::GreaterEqExprCst(
-                            &solver, rn_min_diff, max_diff));
+                            &solver, rn_min_diff, min_diff));
                 sl->RegisterConstraint("min_diff_const", id, min_diff_gt,
                         min_relax_diff, min_relax_diff);
                 solver.AddConstraint(min_diff_gt);
