@@ -50,7 +50,7 @@ std::ostream &operator<<(std::ostream &os, const Relaxator::RelaxatorStats &rs) 
 Relaxator::~Relaxator() {
     std::ostringstream os;
     os << stats_;
-    LOG4CXX_INFO(logger, os);
+    LOG4CXX_INFO(logger, os.str());
 }
 
 void Relaxator::RegisterConstraint(const std::string &name, size_t solver_id,
