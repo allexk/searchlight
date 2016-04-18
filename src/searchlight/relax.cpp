@@ -178,7 +178,14 @@ void Relaxator::RegisterFail(size_t solver_id) {
 		// Check if we're violating the constraint
 		int64 min_d, max_d;
 		const int rel_pos = ci.int_.MinMaxDistance(cmin, cmax, min_d, max_d);
+		// Check if we can relax
 		if (rel_pos != 0) {
+	        // Check if we can relax
+		    if (!ci.CanRelax(rel_pos < 0, min_d)) {
+		        // This is a shortcut to avoid checking all constraints
+	            UpdateTimeStats(reg_start_time);
+	            return;
+		    }
 			// Violation
 			replay.failed_const_.push_back({i, rel_pos, min_d, max_d});
 		}

@@ -723,11 +723,16 @@ private:
 			max_h_{max_h},
 			solver_const_(solver_num) {}
 
+		// True, if we can relax up to dist to the required direction
+        bool CanRelax(bool left, int64_t dist) const {
+            return MaxRelaxDist(left) >= dist;
+		}
+
 		// Return maximum relaxation distance to the left or right
 		int64 MaxRelaxDist(bool left) const {
 			if (left) {
 				if (max_l_ == kint64min) {
-					return kint64min;
+					return kint64max;
 				} else {
 					return int_.Min() - max_l_;
 				}
