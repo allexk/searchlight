@@ -34,6 +34,25 @@ std::ostream &operator<<(std::ostream &os, const Relaxator::FailReplay &fr) {
     return os;
 }
 
+std::ostream &operator<<(std::ostream &os, const Relaxator::RelaxatorStats &rs) {
+    os << "Relaxator stats:\n";
+    const float secs =
+            std::chrono::duration_cast<std::chrono::duration<double>>(
+                   rs.total_fail_time_).count();
+    os << "\tTotal fail catch time (registered only): " << secs << "s\n";
+    os << "\tTotal fails caught: " <<
+            rs.total_fails_caught_.load(std::memory_order_relaxed) << '\n';
+    os << "\tTotal fails registered: " << rs.total_fails_registered_ << '\n';
+    os << "\tTotal fails replayed: " << rs.total_fails_replayed_ << '\n';
+    return os;
+}
+
+Relaxator::~Relaxator() {
+    std::ostringstream os;
+    os << stats_;
+    LOG4CXX_INFO(logger, os);
+}
+
 void Relaxator::RegisterConstraint(const std::string &name, size_t solver_id,
 		RelaxableConstraint *constr, int64 max_l, int64 max_h) {
 	assert(constr && solver_id < solvers_num_);
@@ -133,6 +152,9 @@ bool Relaxator::ComputeNewReplayInterval(FailReplay &replay,
 
 void Relaxator::RegisterFail(size_t solver_id) {
 	// Compute relaxation degree: first pass, determine violated constraints
+    stats_.total_fails_caught_.fetch_add(1, std::memory_order_relaxed);
+    // starting the timer
+    const auto reg_start_time = std::chrono::steady_clock::now();
 	FailReplay replay;
 	for (size_t i = 0; i < orig_consts_.size(); ++i) {
 		const ConstraintInfo &ci = orig_consts_[i];
@@ -170,10 +192,16 @@ void Relaxator::RegisterFail(size_t solver_id) {
 	replay.saved_vars_ = sl_.GetSLSolver(solver_id).GetCurrentVarDomains();
 	// Debug print
 	LOG4CXX_DEBUG(logger, "New replay registered: " << replay);
+    // stop the timer
+    const auto reg_end_time = std::chrono::steady_clock::now();
 	// Put the replay into the queue
 	{
 		std::lock_guard<std::mutex> lock{mtx_};
 		fail_replays_.push(std::move(replay));
+	    stats_.total_fails_registered_++;
+	    stats_.total_fail_time_ +=
+	            std::chrono::duration_cast<std::chrono::microseconds>(
+	                    reg_end_time - reg_start_time);
 	}
 }
 

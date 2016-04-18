@@ -534,6 +534,11 @@ public:
 		res_num_(res_num) {}
 
 	/**
+	 * Destructor.
+	 */
+	~Relaxator();
+
+	/**
 	 * Register new relaxation constraint for a particular solver.
 	 *
 	 * @param name constraint name
@@ -652,6 +657,7 @@ public:
                 vc_spec = ViolConstSpec(fr);
                 dom_info = std::move(fr.saved_vars_);
                 fail_replays_.pop();
+                stats_.total_fails_replayed_++;
                 return true;
             } else {
                 // Actually can clear the queue, since all others > lrd
@@ -693,9 +699,9 @@ private:
 	// Compute relaxation distance
 	double RelaxDistance(double relax_dist, size_t viol_const_num) const {
 	    assert(relax_dist >= 0.0 && relax_dist <= 1.0);
-		return distance_weight_ * relax_dist +
-				(1 - distance_weight_) *
-				double(viol_const_num) / orig_consts_.size();
+        return distance_weight_ * relax_dist +
+                (1 - distance_weight_) *
+                double(viol_const_num) / orig_consts_.size();
 	}
 
 	// Information about each original constraint
@@ -812,6 +818,23 @@ private:
 	friend std::ostream &operator<<(std::ostream &os,
 	    const Relaxator::FailReplay &fr);
 
+	/*
+	 * Various stats for the Relaxator.
+	 */
+	struct RelaxatorStats {
+	    // Total time spent for fail catching
+	    std::chrono::microseconds total_fail_time_{0};
+	    // Total fails caught
+	    std::atomic<size_t> total_fails_caught_;
+        // Total fails registered
+	    size_t total_fails_registered_;
+        // Total fails replayed
+	    size_t total_fails_replayed_;
+	};
+	// Output to stream
+	friend std::ostream &operator<<(std::ostream &os,
+	    const Relaxator::RelaxatorStats &rs);
+
     /*
      * Return violated constraint spec vector.
      *
@@ -855,6 +878,9 @@ private:
 
     // Max heap to count result relaxation degrees
     std::priority_queue<double> top_results_;
+
+    // Relaxator stats
+    RelaxatorStats stats_;
 
 	// For concurrency control
 	mutable std::mutex mtx_;
