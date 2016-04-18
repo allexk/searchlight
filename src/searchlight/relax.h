@@ -825,11 +825,11 @@ private:
 	    // Total time spent for fail catching
 	    std::chrono::microseconds total_fail_time_{0};
 	    // Total fails caught
-	    std::atomic<size_t> total_fails_caught_;
+	    std::atomic<size_t> total_fails_caught_{0};
         // Total fails registered
-	    size_t total_fails_registered_;
+	    size_t total_fails_registered_{0};
         // Total fails replayed
-	    size_t total_fails_replayed_;
+	    size_t total_fails_replayed_{0};
 	};
 	// Output to stream
 	friend std::ostream &operator<<(std::ostream &os,

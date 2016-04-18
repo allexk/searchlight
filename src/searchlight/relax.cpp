@@ -39,7 +39,7 @@ std::ostream &operator<<(std::ostream &os, const Relaxator::RelaxatorStats &rs) 
     const float secs =
             std::chrono::duration_cast<std::chrono::duration<double>>(
                    rs.total_fail_time_).count();
-    os << "\tTotal fail catch time (registered only): " << secs << "s\n";
+    os << "\tTotal fail catch time: " << secs << "s\n";
     os << "\tTotal fails caught: " <<
             rs.total_fails_caught_.load(std::memory_order_relaxed) << '\n';
     os << "\tTotal fails registered: " << rs.total_fails_registered_ << '\n';
