@@ -150,6 +150,15 @@ bool Relaxator::ComputeNewReplayInterval(FailReplay &replay,
     return true;
 }
 
+void Relaxator::UpdateTimeStats(
+    const std::chrono::steady_clock::time_point &start_time) {
+    // Stop time
+    const auto end_time = std::chrono::steady_clock::now();
+    stats_.total_fail_time_ +=
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                    end_time - start_time);
+}
+
 void Relaxator::RegisterFail(size_t solver_id) {
 	// Compute relaxation degree: first pass, determine violated constraints
     stats_.total_fails_caught_.fetch_add(1, std::memory_order_relaxed);
@@ -163,6 +172,7 @@ void Relaxator::RegisterFail(size_t solver_id) {
 		const int64 cmax = c_expr->Max();
 		// if cmin > cmax, that means the constraint cannot be fulfilled ever
 		if (cmin > cmax) {
+		    UpdateTimeStats(reg_start_time);
 			return;
 		}
 		// Check if we're violating the constraint
@@ -175,11 +185,13 @@ void Relaxator::RegisterFail(size_t solver_id) {
 	}
 	if (replay.failed_const_.empty()) {
 	    // No violations: might be a "custom" fail
+        UpdateTimeStats(reg_start_time);
 	    return;
 	}
 	// Second pass: compute the degree
 	if (!ComputeFailReplayRelaxation(replay)) {
         // Cannot relax: ignore the fail
+        UpdateTimeStats(reg_start_time);
 	    return;
 	}
 	// Normalize relax degrees
@@ -192,16 +204,12 @@ void Relaxator::RegisterFail(size_t solver_id) {
 	replay.saved_vars_ = sl_.GetSLSolver(solver_id).GetCurrentVarDomains();
 	// Debug print
 	LOG4CXX_DEBUG(logger, "New replay registered: " << replay);
-    // stop the timer
-    const auto reg_end_time = std::chrono::steady_clock::now();
 	// Put the replay into the queue
 	{
 		std::lock_guard<std::mutex> lock{mtx_};
 		fail_replays_.push(std::move(replay));
 	    stats_.total_fails_registered_++;
-	    stats_.total_fail_time_ +=
-	            std::chrono::duration_cast<std::chrono::microseconds>(
-	                    reg_end_time - reg_start_time);
+        UpdateTimeStats(reg_start_time);
 	}
 }
 

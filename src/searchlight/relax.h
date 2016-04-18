@@ -855,6 +855,10 @@ private:
 	// Compute relaxation for replay (true, if possible to relax)
 	bool ComputeFailReplayRelaxation(FailReplay &replay) const;
 
+	// Update time stats using the provided start time
+	void UpdateTimeStats(
+	    const std::chrono::steady_clock::time_point &start_time);
+
 	// Main Searchlight reference
 	Searchlight &sl_;
 
