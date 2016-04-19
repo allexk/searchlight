@@ -306,6 +306,21 @@ public:
     AdapterPtr CreateAdapter(const std::string &name);
 
     /**
+     * Set SearchlightSolver adapters to the specified mode.
+     *
+     * The old mode is saved and can be restord later by RestoreAdapterMode().
+     *
+     * @param mode mode to the set the adapters to
+     * @param save true, if the caller wants to save the current mode
+     */
+    void SetAdapterMode(Adapter::Mode mode, bool save) const;
+
+    /**
+     * Restore adapter mode previously saved by Push().
+     */
+    void RestoreAdapterMode() const;
+
+    /**
      * Creates a new defaul SL search heuristic. The caller is responsible
      * for destruction.
      *
@@ -569,7 +584,7 @@ private:
     }
 
     // Sets up the relaxator monitor
-    void SetRelaxatorMonitor();
+    void SetRelaxatorMonitor(bool fail_replay);
 
     // Monitors participating in the search
     struct SearchMonitors {

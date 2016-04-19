@@ -43,8 +43,26 @@ std::ostream &operator<<(std::ostream &os, const Relaxator::RelaxatorStats &rs) 
     os << "\tTotal fails caught: " <<
             rs.total_fails_caught_.load(std::memory_order_relaxed) << '\n';
     os << "\tTotal fails registered: " << rs.total_fails_registered_ << '\n';
+    os << "\tTotal fails heuristic-retried: " <<
+            rs.total_fails_heur_retried_ << '\n';
     os << "\tTotal fails replayed: " << rs.total_fails_replayed_ << '\n';
     return os;
+}
+
+Relaxator::Relaxator(Searchlight &sl, size_t solvers,
+    double dist_w, size_t res_num) :
+
+    sl_(sl),
+    solvers_num_(solvers),
+    distance_weight_(dist_w),
+    res_num_(res_num),
+    default_heur_(Heuristic::ALL) {
+
+    // Default fail heuristic
+    const std::string heur = sl.GetConfig().get("relax.heur", "all");
+    if (heur == "guess") {
+        default_heur_ = Heuristic::GUESS;
+    }
 }
 
 Relaxator::~Relaxator() {
@@ -159,12 +177,17 @@ void Relaxator::UpdateTimeStats(
                     end_time - start_time);
 }
 
-void Relaxator::RegisterFail(size_t solver_id) {
+void Relaxator::RegisterFail(size_t solver_id, Heuristic h) {
 	// Compute relaxation degree: first pass, determine violated constraints
     stats_.total_fails_caught_.fetch_add(1, std::memory_order_relaxed);
     // starting the timer
     const auto reg_start_time = std::chrono::steady_clock::now();
 	FailReplay replay;
+	if (h == Heuristic::GUESS) {
+	    // With GUESS heuristic we don't want to recompute the functions
+	    sl_.GetSLSolver(solver_id).SetAdapterMode(Adapter::DUMB, true);
+	}
+	bool cannot_relax = false;
 	for (size_t i = 0; i < orig_consts_.size(); ++i) {
 		const ConstraintInfo &ci = orig_consts_[i];
 		const IntExpr *c_expr = ci.solver_const_[solver_id]->GetExpr();
@@ -172,8 +195,8 @@ void Relaxator::RegisterFail(size_t solver_id) {
 		const int64 cmax = c_expr->Max();
 		// if cmin > cmax, that means the constraint cannot be fulfilled ever
 		if (cmin > cmax) {
-		    UpdateTimeStats(reg_start_time);
-			return;
+		    cannot_relax = true;
+		    break;
 		}
 		// Check if we're violating the constraint
 		int64 min_d, max_d;
@@ -183,16 +206,27 @@ void Relaxator::RegisterFail(size_t solver_id) {
 	        // Check if we can relax
 		    if (!ci.CanRelax(rel_pos < 0, min_d)) {
 		        // This is a shortcut to avoid checking all constraints
-	            UpdateTimeStats(reg_start_time);
-	            return;
+	            cannot_relax = true;
+	            break;
 		    }
 			// Violation
 			replay.failed_const_.push_back({i, rel_pos, min_d, max_d});
 		}
 	}
-	if (replay.failed_const_.empty()) {
-	    // No violations: might be a "custom" fail
+    if (h == Heuristic::GUESS) {
+        sl_.GetSLSolver(solver_id).RestoreAdapterMode();
+    }
+	if (replay.failed_const_.empty() || cannot_relax) {
+	    // No violations detected or cannot relax
         UpdateTimeStats(reg_start_time);
+        if (h == Heuristic::GUESS && !cannot_relax) {
+            // Try with the full heuristic to avoid losing fails
+            stats_.total_fails_caught_.fetch_sub(1, std::memory_order_relaxed);
+            stats_.total_fails_heur_retried_.fetch_add(1,
+                    std::memory_order_relaxed);
+            LOG4CXX_DEBUG(logger, "Retrying the fail with the ALL heuristic");
+            RegisterFail(solver_id, Heuristic::ALL);
+        }
 	    return;
 	}
 	// Second pass: compute the degree
@@ -337,11 +371,12 @@ FailCollectorMonitor::FailCollectorMonitor(Solver &solver,
     SearchMonitor(&solver),
     relaxator_(rel),
     sl_solver_(sl_solver),
-    solver_id_(sl_solver.GetLocalID()) {}
+    solver_id_(sl_solver.GetLocalID()),
+    register_heur_(rel.GetDefaultFailHeuristic()) {}
 
 void FailCollectorMonitor::BeginFail() {
     if (!sl_solver_.LastFailCustom()) {
-        relaxator_.RegisterFail(solver_id_);
+        relaxator_.RegisterFail(solver_id_, register_heur_);
     }
 }
 

@@ -519,6 +519,15 @@ private:
  */
 class Relaxator : private boost::noncopyable {
 public:
+    /**
+     * Relaxator heuristic when registering a fail.
+     */
+    enum class Heuristic {
+        GUESS, ///!< GUESS Tries to guess the violated constraint.
+        ALL    ///!< ALL Checks all the constraints for violations.
+    };
+
+public:
 	/**
 	 * Create a new relaxator instance.
 	 *
@@ -527,11 +536,7 @@ public:
 	 * @param dist_w distance weight for the relaxation degree
 	 * @param res_num the number of results to track (top-k)
 	 */
-	Relaxator(Searchlight &sl, size_t solvers, double dist_w, size_t res_num) :
-		sl_(sl),
-		solvers_num_(solvers),
-		distance_weight_(dist_w),
-		res_num_(res_num) {}
+	Relaxator(Searchlight &sl, size_t solvers, double dist_w, size_t res_num);
 
 	/**
 	 * Destructor.
@@ -557,8 +562,9 @@ public:
 	 * Otherwise, just ignore it.
 	 *
 	 * @param solver_id SearchlightSolver id
+	 * @param h heuristic to use
 	 */
-	void RegisterFail(size_t solver_id);
+	void RegisterFail(size_t solver_id, Heuristic h);
 
 	/**
 	 * Return current LRD.
@@ -677,6 +683,18 @@ public:
 	 * @return VC specification with maximal relaxation
 	 */
 	Int64Vector GetMaximumRelaxationVCSpec() const;
+
+	/**
+	 * Return default fail heuristic.
+	 *
+	 * Default fail heuristic is read from the config. If the config fails to
+	 * set it, the default is ALL.
+	 *
+	 * @return default fail heuristic
+	 */
+	Heuristic GetDefaultFailHeuristic() const {
+	    return default_heur_;
+	}
 
 private:
 	/*
@@ -835,6 +853,8 @@ private:
 	    size_t total_fails_registered_{0};
         // Total fails replayed
 	    size_t total_fails_replayed_{0};
+	    // Total fails registration retried with ALL heuristic
+	    std::atomic<size_t> total_fails_heur_retried_{0};
 	};
 	// Output to stream
 	friend std::ostream &operator<<(std::ostream &os,
@@ -891,6 +911,9 @@ private:
     // Relaxator stats
     RelaxatorStats stats_;
 
+    // Default fail heuristic
+    Heuristic default_heur_;
+
 	// For concurrency control
 	mutable std::mutex mtx_;
 };
@@ -920,6 +943,15 @@ public:
      */
 	virtual void BeginFail() override;
 
+	/**
+	 * Set fail registration heuristic.
+	 *
+	 * @param h new registration heuristic
+	 */
+	void SetFailHeuristic(Relaxator::Heuristic h) {
+	    register_heur_ = h;
+	}
+
 private:
 	// Query relaxator
 	Relaxator &relaxator_;
@@ -929,6 +961,9 @@ private:
 
 	// Searchlight solver id
 	const size_t solver_id_;
+
+	// Fail registration heuristic
+	Relaxator::Heuristic register_heur_;
 };
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_RELAX_H_ */

@@ -182,6 +182,31 @@ public:
     }
 
     /**
+     * Set the adapter mode and save the old mode.
+     *
+     * This is supposed to work in pair with PopAdapterMode(), which restores
+     * the just saved mode.
+     *
+     * @param mode mode to set
+     */
+    void PushAdapterMode(Mode mode) {
+        saved_modes_.push_back(mode_);
+        mode_ = mode;
+    }
+
+    /**
+     * Restore adapter mode to the previously saved value.
+     *
+     * Supposed to work in pair with PushAdapterMode(), which saves the old
+     * mode.
+     */
+    void PopAdapterMode() {
+        assert(!saved_modes_.empty());
+        mode_ = saved_modes_.back();
+        saved_modes_.pop_back();
+    }
+
+    /**
      * Computes specified aggregates for the specified regions for the
      * specified attribute. Depending on the mode, the result will be
      * approximate with precise boundaries or exact, computed over the real
@@ -399,6 +424,9 @@ private:
 
     // Mode of operation
     Mode mode_;
+
+    // Saved modes for push/pop semantics
+    std::vector<Mode> saved_modes_;
 
     // The adapter's name
     const std::string name_;

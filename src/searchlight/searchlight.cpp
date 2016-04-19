@@ -250,9 +250,7 @@ void SearchlightSolver::Prepare(Validator &validator) {
         DetermineLocalWorkload();
 
         // Switch adapters to interval mode
-        for (auto &ad: adapters_) {
-            ad->SetAdapterMode(Adapter::INTERVAL);
-        }
+        SetAdapterMode(Adapter::INTERVAL, false);
 
         // logging model (only once)
         if (logger->isDebugEnabled()) {
@@ -484,11 +482,19 @@ void SearchlightSolver::SetVarDomains(const IntVarDomainInfoVector &dom_info) {
     }
 }
 
-void SearchlightSolver::SetRelaxatorMonitor() {
-    if (sl_.GetRelaxator()) {
+void SearchlightSolver::SetRelaxatorMonitor(bool fail_replay) {
+    if (const Relaxator *relaxator = sl_.GetRelaxator()) {
         // Install fail monitor
         assert(search_monitors_.fail_monitor_);
         search_monitors_.fail_monitor_->Install();
+        /*
+         *  The fail heuristic must be ALL at fail replays. Otherwise,
+         *  we might get infinite loops by not detecting violated
+         *  constraints properly.
+         */
+        search_monitors_.fail_monitor_->SetFailHeuristic(
+                fail_replay ? Relaxator::Heuristic::ALL :
+                        relaxator->GetDefaultFailHeuristic());
     }
 }
 
@@ -500,9 +506,9 @@ void SearchlightSolver::Solve() {
     bool solver_has_work = SolverHasWork();
     while (solver_has_work) {
         current_vc_spec_.clear();
+        bool fail_replay = false;
         if (!non_solve_setup_) {
             // Local load has priority
-            bool fail_replay = false;
             IntVarDomainInfoVector domain_info;
             if (!local_load_.empty()) {
                 LiteToFullAssignment(vars_leaf_, local_load_.back());
@@ -572,7 +578,7 @@ void SearchlightSolver::Solve() {
          * as well as for common loads, since even a replay might have another
          * fail, which might result in further relaxation (or ignoring it).
          */
-        SetRelaxatorMonitor();
+        SetRelaxatorMonitor(fail_replay);
 
         // Starting the timer
         const auto solve_start_time = std::chrono::steady_clock::now();
@@ -756,6 +762,22 @@ AdapterPtr SearchlightSolver::CreateAdapter(const std::string &name) {
     res->SetSLSolverId(GetLocalID());
     adapters_.push_back(res);
     return res;
+}
+
+void SearchlightSolver::SetAdapterMode(Adapter::Mode mode, bool save) const {
+    for (auto &ad: adapters_) {
+        if (save) {
+            ad->PushAdapterMode(mode);
+        } else {
+            ad->SetAdapterMode(mode);
+        }
+    }
+}
+
+void SearchlightSolver::RestoreAdapterMode() const {
+    for (auto &ad: adapters_) {
+        ad->PopAdapterMode();
+    }
 }
 
 SearchMonitor *MakeCumulativeTimeLimit(Solver &s, int64 time_ms) {
