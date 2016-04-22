@@ -199,7 +199,7 @@ class QueryRunner(object):
             res[name] = int(val)
         return res
 
-    def run_query(self, task_json):
+    def run_query(self, task_json, limit):
         # First, set the task file
         self._copy_task(task_json)
         # Then, query
@@ -207,7 +207,7 @@ class QueryRunner(object):
         query_array = iter(self.scidb.query_interactive(self.query))
         result_list = []
         try:
-            while True:
+            while limit <= 0 or len(result_list) < limit:
                 (pos, next_res) = query_array.next()
                 # results come as tuples: (pos_attr, value_attr), we need the first attribute from the value_attr
                 result_list.append((time.time(), self._str_to_map(str(next_res[0]))))
@@ -234,6 +234,7 @@ class Relaxator(object):
         if self.method not in ['all', 'rr', 'random']:
             raise ValueError('Unknown relaxation method ' + self.method)
         self.target_card = self.config.get_param('config.card')
+        self.res_num_limit = self.config.get_param('config.limit')
         self.constraints = []
         for c in self.config['constraints']:
             self.constraints.append(Constraint(c))
@@ -279,7 +280,7 @@ class Relaxator(object):
             c.dump_to_jc(self.query)
         start_time = time.time()
         self.logger.info('Querying with constraints: %s' % '|'.join([str(c) for c in self.constraints]))
-        query_res = self.query_runner.run_query(str(self.query))
+        query_res = self.query_runner.run_query(str(self.query), self.res_num_limit)
         # query_res consists of tuples: (time, result)
         self.logger.info('Found %d results' % len(query_res))
         end_time = time.time()
