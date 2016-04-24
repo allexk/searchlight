@@ -310,10 +310,12 @@ class Relaxator(object):
 
     def dump_res(self, f):
         for qr in self.query_res:
+            query_start = qr['start']
             f.write('Run (time=%.3f, res_num=%d):\n' % (qr['end'] - qr['start'], len(qr['res'])))
             for i, r in enumerate(qr['res']):
                 r_str = ','.join(['%s=%s' % (k, str(v)) for k, v in r[1].items()])
                 r_str += ',rd=%.3f' % qr['rds'][i]
+                r_str += ',time=%.3f' % (r[0] - query_start)
                 f.write(r_str)
                 f.write('\n')
             f.write('\nTask:\n')
