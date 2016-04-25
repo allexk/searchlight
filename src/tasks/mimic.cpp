@@ -175,7 +175,7 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
             const int32 left_max_diff  = config.get(
                     "mimic.neighborhood.left_max_diff", 0);
             const int32 left_relax_diff  = config.get(
-                    "sw.neighborhood.left_relax_diff", left_max_diff);
+                    "mimic.neighborhood.left_relax_diff", left_max_diff);
             // expressions
             IntVar * const left_max = solver.RevAlloc(max_fab(&solver,
                     adapter, part_vars, udf_params))->Var();
@@ -212,7 +212,7 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
             const int32 right_max_diff = config.get(
                     "mimic.neighborhood.right_max_diff", 0);
             const int32 right_relax_diff  = config.get(
-                    "sw.neighborhood.right_relax_diff", right_max_diff);
+                    "mimic.neighborhood.right_relax_diff", right_max_diff);
             // expressions
             IntVar * const right_max = solver.RevAlloc(max_fab(&solver,
                     adapter, part_vars, udf_params))->Var();
