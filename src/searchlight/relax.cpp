@@ -72,7 +72,10 @@ Relaxator::Relaxator(Searchlight &sl, size_t solvers,
 
 Relaxator::~Relaxator() {
     std::ostringstream os;
-    os << stats_;
+    os << "Pre-replay stage stats:\n";
+    os << stats_[0];
+    os << "Replay stage stats:\n";
+    os << stats_[1];
     LOG4CXX_INFO(logger, os.str());
 }
 
