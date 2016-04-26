@@ -532,7 +532,7 @@ public:
 	 * Create a new relaxator instance.
 	 *
 	 * @param sl Searchlight instance
-	 * @param solvers
+	 * @param solvers number of solvers
 	 * @param dist_w distance weight for the relaxation degree
 	 * @param res_num the number of results to track (top-k)
 	 */
@@ -644,13 +644,15 @@ public:
 	/**
 	 * Return the next fail replay, if available.
 	 *
+	 * @param solver_id local solver id
 	 * @param dom_info variable domains info
 	 * @param vc_spec violated constraints spec
 	 * @return true, if there was a replay; false, otherwise
 	 */
-	bool GetFailReplay(std::vector<IntVarDomainInfo> &dom_info,
-	                   Int64Vector &vc_spec) {
+	bool GetFailReplay(size_t solver_id,
+	        std::vector<IntVarDomainInfo> &dom_info, Int64Vector &vc_spec) {
         std::lock_guard<std::mutex> lock{mtx_};
+        solver_stats_index_[solver_id] = 1;
         const double lrd = lrd_.load(std::memory_order_relaxed);
         while (!fail_replays_.empty()) {
             // Const cast is okay here; we get rid of the top object right away
@@ -663,7 +665,7 @@ public:
                 vc_spec = ViolConstSpec(fr);
                 dom_info = std::move(fr.saved_vars_);
                 fail_replays_.pop();
-                stats_.total_fails_replayed_++;
+                stats_[1].total_fails_replayed_++;
                 return true;
             } else {
                 // Actually can clear the queue, since all others > lrd
@@ -883,7 +885,7 @@ private:
 	bool ComputeFailReplayRelaxation(FailReplay &replay) const;
 
 	// Update time stats using the provided start time
-	void UpdateTimeStats(
+	void UpdateTimeStats(RelaxatorStats &stats,
 	    const std::chrono::steady_clock::time_point &start_time,
 	    bool success);
 
@@ -911,8 +913,10 @@ private:
     // Max heap to count result relaxation degrees
     std::priority_queue<double> top_results_;
 
-    // Relaxator stats
-    RelaxatorStats stats_;
+    // Relaxator stats: for several pahases
+    RelaxatorStats stats_[2];
+    // Phase index to write the stats to per solver
+    std::vector<size_t> solver_stats_index_;
 
     // Default fail heuristic
     Heuristic default_heur_;

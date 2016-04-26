@@ -74,10 +74,14 @@ SearchlightSolver::~SearchlightSolver() {
     }
 
     // Time stats
-    const auto secs = std::chrono::duration_cast<std::chrono::duration<double>>(
+    auto secs = std::chrono::duration_cast<std::chrono::duration<double>>(
             total_solve_time_).count();
     LOG4CXX_INFO(logger, "Solver (0x" << std::hex << id_ << std::dec <<
             ") total time: " << secs << 's');
+    secs = std::chrono::duration_cast<std::chrono::duration<double>>(
+            total_solve_time_replays_).count();
+    LOG4CXX_INFO(logger, "Solver (0x" << std::hex << id_ << std::dec <<
+            ") total time (replays): " << secs << 's');
 
     /*
      * Search stats.
@@ -520,8 +524,8 @@ void SearchlightSolver::Solve() {
                 helper_load_.pop_back();
             } else if (Relaxator *relaxator = sl_.GetRelaxator()) {
                 // Try a fail replay
-                fail_replay = relaxator->GetFailReplay(domain_info,
-                                                       current_vc_spec_);
+                fail_replay = relaxator->GetFailReplay(GetLocalID(),
+                        domain_info, current_vc_spec_);
                 // Might be false if somebody just went ahead of us
                 if (!fail_replay) {
                     solver_has_work = SolverHasWork();
@@ -597,6 +601,11 @@ void SearchlightSolver::Solve() {
         total_solve_time_ +=
                 std::chrono::duration_cast<decltype(total_solve_time_)>(
                 solve_end_time - solve_start_time);
+        if (fail_replay) {
+            total_solve_time_replays_ +=
+                std::chrono::duration_cast<decltype(total_solve_time_replays_)>(
+                solve_end_time - solve_start_time);
+        }
 
         // Continue only if we have another assignment to set up
         solver_has_work = SolverHasWork();
