@@ -847,6 +847,8 @@ private:
 	struct RelaxatorStats {
 	    // Total time spent for fail catching
 	    std::chrono::microseconds total_fail_time_{0};
+        // Total time spent for successful fail catching
+        std::chrono::microseconds total_success_fail_time_{0};
 	    // Total fails caught
 	    std::atomic<size_t> total_fails_caught_{0};
         // Total fails registered
@@ -882,7 +884,8 @@ private:
 
 	// Update time stats using the provided start time
 	void UpdateTimeStats(
-	    const std::chrono::steady_clock::time_point &start_time);
+	    const std::chrono::steady_clock::time_point &start_time,
+	    bool success);
 
 	// Main Searchlight reference
 	Searchlight &sl_;

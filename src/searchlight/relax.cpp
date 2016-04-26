@@ -36,10 +36,14 @@ std::ostream &operator<<(std::ostream &os, const Relaxator::FailReplay &fr) {
 
 std::ostream &operator<<(std::ostream &os, const Relaxator::RelaxatorStats &rs) {
     os << "Relaxator stats:\n";
-    const float secs =
+    const float total_secs =
             std::chrono::duration_cast<std::chrono::duration<double>>(
                    rs.total_fail_time_).count();
-    os << "\tTotal fail catch time: " << secs << "s\n";
+    const float total_success_secs =
+            std::chrono::duration_cast<std::chrono::duration<double>>(
+                   rs.total_success_fail_time_).count();
+    os << "\tTotal fail catch time: " << total_secs << "s\n";
+    os << "\tTotal success fail catch time: " << total_success_secs << "s\n";
     os << "\tTotal fails caught: " <<
             rs.total_fails_caught_.load(std::memory_order_relaxed) << '\n';
     os << "\tTotal fails registered: " << rs.total_fails_registered_ << '\n';
@@ -169,12 +173,18 @@ bool Relaxator::ComputeNewReplayInterval(FailReplay &replay,
 }
 
 void Relaxator::UpdateTimeStats(
-    const std::chrono::steady_clock::time_point &start_time) {
+        const std::chrono::steady_clock::time_point &start_time,
+        bool success) {
     // Stop time
     const auto end_time = std::chrono::steady_clock::now();
     stats_.total_fail_time_ +=
             std::chrono::duration_cast<std::chrono::microseconds>(
                     end_time - start_time);
+    if (success) {
+        stats_.total_success_fail_time_ +=
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                        end_time - start_time);
+    }
 }
 
 void Relaxator::RegisterFail(size_t solver_id, Heuristic h) {
@@ -218,7 +228,7 @@ void Relaxator::RegisterFail(size_t solver_id, Heuristic h) {
     }
 	if (replay.failed_const_.empty() || cannot_relax) {
 	    // No violations detected or cannot relax
-        UpdateTimeStats(reg_start_time);
+        UpdateTimeStats(reg_start_time, false);
         if (h == Heuristic::GUESS && !cannot_relax) {
             // Try with the full heuristic to avoid losing fails
             stats_.total_fails_caught_.fetch_sub(1, std::memory_order_relaxed);
@@ -232,7 +242,7 @@ void Relaxator::RegisterFail(size_t solver_id, Heuristic h) {
 	// Second pass: compute the degree
 	if (!ComputeFailReplayRelaxation(replay)) {
         // Cannot relax: ignore the fail
-        UpdateTimeStats(reg_start_time);
+        UpdateTimeStats(reg_start_time, false);
 	    return;
 	}
 	// Normalize relax degrees
@@ -250,7 +260,7 @@ void Relaxator::RegisterFail(size_t solver_id, Heuristic h) {
 		std::lock_guard<std::mutex> lock{mtx_};
 		fail_replays_.push(std::move(replay));
 	    stats_.total_fails_registered_++;
-        UpdateTimeStats(reg_start_time);
+        UpdateTimeStats(reg_start_time, true);
 	}
 }
 
