@@ -61,12 +61,18 @@ Relaxator::Relaxator(Searchlight &sl, size_t solvers,
     distance_weight_(dist_w),
     res_num_(res_num),
     solver_stats_index_(solvers),
-    default_heur_(Heuristic::ALL) {
+    default_heur_(Heuristic::ALL),
+    replay_relax_(ReplayRelaxation::VIOLATED) {
 
     // Default fail heuristic
     const std::string heur = sl.GetConfig().get("relax.heur", "all");
     if (heur == "guess") {
         default_heur_ = Heuristic::GUESS;
+    }
+    // Replay relaxation
+    const std::string rr = sl.GetConfig().get("relax.replay", "viol");
+    if (rr == "all") {
+        replay_relax_ = ReplayRelaxation::ALL;
     }
 }
 
@@ -345,9 +351,15 @@ bool Relaxator::ComputeFailReplayRelaxation(FailReplay &replay) const {
 
 Int64Vector Relaxator::ViolConstSpec(const FailReplay &replay) const {
     Int64Vector res;
-    res.reserve(replay.failed_const_.size() * 3);
+    const bool relaxing_all = replay_relax_ == ReplayRelaxation::ALL;
+    const size_t violed_const_num = replay.failed_const_.size();
+    const size_t relaxing_const_num = relaxing_all ?
+            orig_consts_.size() : violed_const_num;
+    std::vector<bool> relaxed_const_bs(orig_consts_.size());
+    res.reserve(relaxing_const_num * 3); // triplets: id, left, right
     for (const auto &fc: replay.failed_const_) {
         const IntervalConstraint &ic = orig_consts_[fc.const_id_].int_;
+        relaxed_const_bs[fc.const_id_] = true;
         res.push_back(fc.const_id_);
         int64 l, h;
         if (fc.rel_pos_ == 1) {
@@ -359,6 +371,25 @@ Int64Vector Relaxator::ViolConstSpec(const FailReplay &replay) const {
         }
         res.push_back(l);
         res.push_back(h);
+    }
+    // If we use ALL relaxation, relax the rest
+    if (relaxing_all && relaxing_const_num > violed_const_num) {
+        /*
+         *  The distance is computed based on the violated constraints! It
+         *  might be larger than necessary, but we avoid re-replays this
+         *  way: such relaxations cannot be relaxed any further.
+         */
+        const double max_relax_dist = MaxUnitRelaxDistance(violed_const_num);
+        // linear search over the bitset is fine here
+        for (size_t i = 0; i < relaxed_const_bs.size(); ++i) {
+            if (!relaxed_const_bs[i]) {
+                int64_t l, h;
+                orig_consts_[i].MaxRelaxDist(max_relax_dist, l, h);
+                res.push_back(i);
+                res.push_back(l);
+                res.push_back(h);
+            }
+        }
     }
     return res;
 }

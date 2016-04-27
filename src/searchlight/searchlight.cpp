@@ -490,15 +490,17 @@ void SearchlightSolver::SetRelaxatorMonitor(bool fail_replay) {
     if (const Relaxator *relaxator = sl_.GetRelaxator()) {
         // Install fail monitor
         assert(search_monitors_.fail_monitor_);
-        search_monitors_.fail_monitor_->Install();
-        /*
-         *  The fail heuristic must be ALL at fail replays. Otherwise,
-         *  we might get infinite loops by not detecting violated
-         *  constraints properly.
-         */
-        search_monitors_.fail_monitor_->SetFailHeuristic(
-                fail_replay ? Relaxator::Heuristic::ALL :
-                        relaxator->GetDefaultFailHeuristic());
+        if (!fail_replay || relaxator->ReReplaysNeeded()) {
+            search_monitors_.fail_monitor_->Install();
+            /*
+             *  The fail heuristic must be ALL at fail replays. Otherwise,
+             *  we might get infinite loops by not detecting violated
+             *  constraints properly.
+             */
+            search_monitors_.fail_monitor_->SetFailHeuristic(
+                    fail_replay ? Relaxator::Heuristic::ALL :
+                            relaxator->GetDefaultFailHeuristic());
+        }
     }
 }
 

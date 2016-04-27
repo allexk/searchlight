@@ -527,6 +527,14 @@ public:
         ALL    ///!< ALL Checks all the constraints for violations.
     };
 
+    /**
+     * Relaxation type to apply to replays.
+     */
+    enum class ReplayRelaxation {
+        VIOLATED, ///!< VIOLATED Relax only violated constraints.
+        ALL       ///!< ALL Relax all constraints.
+    };
+
 public:
 	/**
 	 * Create a new relaxator instance.
@@ -698,6 +706,19 @@ public:
 	    return default_heur_;
 	}
 
+	/**
+	 * Check if re-replays might be needed.
+	 *
+	 * Re-replays happen when a replay fails again. With some replay methods,
+	 * like ALL, this is not needed, since they already give the maximum
+	 * possible relaxation.
+	 *
+	 * @return true, if re-replays might be needed; false, otherwise
+	 */
+	bool ReReplaysNeeded() const {
+	    return replay_relax_ != ReplayRelaxation::ALL;
+	}
+
 private:
 	/*
 	 * Compute the maximum [0, 1] relaxation distance for the specified number
@@ -770,7 +791,7 @@ private:
 		    assert(max_relax >= 0.0 && max_relax <= 1.0);
 		    // Left point
 		    l = MaxRelaxDist(true);
-		    if (l != kint64min) {
+		    if (l != kint64max) {
 		        l = int_.Min() - l * max_relax;
 		    }
 		    // Right point
@@ -920,6 +941,9 @@ private:
 
     // Default fail heuristic
     Heuristic default_heur_;
+
+    // Replay relaxation type
+    ReplayRelaxation replay_relax_;
 
 	// For concurrency control
 	mutable std::mutex mtx_;
