@@ -584,6 +584,17 @@ void SearchlightSolver::Solve() {
          */
         SetRelaxatorMonitor(fail_replay);
 
+        // Switch adapter stats frame if needed
+        if (fail_replay) {
+            if (!replay_stage_) {
+                // First replay
+                for (const auto &a: adapters_) {
+                    a->SwitchUsageStatsFrame();
+                }
+            }
+            replay_stage_ = true;
+        }
+
         // Starting the timer
         const auto solve_start_time = std::chrono::steady_clock::now();
 

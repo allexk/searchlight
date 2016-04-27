@@ -165,6 +165,7 @@ public:
         array_desc_(array),
         mode_(Mode::DUMB),
         name_(name),
+        usage_stats_(1),
         stats_enabled_(false) {}
 
     /**
@@ -332,6 +333,17 @@ public:
         return mode_ != Adapter::DUMB;
     }
 
+    /**
+     * Creates a new usage stats frame.
+     *
+     * Switching the frame results in archiving current usage stats and starting
+     * collecting anew. At the end both archived and current frames will
+     * be output.
+     */
+    void SwitchUsageStatsFrame() {
+        usage_stats_.push_back({});
+    }
+
 private:
     /*
      * Iterates over chunks of the specified region. Chunks correspond to
@@ -413,6 +425,11 @@ private:
         bool valid_;
     };
 
+    struct UsageStats {
+        std::chrono::microseconds total_req_time_{0};
+        size_t accesses_{0};
+    };
+
     void UpdateStatsWithRegion(const Coordinates &low,
             const Coordinates &high) const;
 
@@ -431,8 +448,8 @@ private:
     // The adapter's name
     const std::string name_;
 
-    // Total time spent for requests
-    mutable std::chrono::microseconds total_req_time_{0};
+    // Stats
+    mutable std::vector<UsageStats> usage_stats_;
 
     // Accesses statistics collected in stats mode
     mutable AccessStats stats_;

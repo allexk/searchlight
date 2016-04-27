@@ -232,7 +232,7 @@ public:
     enum class Status {
         VOID,      //!< VOID Non-initialized state
         PREPARED,  //!< PREPARED Main solver prepared
-        SEARCHING, //!< SEARCHING Main solver is searching (suring Solve())
+        SEARCHING, //!< SEARCHING Main solver is searching (during Solve())
         FINISHED,  //!< FINISHED Main solver finished completely
         TERMINATED //!< TERMINATED Abnormal termination on error
     };
@@ -669,6 +669,9 @@ private:
 
     // Do we accept help?
     bool solver_balancing_enabled_ = true;
+
+    // Are we at replay stage?
+    bool replay_stage_ = false;
 
     // Solver id (top 32b: instance, low 32b: ordinal)
     uint64_t id_;
