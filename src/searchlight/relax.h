@@ -720,6 +720,17 @@ public:
 	}
 
 private:
+	/**
+	 * Replay sorting method.
+	 *
+	 * The method determines which replays will be replayed first later.
+	 */
+	enum class ReplaySortMethod {
+	    BEST,   ///!< BEST sort based on best relaxation degree
+	    WORST,  ///!< WORST sort based on worst relaxation degree
+	    PROD    ///!< PROD sort based on the product of relaxation degrees
+	};
+
 	/*
 	 * Compute the maximum [0, 1] relaxation distance for the specified number
 	 * of violated constraints.
@@ -854,15 +865,35 @@ private:
 
 		// Relaxation degree: best and the worst one possible for the replay
 		double best_relax_degree_, worst_relax_degree_;
-
-		// relax degree-based comparison
-		bool operator>(const FailReplay &other) const {
-			return best_relax_degree_ > other.best_relax_degree_;
-		}
 	};
 	// To output the structure
 	friend std::ostream &operator<<(std::ostream &os,
 	    const Relaxator::FailReplay &fr);
+
+    // Replay sorter
+	struct ReplaySort {
+	    // Constructs sorter based on method
+	    ReplaySort(ReplaySortMethod method = ReplaySortMethod::BEST) :
+	        sort_method_(method) {}
+
+	    // Call operator for sorting
+        bool operator()(const FailReplay &f1, const FailReplay &f2) const {
+            switch (sort_method_) {
+                case ReplaySortMethod::BEST:
+                    return f1.best_relax_degree_ > f2.best_relax_degree_;
+                case ReplaySortMethod::WORST:
+                    return f1.worst_relax_degree_ > f2.worst_relax_degree_;
+                case ReplaySortMethod::PROD:
+                    return f1.best_relax_degree_ * f1.worst_relax_degree_ >
+                        f2.best_relax_degree_ * f2.worst_relax_degree_;
+                default:
+                    assert(false);
+                    return true;
+            }
+        }
+	private:
+	    ReplaySortMethod sort_method_;
+    };
 
 	/*
 	 * Various stats for the Relaxator.
@@ -893,10 +924,6 @@ private:
      */
 	Int64Vector ViolConstSpec(const FailReplay &replay) const;
 
-	// Queue of replays ranked by relaxation degree (lowest first)
-	std::priority_queue<FailReplay, std::vector<FailReplay>,
-		std::greater<FailReplay>> fail_replays_;
-
 	// Fill in new relaxation interval; return true if possible to relax
 	bool ComputeNewReplayInterval(FailReplay &replay,
 	        FailReplay::FailedConstraint &failed_const,
@@ -912,6 +939,10 @@ private:
 
 	// Main Searchlight reference
 	Searchlight &sl_;
+
+    // Queue of replays ranked by relaxation degree (lowest first)
+    std::priority_queue<FailReplay,
+        std::vector<FailReplay>, ReplaySort> fail_replays_;
 
 	// Total number of solvers
 	const size_t solvers_num_;

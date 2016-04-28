@@ -559,7 +559,7 @@ void SearchlightSolver::Solve() {
             // Apply violated constraints changes, if any
             if (!current_vc_spec_.empty()) {
                 assert(sl_.GetRelaxator());
-                if (logger->isInfoEnabled()) {
+                if (logger->isDebugEnabled()) {
                     std::ostringstream os;
                     os << "Setting up fail replay:";
                     for (size_t i = 0; i < current_vc_spec_.size(); i += 3) {
@@ -567,7 +567,7 @@ void SearchlightSolver::Solve() {
                                 << current_vc_spec_[i] << "<="
                                 << current_vc_spec_[i + 2];
                     }
-                    logger->info(os.str(), LOG4CXX_LOCATION);
+                    logger->debug(os.str(), LOG4CXX_LOCATION);
                 }
                 sl_.GetRelaxator()->ApplyViolatedConstSpec(current_vc_spec_,
                                SearchlightTask::GetLocalIDFromSolverID(id_));

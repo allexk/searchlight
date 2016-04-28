@@ -74,6 +74,18 @@ Relaxator::Relaxator(Searchlight &sl, size_t solvers,
     if (rr == "all") {
         replay_relax_ = ReplayRelaxation::ALL;
     }
+    // Replay sorting
+    const std::string rep_sort = sl.GetConfig().get("relax.sort", "best");
+    if (rep_sort == "worst") {
+        fail_replays_ = decltype(fail_replays_)(
+                ReplaySort(ReplaySortMethod::WORST), {});
+    } else if (rep_sort == "prod") {
+        fail_replays_ = decltype(fail_replays_)(
+                ReplaySort(ReplaySortMethod::PROD), {});
+    } else {
+        LOG4CXX_ERROR(logger,
+                "Unknown replay sorting method, defaulting to BEST...");
+    }
 }
 
 Relaxator::~Relaxator() {
