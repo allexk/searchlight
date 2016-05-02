@@ -658,30 +658,7 @@ public:
 	 * @return true, if there was a replay; false, otherwise
 	 */
 	bool GetFailReplay(size_t solver_id,
-	        std::vector<IntVarDomainInfo> &dom_info, Int64Vector &vc_spec) {
-        std::lock_guard<std::mutex> lock{mtx_};
-        solver_stats_index_[solver_id] = 1;
-        const double lrd = lrd_.load(std::memory_order_relaxed);
-        while (!fail_replays_.empty()) {
-            // Const cast is okay here; we get rid of the top object right away
-            FailReplay &fr = const_cast<FailReplay &>(fail_replays_.top());
-            if (fr.best_relax_degree_ <= lrd) {
-                if (fr.worst_relax_degree_ > lrd) {
-                    // Tighten the relaxation if possible
-                    ComputeFailReplayRelaxation(fr);
-                }
-                vc_spec = ViolConstSpec(fr);
-                dom_info = std::move(fr.saved_vars_);
-                fail_replays_.pop();
-                stats_[1].total_fails_replayed_++;
-                return true;
-            } else {
-                // Actually can clear the queue, since all others > lrd
-                fail_replays_ = decltype(fail_replays_)();
-            }
-        }
-        return false;
-	}
+	        std::vector<IntVarDomainInfo> &dom_info, Int64Vector &vc_spec);
 
 	/**
 	 * Compute VC specification with the maximum relaxation possible.
@@ -975,6 +952,9 @@ private:
 
     // Replay relaxation type
     ReplayRelaxation replay_relax_;
+
+    // Replay sort method
+    ReplaySortMethod sort_method_;
 
 	// For concurrency control
 	mutable std::mutex mtx_;

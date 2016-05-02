@@ -62,7 +62,8 @@ Relaxator::Relaxator(Searchlight &sl, size_t solvers,
     res_num_(res_num),
     solver_stats_index_(solvers),
     default_heur_(Heuristic::ALL),
-    replay_relax_(ReplayRelaxation::VIOLATED) {
+    replay_relax_(ReplayRelaxation::VIOLATED),
+    sort_method_(ReplaySortMethod::BEST) {
 
     // Default fail heuristic
     const std::string heur = sl.GetConfig().get("relax.heur", "all");
@@ -77,15 +78,14 @@ Relaxator::Relaxator(Searchlight &sl, size_t solvers,
     // Replay sorting
     const std::string rep_sort = sl.GetConfig().get("relax.sort", "best");
     if (rep_sort == "worst") {
-        fail_replays_ = decltype(fail_replays_)(
-                ReplaySort(ReplaySortMethod::WORST), {});
+        sort_method_ = ReplaySortMethod::WORST;
     } else if (rep_sort == "prod") {
-        fail_replays_ = decltype(fail_replays_)(
-                ReplaySort(ReplaySortMethod::PROD), {});
+        sort_method_ = ReplaySortMethod::PROD;
     } else {
         LOG4CXX_ERROR(logger,
                 "Unknown replay sorting method, defaulting to BEST...");
     }
+    fail_replays_ = decltype(fail_replays_)(ReplaySort(sort_method_), {});
 }
 
 Relaxator::~Relaxator() {
@@ -95,6 +95,36 @@ Relaxator::~Relaxator() {
     os << "Replay stage stats:\n";
     os << stats_[1];
     LOG4CXX_INFO(logger, os.str());
+}
+
+bool Relaxator::GetFailReplay(size_t solver_id,
+        std::vector<IntVarDomainInfo> &dom_info, Int64Vector &vc_spec) {
+    std::lock_guard<std::mutex> lock{mtx_};
+    solver_stats_index_[solver_id] = 1;
+    const double lrd = lrd_.load(std::memory_order_relaxed);
+    while (!fail_replays_.empty()) {
+        // Const cast is okay here; we get rid of the top object right away
+        FailReplay &fr = const_cast<FailReplay &>(fail_replays_.top());
+        if (fr.best_relax_degree_ <= lrd) {
+            if (fr.worst_relax_degree_ > lrd) {
+                // Tighten the relaxation if possible
+                ComputeFailReplayRelaxation(fr);
+            }
+            vc_spec = ViolConstSpec(fr);
+            dom_info = std::move(fr.saved_vars_);
+            fail_replays_.pop();
+            stats_[1].total_fails_replayed_++;
+            return true;
+        } else {
+            // Cannot replay due to LRD, ignore...
+            fail_replays_.pop();
+            if (sort_method_ == ReplaySortMethod::BEST) {
+                // Actually can clear the queue, since all others > lrd
+                fail_replays_ = decltype(fail_replays_)();
+            }
+        }
+    }
+    return false;
 }
 
 void Relaxator::RegisterConstraint(const std::string &name, size_t solver_id,
