@@ -662,10 +662,12 @@ public:
 	 * @param solver_id local solver id
 	 * @param dom_info variable domains info
 	 * @param vc_spec violated constraints spec
+	 * @param udfs saved udf state (out)
 	 * @return true, if there was a replay; false, otherwise
 	 */
 	bool GetFailReplay(size_t solver_id,
-	        std::vector<IntVarDomainInfo> &dom_info, Int64Vector &vc_spec);
+	        std::vector<IntVarDomainInfo> &dom_info, Int64Vector &vc_spec,
+	        UDFStates &udfs);
 
 	/**
 	 * Compute VC specification with the maximum relaxation possible.
@@ -846,6 +848,9 @@ private:
 		// Saved decision variables for the replay
 		std::vector<IntVarDomainInfo> saved_vars_;
 
+		// Saved UDF states
+		UDFStates saved_udfs_;
+
 		// Relaxation degree: best and the worst one possible for the replay
 		double best_relax_degree_, worst_relax_degree_;
 
@@ -980,6 +985,9 @@ private:
 
 	// Maximum number of results to track
 	const size_t res_num_;
+
+	// Do we save UDFs for replays?
+	bool save_udfs_for_replay_;
 
     // Max heap to count result relaxation degrees
     std::priority_queue<double> top_results_;

@@ -64,7 +64,7 @@ namespace {
  * This is basically an extension of the IntExpr to properly handle
  * distance function over arrays.
  */
-class SqDistFuncExpr : public BaseIntExpr {
+class SqDistFuncExpr : public SearchlightUDF {
 public:
     /**
      * Constructs a distance function expression for an array.
@@ -77,7 +77,7 @@ public:
 	SqDistFuncExpr(Solver *s, AdapterPtr adapter,
             const std::vector<IntVar *> &coords,
             const std::vector<int64> &params) :
-        BaseIntExpr(s),
+        SearchlightUDF(s),
         adapter_(adapter),
         attr_(AttributeID(params[0])),
         dims_(coords.size()),
@@ -86,8 +86,7 @@ public:
 		coords_(coords),
         coords_iters_(dims_),
 		seq_dim_(size_t(params[3])),
-        min_support_low_(dims_),
-        min_support_high_(dims_) {
+		state_(dims_) {
 
         for (size_t i = 0; i < dims_; i++) {
             coords_iters_[i] = coords_[i]->MakeDomainIterator(true);
@@ -110,7 +109,7 @@ public:
             solver()->Fail();
         	//return kint64max;
         }
-        return min_;
+        return state_.min_;
     }
 
     /**
@@ -125,7 +124,7 @@ public:
         if (!ComputeMinMax()) {
             adapter_->SetCustomFail();
             solver()->Fail();
-        } else if (m > max_) {
+        } else if (m > state_.max_) {
             solver()->Fail();
         }
     }
@@ -141,7 +140,7 @@ public:
             solver()->Fail();
         	//return kint64min;
         }
-        return max_;
+        return state_.max_;
     }
 
     /**
@@ -156,7 +155,7 @@ public:
         if (!ComputeMinMax()) {
             adapter_->SetCustomFail();
             solver()->Fail();
-        } else if (m < min_) {
+        } else if (m < state_.min_) {
             solver()->Fail();
         }
     }
@@ -209,6 +208,40 @@ public:
                 params);
         // Function end
         visitor->EndVisitIntegerExpression(tag, this);
+    }
+
+    /**
+     * Saves state.
+     */
+    virtual const SearchlightUDF::State *SaveState() const override {
+        if (state_.min_max_init_) {
+            const SearchlightUDF::State *saved_state = new SqDistState(state_);
+            return saved_state;
+        } else {
+            return nullptr;
+        }
+    }
+
+    /**
+     * Load state from the buf.
+     *
+     * @param state saved state
+     */
+    virtual void LoadState(const SearchlightUDF::State *state) override {
+        if (state) {
+            // Static cast is fine, it's controlled internal usage
+            const SqDistState *saved_state =
+                    static_cast<const SqDistState *>(state);
+            Solver * const s = solver();
+            s->SaveAndSetValue(&state_.min_, saved_state->min_);
+            s->SaveAndSetValue(&state_.min_max_init_, true);
+            for (size_t i = 0; i < dims_; i++) {
+                SaveCoordinate(&state_.min_support_low_[i],
+                        saved_state->min_support_low_[i]);
+                SaveCoordinate(&state_.min_support_high_[i],
+                    saved_state->min_support_high_[i]);
+            }
+        }
     }
 
 private:
@@ -266,11 +299,18 @@ private:
     const size_t seq_dim_;
 
     // Min/max aggregate values and caches for support
-    mutable int64 min_ = 0;
-    const int64 max_ = std::numeric_limits<int64>::max();
-    // Support for minimum: min, max values for vars
-    mutable Coordinates min_support_low_, min_support_high_;
-    mutable bool min_max_init_ = false;
+    struct SqDistState : public SearchlightUDF::State {
+        int64 min_ = 0;
+        const int64 max_ = std::numeric_limits<int64>::max();
+        // Support for minimum: min, max values for vars
+        Coordinates min_support_low_, min_support_high_;
+        bool min_max_init_ = false;
+
+        SqDistState(size_t dims) :
+            min_support_low_(dims),
+            min_support_high_(dims) {}
+    };
+    mutable SqDistState state_;
 };
 
 IntervalValue SqDistFuncExpr::ComputeFunc(const Coordinates &low,
@@ -280,7 +320,7 @@ IntervalValue SqDistFuncExpr::ComputeFunc(const Coordinates &low,
 
 bool SqDistFuncExpr::CheckSupport() const {
     // first time: no support
-    if (!min_max_init_) {
+    if (!state_.min_max_init_) {
         return false;
     }
 
@@ -293,9 +333,9 @@ bool SqDistFuncExpr::CheckSupport() const {
      * as it could be.
      */
     for (size_t i = 0; i < dims_; i++) {
-    	if (Coordinate(coords_[i]->Min()) != min_support_low_[i] ||
+    	if (Coordinate(coords_[i]->Min()) != state_.min_support_low_[i] ||
     			Coordinate(coords_[i]->Max()) + seq_len_ - 1 !=
-    					min_support_high_[i]) {
+    			        state_.min_support_high_[i]) {
     		return false;
     	}
     }
@@ -404,8 +444,8 @@ bool SqDistFuncExpr::ComputeMinMax() const {
     if (new_min.state_ == IntervalValue::NUL) {
         // If NUL, set the "never possible" value
         //new_min_rounded = kint64max;
-        s->SaveAndSetValue(&min_, kint64max);
-        s->SaveAndSetValue(&min_max_init_, false);
+        s->SaveAndSetValue(&state_.min_, kint64max);
+        s->SaveAndSetValue(&state_.min_max_init_, false);
         return false;
     } else {
         /*
@@ -420,12 +460,12 @@ bool SqDistFuncExpr::ComputeMinMax() const {
 
     // save the values and supports
     const bool can_cache = adapter_->CanCacheResults();
-    s->SaveAndSetValue(&min_, new_min_rounded);
-    s->SaveAndSetValue(&min_max_init_, can_cache);
+    s->SaveAndSetValue(&state_.min_, new_min_rounded);
+    s->SaveAndSetValue(&state_.min_max_init_, can_cache);
     if (can_cache) {
         for (size_t i = 0; i < dims_; i++) {
-            SaveCoordinate(&min_support_low_[i], new_min_support_low[i]);
-            SaveCoordinate(&min_support_high_[i], new_min_support_high[i]);
+            SaveCoordinate(&state_.min_support_low_[i], new_min_support_low[i]);
+            SaveCoordinate(&state_.min_support_high_[i], new_min_support_high[i]);
         }
     }
 
@@ -439,7 +479,7 @@ bool SqDistFuncExpr::ComputeMinMax() const {
  * This is basically an extension of the IntExpr to properly handle
  * aggregated function over arrays.
  */
-class AggrFuncExpr : public BaseIntExpr {
+class AggrFuncExpr : public SearchlightUDF {
 public:
     /**
      * The type of the aggregate.
@@ -463,20 +503,14 @@ public:
     AggrFuncExpr(Solver *s, AggType agg, AdapterPtr adapter,
             const std::vector<IntVar *> &low_lens_coords,
             const std::vector<int64> &params) :
-        BaseIntExpr(s),
+        SearchlightUDF(s),
         adapter_(adapter),
         attr_(AttributeID(params[0])),
         func_(agg),
         dims_(low_lens_coords.size() / 2), // assume even division (check later)
         low_lens_(low_lens_coords),
         low_lens_iters_(2 * dims_),
-        min_(0),
-        max_(0),
-        min_support_low_(dims_),
-        min_support_lens_(dims_),
-        max_support_low_(dims_),
-        max_support_lens_(dims_),
-        min_max_init_(false) {
+        state_(dims_) {
 
         if (low_lens_coords.size() != dims_ * 2 || params.size() != 1) {
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
@@ -505,7 +539,7 @@ public:
             solver()->Fail();
         	//return kint64max;
         }
-        return min_;
+        return state_.min_;
     }
 
     /**
@@ -520,7 +554,7 @@ public:
         if (!ComputeMinMax()) {
             adapter_->SetCustomFail();
             solver()->Fail();
-        } else if (m > max_) {
+        } else if (m > state_.max_) {
             solver()->Fail();
         }
     }
@@ -536,7 +570,7 @@ public:
             solver()->Fail();
         	//return kint64min;
         }
-        return max_;
+        return state_.max_;
     }
 
     /**
@@ -551,7 +585,7 @@ public:
         if (!ComputeMinMax()) {
             adapter_->SetCustomFail();
             solver()->Fail();
-        } else if (m < min_) {
+        } else if (m < state_.min_) {
             solver()->Fail();
         }
     }
@@ -618,6 +652,44 @@ public:
                 params);
 
         visitor->EndVisitIntegerExpression(tag, this);
+    }
+
+    /**
+     * Saves state.
+     */
+    virtual const SearchlightUDF::State *SaveState() const override {
+        if (state_.min_max_init_) {
+            const SearchlightUDF::State *saved_state = new AggState(state_);
+            return saved_state;
+        } else {
+            return nullptr;
+        }
+    }
+
+    /**
+     * Load state from the state.
+     *
+     * @param state previously saved state
+     */
+    virtual void LoadState(const SearchlightUDF::State *state) override {
+        if (state) {
+            // Static cast is fine, it's controlled internal usage
+            const AggState *saved_state = static_cast<const AggState *>(state);
+            Solver * const s = solver();
+            s->SaveAndSetValue(&state_.min_, saved_state->min_);
+            s->SaveAndSetValue(&state_.max_, saved_state->max_);
+            s->SaveAndSetValue(&state_.min_max_init_, true);
+            for (size_t i = 0; i < dims_; i++) {
+                SaveCoordinate(&state_.min_support_low_[i],
+                        saved_state->min_support_low_[i]);
+                SaveCoordinate(&state_.min_support_lens_[i],
+                    saved_state->min_support_lens_[i]);
+                SaveCoordinate(&state_.max_support_low_[i],
+                    saved_state->max_support_low_[i]);
+                SaveCoordinate(&state_.max_support_lens_[i],
+                    saved_state->max_support_lens_[i]);
+            }
+        }
     }
 
 private:
@@ -699,11 +771,20 @@ private:
     std::vector<IntVarIterator *> low_lens_iters_;
 
     // Min/max aggregate values and caches for support
-    mutable int64 min_;
-    mutable int64 max_;
-    mutable Coordinates min_support_low_, min_support_lens_;
-    mutable Coordinates max_support_low_, max_support_lens_;
-    mutable bool min_max_init_;
+    struct AggState : public SearchlightUDF::State {
+        int64 min_ = 0;
+        int64 max_ = 0;
+        Coordinates min_support_low_, min_support_lens_;
+        Coordinates max_support_low_, max_support_lens_;
+        bool min_max_init_ = false;
+
+        AggState(size_t dims) :
+            min_support_low_(dims),
+            min_support_lens_(dims),
+            max_support_low_(dims),
+            max_support_lens_(dims) {}
+    };
+    mutable AggState state_;
 };
 
 IntervalValue AggrFuncExpr::ComputeFunc(const Coordinates &low,
@@ -757,16 +838,16 @@ IntervalValue AggrFuncExpr::ComputeFuncSub(const Coordinates &low,
 
 bool AggrFuncExpr::CheckSupport() const {
     // first time: no support
-    if (!min_max_init_) {
+    if (!state_.min_max_init_) {
         return false;
     }
 
     // the support is not valid if it is not a valid window anymore
     for (size_t i = 0; i < dims_; i++) {
-        if (!low_lens_[i]->Contains(min_support_low_[i]) ||
-                !low_lens_[dims_ + i]->Contains(min_support_lens_[i]) ||
-                !low_lens_[i]->Contains(max_support_low_[i]) ||
-                !low_lens_[dims_ + i]->Contains(max_support_lens_[i])) {
+        if (!low_lens_[i]->Contains(state_.min_support_low_[i]) ||
+                !low_lens_[dims_ + i]->Contains(state_.min_support_lens_[i]) ||
+                !low_lens_[i]->Contains(state_.max_support_low_[i]) ||
+                !low_lens_[dims_ + i]->Contains(state_.max_support_lens_[i])) {
             return false;
         }
     }
@@ -898,13 +979,13 @@ bool AggrFuncExpr::ComputeMinMax() const {
                 max_size *= low_lens_[dims_ + i]->Max();
 
                 // min/max supports are equal for MBRs
-                if (low[i] != min_support_low_[i] ||
-                        lens[i] != min_support_lens_[i]) {
+                if (low[i] != state_.min_support_low_[i] ||
+                        lens[i] != state_.min_support_lens_[i]) {
                     mbr_changed = true;
                 }
             }
 
-            if (min_max_init_ && !mbr_changed) {
+            if (state_.min_max_init_ && !mbr_changed) {
                 /*
                  * Strictly speaking, we might have different
                  * min_size or max_size here, but this is probably
@@ -929,9 +1010,9 @@ bool AggrFuncExpr::ComputeMinMax() const {
         // If NULL, set the "always fail" values
         //new_min = kint64max;
         //new_max = kint64min;
-        s->SaveAndSetValue(&min_, kint64max);
-        s->SaveAndSetValue(&max_, kint64min);
-        s->SaveAndSetValue(&min_max_init_, false);
+        s->SaveAndSetValue(&state_.min_, kint64max);
+        s->SaveAndSetValue(&state_.max_, kint64min);
+        s->SaveAndSetValue(&state_.min_max_init_, false);
         return false;
     } else {
         /*
@@ -951,15 +1032,15 @@ bool AggrFuncExpr::ComputeMinMax() const {
 
     // save the values and supports
     const bool can_cache = adapter_->CanCacheResults();
-    s->SaveAndSetValue(&min_, new_min);
-    s->SaveAndSetValue(&max_, new_max);
-    s->SaveAndSetValue(&min_max_init_, can_cache);
+    s->SaveAndSetValue(&state_.min_, new_min);
+    s->SaveAndSetValue(&state_.max_, new_max);
+    s->SaveAndSetValue(&state_.min_max_init_, can_cache);
     if (can_cache) {
         for (size_t i = 0; i < dims_; i++) {
-            SaveCoordinate(&min_support_low_[i], new_min_support_low[i]);
-            SaveCoordinate(&min_support_lens_[i], new_min_support_lens[i]);
-            SaveCoordinate(&max_support_low_[i], new_max_support_low[i]);
-            SaveCoordinate(&max_support_lens_[i], new_max_support_lens[i]);
+            SaveCoordinate(&state_.min_support_low_[i], new_min_support_low[i]);
+            SaveCoordinate(&state_.min_support_lens_[i], new_min_support_lens[i]);
+            SaveCoordinate(&state_.max_support_low_[i], new_max_support_low[i]);
+            SaveCoordinate(&state_.max_support_lens_[i], new_max_support_lens[i]);
         }
     }
 

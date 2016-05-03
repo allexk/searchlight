@@ -248,6 +248,14 @@ void SearchlightSolver::Prepare(Validator &validator) {
             // Add fail monitor
             search_monitors_.fail_monitor_ = solver_.RevAlloc(
                     new FailCollectorMonitor(solver_, *this, *relaxator));
+            if (sl_.GetConfig().get("relax.save_udfs", false)) {
+                // Need to find UDFs to save state for replays
+                UDFFinder udf_finder;
+                solver_.Accept(&udf_finder);
+                model_udfs_ = udf_finder.GetUDFs();
+                LOG4CXX_INFO(logger, "Found " << model_udfs_.size() <<
+                    " UDFs in the model");
+            }
         }
 
         // Determine the worload; it will be assigned at Solve()
@@ -275,6 +283,22 @@ void SearchlightSolver::Prepare(Validator &validator) {
     } else {
         LOG4CXX_INFO(logger, "Solver is not configured at this instance...");
         status_ = Status::FINISHED;
+    }
+}
+
+void SearchlightSolver::SaveUDFs(UDFStates &state_buf) const {
+    for (const auto udf: model_udfs_) {
+        const SearchlightUDF::State *state = udf->SaveState();
+        state_buf.emplace_back(state);
+    }
+}
+
+void SearchlightSolver::RestoreUDFs(const UDFStates &state_buf) const {
+    assert(state_buf.empty() || state_buf.size() == model_udfs_.size());
+    if (!state_buf.empty()) {
+        for (size_t i = 0; i < model_udfs_.size(); ++i) {
+            model_udfs_[i]->LoadState(state_buf[i].get());
+        }
     }
 }
 
@@ -508,6 +532,7 @@ void SearchlightSolver::Solve() {
         if (!non_solve_setup_) {
             // Local load has priority
             IntVarDomainInfoVector domain_info;
+            UDFStates udf_states;
             if (!local_load_.empty()) {
                 LiteToFullAssignment(vars_leaf_, local_load_.back());
                 local_load_.pop_back();
@@ -519,7 +544,7 @@ void SearchlightSolver::Solve() {
             } else if (Relaxator *relaxator = sl_.GetRelaxator()) {
                 // Try a fail replay
                 fail_replay = relaxator->GetFailReplay(GetLocalID(),
-                        domain_info, current_vc_spec_);
+                        domain_info, current_vc_spec_, udf_states);
                 // Might be false if somebody just went ahead of us
                 if (!fail_replay) {
                     solver_has_work = SolverHasWork();
@@ -547,6 +572,7 @@ void SearchlightSolver::Solve() {
             } else {
                 // Fail replay
                 SetVarDomains(domain_info);
+                RestoreUDFs(udf_states);
             }
             // Apply violated constraints changes, if any
             if (!current_vc_spec_.empty()) {
@@ -798,5 +824,8 @@ void SearchlightSolver::RestoreAdapterMode() const {
 SearchMonitor *MakeCumulativeTimeLimit(Solver &s, int64 time_ms) {
     return s.MakeLimit(time_ms, kint64max, kint64max, kint64max, true, true);
 }
+
+// Prefix for UDF functions
+const char *UDFFinder::UDF_PREFIX = "UDF_";
 
 } /* namespace searchlight */

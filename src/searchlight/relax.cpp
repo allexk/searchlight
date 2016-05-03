@@ -93,6 +93,9 @@ Relaxator::Relaxator(Searchlight &sl, size_t solvers,
                 "Unknown replay sorting method, defaulting to BEST...");
     }
     fail_replays_ = decltype(fail_replays_)(ReplaySort(sort_method_), {});
+
+    // Do we save UDFS?
+    save_udfs_for_replay_ = sl.GetConfig().get("relax.save_udfs", false);
 }
 
 Relaxator::~Relaxator() {
@@ -105,7 +108,8 @@ Relaxator::~Relaxator() {
 }
 
 bool Relaxator::GetFailReplay(size_t solver_id,
-        std::vector<IntVarDomainInfo> &dom_info, Int64Vector &vc_spec) {
+        std::vector<IntVarDomainInfo> &dom_info, Int64Vector &vc_spec,
+        UDFStates &udfs) {
     std::lock_guard<std::mutex> lock{mtx_};
     const double lrd = lrd_.load(std::memory_order_relaxed);
     while (!fail_replays_.empty()) {
@@ -118,6 +122,7 @@ bool Relaxator::GetFailReplay(size_t solver_id,
             }
             vc_spec = ViolConstSpec(fr);
             dom_info = std::move(fr.saved_vars_);
+            udfs = std::move(fr.saved_udfs_);
             fail_replays_.pop();
             stats_[1].total_fails_replayed_++;
             solver_info_[solver_id].in_replay_ = true;
@@ -313,6 +318,10 @@ void Relaxator::RegisterFail(size_t solver_id, RegisterHeuristic rh) {
             viol_const_num);
 	// Save the variables for the future replay
 	replay.saved_vars_ = sl_.GetSLSolver(solver_id).GetCurrentVarDomains();
+	// Save the UDFs
+	if (save_udfs_for_replay_) {
+	    sl_.GetSLSolver(solver_id).SaveUDFs(replay.saved_udfs_);
+	}
 	// Debug print
 	LOG4CXX_DEBUG(logger, "New replay registered: " << replay);
 	// Put the replay into the queue

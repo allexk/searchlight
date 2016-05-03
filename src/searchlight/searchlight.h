@@ -46,6 +46,7 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <string.h>
 
 namespace searchlight {
 
@@ -219,7 +220,54 @@ private:
 typedef IntExpr *(* UDFFunctionCreator)(Solver *, AdapterPtr,
         const std::vector<IntVar *> &, const std::vector<int64> &);
 
-/*
+/**
+ * Visitor for finding UDF functions in the CP model.
+ *
+ * It relies on the tags submitted by expressions. Everything starting from
+ * UDF_ will be considered. RTTI is also consulted via dynamic cast.
+ */
+class UDFFinder : public ModelVisitor {
+public:
+    /**
+     * Found UDF function pointers.
+     */
+    using UDFFunctions = std::vector<SearchlightUDF *>;
+
+    /**
+     * Callback for Visited integer expressions in the model.
+     *
+     * @param type_name expression tag
+     * @param expr expression pointer
+     */
+    virtual void BeginVisitIntegerExpression(const std::string &type_name,
+        const IntExpr* const expr) override {
+        // Check UDF_
+        if (!strncmp(type_name.c_str(), UDF_PREFIX, strlen(UDF_PREFIX))) {
+            if (SearchlightUDF *udf = dynamic_cast<SearchlightUDF *>(
+                    const_cast<IntExpr *>(expr))) {
+                udfs_.push_back(udf);
+            }
+        }
+    }
+
+    /**
+     * Return UDF functions found.
+     *
+     * @return UDF functions found
+     */
+    const UDFFunctions &GetUDFs() const {
+        return udfs_;
+    }
+
+private:
+    // UDF prefix
+    static const char *UDF_PREFIX;
+
+    // UDFs found
+    UDFFunctions udfs_;
+};
+
+/**
  * This class encapsulates a single solver thread-instance. The model,
  * monitors, heuristics go here. The Searchlight class provides higher
  * level first-second level interface.
@@ -562,6 +610,22 @@ public:
     }
 
     /**
+     * Save model UDF states to the specified container.
+     *
+     * @param state_buf container to save the state to
+     */
+    void SaveUDFs(UDFStates &state_buf) const;
+
+    /**
+     * Restore UDF states.
+     *
+     * It is assumed the states were previously saved by SaveUDFs.
+     *
+     * @param state_buf saved states
+     */
+    void RestoreUDFs(const UDFStates &state_buf) const;
+
+    /**
      * Return local instance ID for this solver.
      *
      * @return local instance solver id
@@ -656,6 +720,9 @@ private:
 
     // Adapters issued by the solver
     std::vector<AdapterPtr> adapters_;
+
+    // UDF functions found in the model
+    UDFFinder::UDFFunctions model_udfs_;
 
     /*
      *  If true, no local/remote assignment will be restored in Solve(). Used
