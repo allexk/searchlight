@@ -492,14 +492,6 @@ void SearchlightSolver::SetRelaxatorMonitor(bool fail_replay) {
         assert(search_monitors_.fail_monitor_);
         if (!fail_replay || relaxator->ReReplaysNeeded()) {
             search_monitors_.fail_monitor_->Install();
-            /*
-             *  The fail heuristic must be ALL at fail replays. Otherwise,
-             *  we might get infinite loops by not detecting violated
-             *  constraints properly.
-             */
-            search_monitors_.fail_monitor_->SetFailHeuristic(
-                    fail_replay ? Relaxator::Heuristic::ALL :
-                            relaxator->GetDefaultFailHeuristic());
         }
     }
 }
@@ -618,6 +610,7 @@ void SearchlightSolver::Solve() {
             total_solve_time_replays_ +=
                 std::chrono::duration_cast<decltype(total_solve_time_replays_)>(
                 solve_end_time - solve_start_time);
+            sl_.GetRelaxator()->ReplayFinished(GetLocalID());
         }
 
         // Continue only if we have another assignment to set up

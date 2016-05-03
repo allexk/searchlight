@@ -58,17 +58,22 @@ Relaxator::Relaxator(Searchlight &sl, size_t solvers,
 
     sl_(sl),
     solvers_num_(solvers),
+    solver_info_(solvers),
     distance_weight_(dist_w),
     res_num_(res_num),
-    solver_stats_index_(solvers),
-    default_heur_(Heuristic::ALL),
+    register_heur_(RegisterHeuristic::ALL),
     replay_relax_(ReplayRelaxation::VIOLATED),
     sort_method_(ReplaySortMethod::BEST) {
 
     // Default fail heuristic
     const std::string heur = sl.GetConfig().get("relax.heur", "all");
     if (heur == "guess") {
-        default_heur_ = Heuristic::GUESS;
+        register_heur_ = RegisterHeuristic::GUESS;
+    } else if (heur == "guess-all") {
+        register_heur_ = RegisterHeuristic::GUESS_ALL;
+    } else {
+        LOG4CXX_ERROR(logger,
+                "Unknown register heuristic, defaulting to ALL...");
     }
     // Replay relaxation
     const std::string rr = sl.GetConfig().get("relax.replay", "viol");
@@ -100,7 +105,6 @@ Relaxator::~Relaxator() {
 bool Relaxator::GetFailReplay(size_t solver_id,
         std::vector<IntVarDomainInfo> &dom_info, Int64Vector &vc_spec) {
     std::lock_guard<std::mutex> lock{mtx_};
-    solver_stats_index_[solver_id] = 1;
     const double lrd = lrd_.load(std::memory_order_relaxed);
     while (!fail_replays_.empty()) {
         // Const cast is okay here; we get rid of the top object right away
@@ -114,6 +118,7 @@ bool Relaxator::GetFailReplay(size_t solver_id,
             dom_info = std::move(fr.saved_vars_);
             fail_replays_.pop();
             stats_[1].total_fails_replayed_++;
+            solver_info_[solver_id].in_replay_ = true;
             return true;
         } else {
             // Cannot replay due to LRD, ignore...
@@ -239,14 +244,14 @@ void Relaxator::UpdateTimeStats(RelaxatorStats &stats,
     }
 }
 
-void Relaxator::RegisterFail(size_t solver_id, Heuristic h) {
+void Relaxator::RegisterFail(size_t solver_id, RegisterHeuristic rh) {
 	// Compute relaxation degree: first pass, determine violated constraints
-    RelaxatorStats &rel_stats = stats_[solver_stats_index_[solver_id]];
+    RelaxatorStats &rel_stats = stats_[solver_info_[solver_id].GetStatsFrame()];
     rel_stats.total_fails_caught_.fetch_add(1, std::memory_order_relaxed);
     // starting the timer
     const auto reg_start_time = std::chrono::steady_clock::now();
 	FailReplay replay;
-	if (h == Heuristic::GUESS) {
+	if (rh == RegisterHeuristic::GUESS) {
 	    // With GUESS heuristic we don't want to recompute the functions
 	    sl_.GetSLSolver(solver_id).SetAdapterMode(Adapter::DUMB, true);
 	}
@@ -276,19 +281,19 @@ void Relaxator::RegisterFail(size_t solver_id, Heuristic h) {
 			replay.failed_const_.push_back({i, rel_pos, min_d, max_d});
 		}
 	}
-    if (h == Heuristic::GUESS) {
+    if (rh == RegisterHeuristic::GUESS) {
         sl_.GetSLSolver(solver_id).RestoreAdapterMode();
     }
 	if (replay.failed_const_.empty() || cannot_relax) {
 	    // No violations detected or cannot relax
         UpdateTimeStats(rel_stats, reg_start_time, false);
-        if (h == Heuristic::GUESS && !cannot_relax) {
+        if (rh == RegisterHeuristic::GUESS && !cannot_relax) {
             // Try with the full heuristic to avoid losing fails
             rel_stats.total_fails_caught_.fetch_sub(1, std::memory_order_relaxed);
             rel_stats.total_fails_heur_retried_.fetch_add(1,
                     std::memory_order_relaxed);
             LOG4CXX_DEBUG(logger, "Retrying the fail with the ALL heuristic");
-            RegisterFail(solver_id, Heuristic::ALL);
+            RegisterFail(solver_id, RegisterHeuristic::ALL);
         }
 	    return;
 	}
@@ -459,12 +464,11 @@ FailCollectorMonitor::FailCollectorMonitor(Solver &solver,
     SearchMonitor(&solver),
     relaxator_(rel),
     sl_solver_(sl_solver),
-    solver_id_(sl_solver.GetLocalID()),
-    register_heur_(rel.GetDefaultFailHeuristic()) {}
+    solver_id_(sl_solver.GetLocalID()) {}
 
 void FailCollectorMonitor::BeginFail() {
     if (!sl_solver_.LastFailCustom()) {
-        relaxator_.RegisterFail(solver_id_, register_heur_);
+        relaxator_.RegisterFail(solver_id_);
     }
 }
 

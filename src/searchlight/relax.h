@@ -522,9 +522,10 @@ public:
     /**
      * Relaxator heuristic when registering a fail.
      */
-    enum class Heuristic {
+    enum class RegisterHeuristic {
         GUESS, ///!< GUESS Tries to guess the violated constraint.
-        ALL    ///!< ALL Checks all the constraints for violations.
+        GUESS_ALL, ///! GUESS_ALL Guess for initial, ALL for repeat fails.
+        ALL   ///!< ALL Checks all the constraints for violations.
     };
 
     /**
@@ -570,9 +571,13 @@ public:
 	 * Otherwise, just ignore it.
 	 *
 	 * @param solver_id SearchlightSolver id
-	 * @param h heuristic to use
 	 */
-	void RegisterFail(size_t solver_id, Heuristic h);
+	void RegisterFail(size_t solver_id) {
+	    const RegisterHeuristic h = solver_info_[solver_id].in_replay_ &&
+	            register_heur_ == RegisterHeuristic::GUESS_ALL ?
+	                    RegisterHeuristic::ALL : register_heur_;
+	    RegisterFail(solver_id, h);
+	}
 
 	/**
 	 * Return current LRD.
@@ -672,18 +677,6 @@ public:
 	Int64Vector GetMaximumRelaxationVCSpec() const;
 
 	/**
-	 * Return default fail heuristic.
-	 *
-	 * Default fail heuristic is read from the config. If the config fails to
-	 * set it, the default is ALL.
-	 *
-	 * @return default fail heuristic
-	 */
-	Heuristic GetDefaultFailHeuristic() const {
-	    return default_heur_;
-	}
-
-	/**
 	 * Check if re-replays might be needed.
 	 *
 	 * Re-replays happen when a replay fails again. With some replay methods,
@@ -694,6 +687,16 @@ public:
 	 */
 	bool ReReplaysNeeded() const {
 	    return replay_relax_ != ReplayRelaxation::ALL;
+	}
+
+	/**
+	 * Callback to call when the solver finished a replay.
+	 *
+	 * @param solver_id solver local id
+	 */
+	void ReplayFinished(size_t solver_id) {
+	    assert(solver_info_[solver_id].in_replay_);
+	    solver_info_[solver_id].in_replay_ = false;
 	}
 
 private:
@@ -741,7 +744,7 @@ private:
 		// Maximum relaxation
 		const int64 max_l_, max_h_;
 
-		// Pointers to each constraint object for each solver
+        // Pointers to solver constraints
 		std::vector<RelaxableConstraint *> solver_const_;
 
 		// Construct a new constraint info.
@@ -894,12 +897,37 @@ private:
 	    const Relaxator::RelaxatorStats &rs);
 
     /*
+     * Relaxator solver info.
+     */
+    struct SolverReplayInfo {
+        // Original constraints
+        std::vector<RelaxableConstraint *> constraints_;
+
+        // Last replay
+        FailReplay last_fr_;
+
+        // True, if it's replaying
+        bool in_replay_ = false;
+
+        // Override register heuristic to all
+        bool override_register_to_all_ = false;
+
+        // Frame to write stats to
+        size_t GetStatsFrame() const {
+            return in_replay_ ? 1 : 0;
+        }
+    };
+
+    /*
      * Return violated constraint spec vector.
      *
      * The vector has the following format:
      *  <constraint id, left bound, right bound> triplet for each constraint
      */
 	Int64Vector ViolConstSpec(const FailReplay &replay) const;
+
+	// Internal register fail function
+	void RegisterFail(size_t solver_id, RegisterHeuristic rh);
 
 	// Fill in new relaxation interval; return true if possible to relax
 	bool ComputeNewReplayInterval(FailReplay &replay,
@@ -924,6 +952,9 @@ private:
 	// Total number of solvers
 	const size_t solvers_num_;
 
+	// Info for each solver
+	std::vector<SolverReplayInfo> solver_info_;
+
 	// Mapping from the constraint's name to the constraint's id.
 	std::unordered_map<std::string, size_t> const_to_id_;
 
@@ -944,11 +975,9 @@ private:
 
     // Relaxator stats: for several pahases
     RelaxatorStats stats_[2];
-    // Phase index to write the stats to per solver
-    std::vector<size_t> solver_stats_index_;
 
-    // Default fail heuristic
-    Heuristic default_heur_;
+    // Register fail heuristic
+    RegisterHeuristic register_heur_;
 
     // Replay relaxation type
     ReplayRelaxation replay_relax_;
@@ -985,15 +1014,6 @@ public:
      */
 	virtual void BeginFail() override;
 
-	/**
-	 * Set fail registration heuristic.
-	 *
-	 * @param h new registration heuristic
-	 */
-	void SetFailHeuristic(Relaxator::Heuristic h) {
-	    register_heur_ = h;
-	}
-
 private:
 	// Query relaxator
 	Relaxator &relaxator_;
@@ -1003,9 +1023,6 @@ private:
 
 	// Searchlight solver id
 	const size_t solver_id_;
-
-	// Fail registration heuristic
-	Relaxator::Heuristic register_heur_;
 };
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_RELAX_H_ */
