@@ -573,9 +573,11 @@ public:
 	 * @param solver_id SearchlightSolver id
 	 */
 	void RegisterFail(size_t solver_id) {
-	    const RegisterHeuristic h = solver_info_[solver_id].in_replay_ &&
-	            register_heur_ == RegisterHeuristic::GUESS_ALL ?
-	                    RegisterHeuristic::ALL : register_heur_;
+	    RegisterHeuristic h = register_heur_;
+	    if (h == RegisterHeuristic::GUESS_ALL) {
+	        h = solver_info_[solver_id].in_replay_ ? RegisterHeuristic::ALL :
+	                RegisterHeuristic::GUESS;
+	    }
 	    RegisterFail(solver_id, h);
 	}
 
@@ -708,7 +710,8 @@ private:
 	enum class ReplaySortMethod {
 	    BEST,   ///!< BEST sort based on best relaxation degree
 	    WORST,  ///!< WORST sort based on worst relaxation degree
-	    PROD    ///!< PROD sort based on the product of relaxation degrees
+	    PROD,   ///!< PROD sort based on the product of relaxation degrees
+	    TIME    ///!< TIME sort based on time registered.
 	};
 
 	/*
@@ -845,6 +848,9 @@ private:
 
 		// Relaxation degree: best and the worst one possible for the replay
 		double best_relax_degree_, worst_relax_degree_;
+
+		// Fail timestamp
+		size_t timestamp_;
 	};
 	// To output the structure
 	friend std::ostream &operator<<(std::ostream &os,
@@ -866,6 +872,8 @@ private:
                 case ReplaySortMethod::PROD:
                     return f1.best_relax_degree_ * f1.worst_relax_degree_ >
                         f2.best_relax_degree_ * f2.worst_relax_degree_;
+                case ReplaySortMethod::TIME:
+                    return f1.timestamp_ > f2.timestamp_;
                 default:
                     assert(false);
                     return true;
@@ -963,6 +971,9 @@ private:
 
 	// Lower relaxation degree, [0, 1]
 	std::atomic<double> lrd_{1.0};
+
+	// Fail timestamp
+	size_t fail_stamp_{0};
 
 	// Distance weight for the relaxation degree (query param)
 	const double distance_weight_;

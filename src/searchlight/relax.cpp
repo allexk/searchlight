@@ -86,6 +86,8 @@ Relaxator::Relaxator(Searchlight &sl, size_t solvers,
         sort_method_ = ReplaySortMethod::WORST;
     } else if (rep_sort == "prod") {
         sort_method_ = ReplaySortMethod::PROD;
+    } else if (rep_sort == "time") {
+        sort_method_ = ReplaySortMethod::TIME;
     } else {
         LOG4CXX_ERROR(logger,
                 "Unknown replay sorting method, defaulting to BEST...");
@@ -316,6 +318,7 @@ void Relaxator::RegisterFail(size_t solver_id, RegisterHeuristic rh) {
 	// Put the replay into the queue
 	{
 		std::lock_guard<std::mutex> lock{mtx_};
+		replay.timestamp_ = fail_stamp_++;
 		fail_replays_.push(std::move(replay));
 		rel_stats.total_fails_registered_++;
         UpdateTimeStats(rel_stats, reg_start_time, true);
