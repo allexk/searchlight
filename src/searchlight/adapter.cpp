@@ -46,8 +46,9 @@ Adapter::~Adapter() {
         const float secs =
                 std::chrono::duration_cast<std::chrono::duration<double>>(
                 us.total_req_time_).count();
-        os << "Frame (" << i << ") time: " << secs << "s, accesses: " <<
-                us.accesses_ << '\n';
+        os << "Frame (" << i << ") time: " << secs << "s, accesses: D(" <<
+                us.accesses_[3] << ") I(" << us.accesses_[2] << ") E(" <<
+                us.accesses_[0] << ")\n";
     }
     LOG4CXX_INFO(logger, os.str());
 }
@@ -148,7 +149,7 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
     usage_stats_.back().total_req_time_ +=
             std::chrono::duration_cast<decltype(UsageStats::total_req_time_)>(
             req_end_time - req_start_time);
-    usage_stats_.back().accesses_++;
+    usage_stats_.back().accesses_[int(mode_)]++;
 
     if (logger->isTraceEnabled()) {
         std::ostringstream deb_str;
@@ -224,7 +225,7 @@ IntervalValue Adapter::GetElement(const Coordinates &point,
     usage_stats_.back().total_req_time_ +=
             std::chrono::duration_cast<decltype(UsageStats::total_req_time_)>(
             req_end_time - req_start_time);
-    usage_stats_.back().accesses_++;
+    usage_stats_.back().accesses_[int(mode_)]++;
     LOG4CXX_TRACE(logger, "Computed element: " << res);
 
     return res;
@@ -296,7 +297,7 @@ IntervalValue Adapter::SqDist(const Coordinates &low, const Coordinates &high,
     usage_stats_.back().total_req_time_ +=
             std::chrono::duration_cast<decltype(UsageStats::total_req_time_)>(
             req_end_time - req_start_time);
-    usage_stats_.back().accesses_++;
+    usage_stats_.back().accesses_[int(mode_)]++;
 
     LOG4CXX_TRACE(logger, "Computed square distance: " << res);
 

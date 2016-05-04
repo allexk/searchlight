@@ -427,7 +427,7 @@ private:
 
     struct UsageStats {
         std::chrono::microseconds total_req_time_{0};
-        size_t accesses_{0};
+        size_t accesses_[4] = {0}; // Zero the array
     };
 
     void UpdateStatsWithRegion(const Coordinates &low,
