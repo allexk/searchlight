@@ -230,8 +230,16 @@ class UDFFinder : public ModelVisitor {
 public:
     /**
      * Found UDF function pointers.
+     *
+     * We need a set to avoid dups here, since in a model the same entity
+     * might be visited many times.
+     *
+     * We rely on deterministic behavior (i.e., non-random inserts) here, since
+     * the ordering of UDFs among all Searchlight solvers might be the same.
+     * Why? A message saved at one solver might be restored on another solver
+     * during replays.
      */
-    using UDFFunctions = std::vector<SearchlightUDF *>;
+    using UDFFunctions = std::unordered_set<SearchlightUDF *>;
 
     /**
      * Callback for Visited integer expressions in the model.
@@ -245,7 +253,7 @@ public:
         if (!strncmp(type_name.c_str(), UDF_PREFIX, strlen(UDF_PREFIX))) {
             if (SearchlightUDF *udf = dynamic_cast<SearchlightUDF *>(
                     const_cast<IntExpr *>(expr))) {
-                udfs_.push_back(udf);
+                udfs_.insert(udf);
             }
         }
     }
@@ -722,7 +730,7 @@ private:
     std::vector<AdapterPtr> adapters_;
 
     // UDF functions found in the model
-    UDFFinder::UDFFunctions model_udfs_;
+    std::vector<SearchlightUDF *> model_udfs_;
 
     /*
      *  If true, no local/remote assignment will be restored in Solve(). Used
