@@ -437,8 +437,11 @@ Int64Vector Relaxator::ViolConstSpec(const FailReplay &replay) const {
          *  The distance is computed based on the violated constraints! It
          *  might be larger than necessary, but we avoid re-replays this
          *  way: such relaxations cannot be relaxed any further.
+         *
+         *  We can safely use +1 here, since in case such a constraint really
+         *  fails, it's going to be in addition to others.
          */
-        const double max_relax_dist = MaxUnitRelaxDistance(violed_const_num);
+        const double max_relax_dist = MaxUnitRelaxDistance(violed_const_num + 1);
         // linear search over the bitset is fine here
         for (size_t i = 0; i < relaxed_const_bs.size(); ++i) {
             if (!relaxed_const_bs[i]) {
