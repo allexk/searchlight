@@ -47,12 +47,12 @@ Adapter::~Adapter() {
         std::ostringstream acc_os;
         double total_secs = 0;
         for (size_t j = 0; j < 4; ++j) {
-            os << ' ' << mode_chars[j] << '(' << us.accesses_[j];
+            acc_os << ' ' << mode_chars[j] << '(' << us.accesses_[j];
             const double secs =
                     std::chrono::duration_cast<std::chrono::duration<double>>(
                     us.total_req_time_[j]).count();
             total_secs += secs;
-            os << ", " << secs << "s)";
+            acc_os << ", " << secs << "s)";
         }
         os << "Frame (" << i << ") time: " << total_secs << "s, accesses:" <<
                 acc_os.str() << '\n';
