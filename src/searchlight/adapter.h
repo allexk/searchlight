@@ -426,8 +426,14 @@ private:
     };
 
     struct UsageStats {
-        std::chrono::microseconds total_req_time_{0};
+        std::chrono::steady_clock::duration total_req_time_[4];
         size_t accesses_[4] = {0}; // Zero the array
+        UsageStats() {
+            for (size_t i = 0; i < 4; ++i) {
+                total_req_time_[i] =
+                        std::chrono::steady_clock::duration::zero();
+            }
+        }
     };
 
     void UpdateStatsWithRegion(const Coordinates &low,

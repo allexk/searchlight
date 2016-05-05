@@ -39,16 +39,23 @@ static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.adapter"));
 
 Adapter::~Adapter() {
+    const char mode_chars[] = {'E', 'A', 'I', 'D'};
     std::ostringstream os;
     os << "Adapter(" << name_ << ") stats:\n";
     for (size_t i = 0; i < usage_stats_.size(); ++i) {
         const UsageStats &us = usage_stats_[i];
-        const float secs =
-                std::chrono::duration_cast<std::chrono::duration<double>>(
-                us.total_req_time_).count();
-        os << "Frame (" << i << ") time: " << secs << "s, accesses: D(" <<
-                us.accesses_[3] << ") I(" << us.accesses_[2] << ") E(" <<
-                us.accesses_[0] << ")\n";
+        std::ostringstream acc_os;
+        double total_secs = 0;
+        for (size_t j = 0; j < 4; ++j) {
+            os << ' ' << mode_chars[j] << '(' << us.accesses_[j];
+            const double secs =
+                    std::chrono::duration_cast<std::chrono::duration<double>>(
+                    us.total_req_time_[j]).count();
+            total_secs += secs;
+            os << ", " << secs << "s)";
+        }
+        os << "Frame (" << i << ") time: " << total_secs << "s, accesses:" <<
+                acc_os.str() << '\n';
     }
     LOG4CXX_INFO(logger, os.str());
 }
@@ -146,9 +153,8 @@ IntervalValueVector Adapter::ComputeAggregate(const Coordinates &low,
 
     // "stopping" the timer
     const auto req_end_time = std::chrono::steady_clock::now();
-    usage_stats_.back().total_req_time_ +=
-            std::chrono::duration_cast<decltype(UsageStats::total_req_time_)>(
-            req_end_time - req_start_time);
+    usage_stats_.back().total_req_time_[int(mode_)] +=
+            req_end_time - req_start_time;
     usage_stats_.back().accesses_[int(mode_)]++;
 
     if (logger->isTraceEnabled()) {
@@ -222,9 +228,8 @@ IntervalValue Adapter::GetElement(const Coordinates &point,
 
     // "stopping" the timer
     const auto req_end_time = std::chrono::steady_clock::now();
-    usage_stats_.back().total_req_time_ +=
-            std::chrono::duration_cast<decltype(UsageStats::total_req_time_)>(
-            req_end_time - req_start_time);
+    usage_stats_.back().total_req_time_[int(mode_)] +=
+            req_end_time - req_start_time;
     usage_stats_.back().accesses_[int(mode_)]++;
     LOG4CXX_TRACE(logger, "Computed element: " << res);
 
@@ -294,9 +299,8 @@ IntervalValue Adapter::SqDist(const Coordinates &low, const Coordinates &high,
 
     // "stopping" the timer
     const auto req_end_time = std::chrono::steady_clock::now();
-    usage_stats_.back().total_req_time_ +=
-            std::chrono::duration_cast<decltype(UsageStats::total_req_time_)>(
-            req_end_time - req_start_time);
+    usage_stats_.back().total_req_time_[int(mode_)] +=
+            req_end_time - req_start_time;
     usage_stats_.back().accesses_[int(mode_)]++;
 
     LOG4CXX_TRACE(logger, "Computed square distance: " << res);
