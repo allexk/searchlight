@@ -49,6 +49,8 @@ std::ostream &operator<<(std::ostream &os, const Relaxator::RelaxatorStats &rs) 
     os << "\tTotal fails registered: " << rs.total_fails_registered_ << '\n';
     os << "\tTotal fails heuristic-retried: " <<
             rs.total_fails_heur_retried_ << '\n';
+    os << "\tTotal constraints re-guessed: " <<
+            rs.total_const_reguessed_.load(std::memory_order_relaxed) << '\n';
     os << "\tTotal fails replayed: " << rs.total_fails_replayed_ << '\n';
     return os;
 }
@@ -121,11 +123,20 @@ bool Relaxator::GetFailReplay(size_t solver_id,
                 ComputeFailReplayRelaxation(fr);
             }
             vc_spec = ViolConstSpec(fr);
+            // Get the info from fr; can move here since it'll be destroyed
             dom_info = std::move(fr.saved_vars_);
             udfs = std::move(fr.saved_udfs_);
-            fail_replays_.pop();
+            // For the last replay we need only info about failed constraints
+            SolverReplayInfo &solver_info = solver_info_[solver_id];
+            if (register_heur_ == RegisterHeuristic::GUESS) {
+                for (auto &fc: fr.failed_const_) {
+                    solver_info.replay_.failed_consts_.emplace(fc.const_id_,
+                            std::move(fc));
+                }
+            }
             stats_[1].total_fails_replayed_++;
-            solver_info_[solver_id].in_replay_ = true;
+            solver_info.in_replay_ = true;
+            fail_replays_.pop();
             return true;
         } else {
             // Cannot replay due to LRD, ignore...
@@ -253,7 +264,8 @@ void Relaxator::UpdateTimeStats(RelaxatorStats &stats,
 
 void Relaxator::RegisterFail(size_t solver_id, RegisterHeuristic rh) {
 	// Compute relaxation degree: first pass, determine violated constraints
-    RelaxatorStats &rel_stats = stats_[solver_info_[solver_id].GetStatsFrame()];
+    const SolverReplayInfo &solver_info = solver_info_[solver_id];
+    RelaxatorStats &rel_stats = stats_[solver_info.GetStatsFrame()];
     rel_stats.total_fails_caught_.fetch_add(1, std::memory_order_relaxed);
     // starting the timer
     const auto reg_start_time = std::chrono::steady_clock::now();
@@ -286,6 +298,15 @@ void Relaxator::RegisterFail(size_t solver_id, RegisterHeuristic rh) {
 		    }
 			// Violation
 			replay.failed_const_.push_back({i, rel_pos, min_d, max_d});
+		} else if (register_heur_ == RegisterHeuristic::GUESS &&
+		        solver_info.in_replay_) {
+		    // With replay-fails on GUESS we might have more info
+		    const auto it = solver_info.replay_.failed_consts_.find(i);
+		    if (it != solver_info.replay_.failed_consts_.end()) {
+		        rel_stats.total_const_reguessed_.fetch_add(
+		                1, std::memory_order_relaxed);
+		        replay.failed_const_.push_back(it->second);
+		    }
 		}
 	}
     if (rh == RegisterHeuristic::GUESS) {

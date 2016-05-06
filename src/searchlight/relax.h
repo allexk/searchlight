@@ -701,6 +701,7 @@ public:
 	void ReplayFinished(size_t solver_id) {
 	    assert(solver_info_[solver_id].in_replay_);
 	    solver_info_[solver_id].in_replay_ = false;
+	    solver_info_[solver_id].replay_.failed_consts_.clear();
 	}
 
 private:
@@ -902,6 +903,8 @@ private:
 	    size_t total_fails_registered_{0};
         // Total fails replayed
 	    size_t total_fails_replayed_{0};
+	    // Total constraints taken from last replay on GUESS
+	    std::atomic<size_t> total_const_reguessed_{0};
 	    // Total fails registration retried with ALL heuristic
 	    std::atomic<size_t> total_fails_heur_retried_{0};
 	};
@@ -913,17 +916,15 @@ private:
      * Relaxator solver info.
      */
     struct SolverReplayInfo {
-        // Original constraints
-        std::vector<RelaxableConstraint *> constraints_;
-
         // Last replay
-        FailReplay last_fr_;
+        struct Replay {
+            // Failed constraints: const_id -> FailedConstraint
+            std::unordered_map<size_t, FailReplay::FailedConstraint> failed_consts_;
+        };
+        Replay replay_;
 
         // True, if it's replaying
         bool in_replay_ = false;
-
-        // Override register heuristic to all
-        bool override_register_to_all_ = false;
 
         // Frame to write stats to
         size_t GetStatsFrame() const {
