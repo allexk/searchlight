@@ -984,6 +984,9 @@ private:
 	// Distance weight for the relaxation degree (query param)
 	const double distance_weight_;
 
+	// Relaxation degree to use with replays
+	double replay_rd_;
+
 	// Maximum number of results to track
 	const size_t res_num_;
 

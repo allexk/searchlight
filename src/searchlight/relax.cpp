@@ -98,6 +98,18 @@ Relaxator::Relaxator(Searchlight &sl, size_t solvers,
 
     // Do we save UDFS?
     save_udfs_for_replay_ = sl.GetConfig().get("relax.save_udfs", false);
+
+    // Replay relaxation degree
+    replay_rd_ = sl.GetConfig().get("relax.replay_rd", 1.0);
+    if (replay_rd_ > 1.0) {
+        replay_rd_ = 1.0;
+    }
+
+    // Initial LRD
+    lrd_ = sl.GetConfig().get("relax.lrd", 1.0);
+    if (lrd_ != 1.0) {
+        LOG4CXX_WARN(logger, "Initial LRD set to " << lrd_.load());
+    }
 }
 
 Relaxator::~Relaxator() {
@@ -442,11 +454,13 @@ Int64Vector Relaxator::ViolConstSpec(const FailReplay &replay) const {
         relaxed_const_bs[fc.const_id_] = true;
         res.push_back(fc.const_id_);
         int64 l, h;
+        // Right distance might be modified by the replay RD.
+        const int64 right_dist = fc.rl_ + (fc.rh_ - fc.rl_) * replay_rd_;
         if (fc.rel_pos_ == 1) {
             l = ic.Max() + fc.rl_;
-            h = ic.Max() + fc.rh_;
+            h = ic.Max() + right_dist;
         } else {
-            l = ic.Min() - fc.rh_;
+            l = ic.Min() - right_dist;
             h = ic.Min() - fc.rl_;
         }
         res.push_back(l);
@@ -461,8 +475,12 @@ Int64Vector Relaxator::ViolConstSpec(const FailReplay &replay) const {
          *
          *  We can safely use +1 here, since in case such a constraint really
          *  fails, it's going to be in addition to others.
+         *
+         *  We also take replay_rd into consideration here, since it
+         *  governs how we want to relax replays.
          */
-        const double max_relax_dist = MaxUnitRelaxDistance(violed_const_num + 1);
+        const double max_relax_dist =
+                MaxUnitRelaxDistance(violed_const_num + 1) * replay_rd_;
         // linear search over the bitset is fine here
         for (size_t i = 0; i < relaxed_const_bs.size(); ++i) {
             if (!relaxed_const_bs[i]) {
