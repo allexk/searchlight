@@ -690,7 +690,7 @@ public:
 	 * @return true, if re-replays might be needed; false, otherwise
 	 */
 	bool ReReplaysNeeded() const {
-	    return replay_relax_ != ReplayRelaxation::ALL;
+	    return replay_relax_ != ReplayRelaxation::ALL || replay_rd_ < 1.0;
 	}
 
 	/**
