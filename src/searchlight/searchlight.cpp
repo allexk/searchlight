@@ -766,7 +766,7 @@ std::string Searchlight::SolutionToString(
     }
     // Add tracking vars
     const StringVector track_var_names = GetTrackExprs();
-    assert(track_var_names.size() < add_vals.size());
+    assert(track_var_names.size() <= add_vals.size());
     size_t add_vals_ind = 0;
     for (; add_vals_ind < track_var_names.size(); ++add_vals_ind) {
     	sol_string << ", " << track_var_names[add_vals_ind] << '='

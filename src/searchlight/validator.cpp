@@ -482,6 +482,7 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
          *  Unfortunately, it will dump it into std::cerr, which is
          *  redirected by SciDb to a file.
          */
+        std::cerr << "Logging model for validator...\n";
         ModelVisitor *pmv = solver_.MakePrintModelVisitor();
         solver_.Accept(pmv);
     }

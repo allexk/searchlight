@@ -1584,6 +1584,8 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
          * computation cannot be performed by the sampler.
          */
         if (!syn) {
+            // Clear res so that the caller can continue
+            res.clear();
             return res;
         } else {
             syn->ComputeAggregate(low, high, aggs);
