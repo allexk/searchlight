@@ -313,18 +313,4 @@ void Adapter::SetCustomFail() const {
         sl_.GetSLSolver(sl_solver_id_).BeginCustomFail();
     }
 }
-
-std::ostream &operator<<(std::ostream &os, const IntervalValue &iv) {
-    if (iv.state_ == IntervalValue::NUL) {
-        os << "(NULL)";
-    } else {
-        os << "(Min: " << iv.min_ << ", Max: " << iv.max_ <<
-                ", Val: " << iv.val_;
-        if (iv.state_ == IntervalValue::MAY_NULL) {
-            os << ", null?";
-        }
-        os << ")";
-    }
-    return os;
-}
 } /* namespace searchlight */

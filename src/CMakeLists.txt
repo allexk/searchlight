@@ -3,7 +3,7 @@ PROTOBUF_GENERATE_CPP(MSG_SRC MSG_HDRS searchlight/searchlight_messages.proto)
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
 # searchlight SciDb UDO
-add_library(searchlight_udo SHARED searchlight/ortools_model.cpp
+add_library(searchlight_udo SHARED searchlight/ortools_model.cpp searchlight/base.cpp
     searchlight/ortools_inc.cpp searchlight/adapter.cpp
     searchlight/array_access.cpp searchlight/array_desc.cpp
     searchlight/ops/LogicalSearchlight.cpp searchlight/ops/PhysicalSearchlight.cpp

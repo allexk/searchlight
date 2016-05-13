@@ -6,6 +6,7 @@
  */
 
 #include "relax.h"
+#include "searchlight_udfs.h"
 #include "searchlight.h"
 
 namespace searchlight {

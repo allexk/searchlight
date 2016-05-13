@@ -28,7 +28,7 @@
  * @author Alexander Kalinin
  */
 
-#include "ortools_inc.h"
+#include "searchlight_udfs.h"
 #include "searchlight.h"
 
 namespace searchlight {
@@ -58,6 +58,64 @@ namespace {
     }
 }
 
+SearchlightUDF::SearchlightUDF(Solver *s, State *state,
+        const AdapterPtr &adapter, AttributeID attr,
+        const std::vector<IntExpr *> &vars) :
+                BaseIntExpr{s},
+                adapter_{adapter},
+                attr_{attr},
+                udf_state_{state},
+                orig_vars_{vars} {
+    // Init parameter vars
+    param_vars_.reserve(vars.size());
+    for (auto v: vars) {
+        param_vars_.emplace_back(v);
+    }
+}
+
+SearchlightUDF::ParameterVar::ParameterVar(const IntExpr *expr) :
+        real_var_(dynamic_cast<const IntVar *>(expr) != nullptr),
+        expr_{expr} {
+    // Init iterator
+    if (real_var_) {
+        iter_ = static_cast<const IntVar *>(expr_)->MakeDomainIterator(true);
+    } else {
+        iter_ = expr->solver()->RevAlloc(new RangeIterator(this));
+    }
+}
+
+bool SearchlightUDF::ParameterVar::Contains(int64 x) const {
+    if (x < min_ || x > max_) {
+        return false;
+    }
+    if (real_var_) {
+        return static_cast<const IntVar *>(expr_)->Contains(x);
+    } else {
+        return x >= min_ && x <= max_;
+    }
+}
+
+uint64 SearchlightUDF::ParameterVar::Size() const {
+    if (real_var_) {
+        return static_cast<const IntVar *>(expr_)->Size();
+    } else {
+        return max_ - min_ + 1;
+    }
+}
+
+void SearchlightUDF::ParameterVar::Update() {
+    min_ = expr_->Min();
+    max_ = expr_->Max();
+}
+
+void SearchlightUDF::VisitOriginalExprs(ModelVisitor *visitor) const {
+    visitor->VisitIntegerArgument("expr_size", int64(orig_vars_.size()));
+    for (size_t i = 0; i < orig_vars_.size(); ++i) {
+        const std::string etag = "expr_" + std::to_string(i);
+        visitor->VisitIntegerExpressionArgument(etag, orig_vars_[i]);
+    }
+}
+
 /**
  * Square distance from the array values to the query sequence.
  *
@@ -75,23 +133,14 @@ public:
      * @param params array: attribute, seq. id, seq. length, seq. dimension
      */
 	SqDistFuncExpr(Solver *s, AdapterPtr adapter,
-            const std::vector<IntVar *> &coords,
+            const std::vector<IntExpr *> &coords,
             const std::vector<int64> &params) :
-        SearchlightUDF(s),
-        adapter_(adapter),
-        attr_(AttributeID(params[0])),
+        SearchlightUDF(s, &state_, adapter, AttributeID(params[0]), coords),
         dims_(coords.size()),
 		seq_id_(size_t(params[1])),
 		seq_len_(size_t(params[2])),
-		coords_(coords),
-        coords_iters_(dims_),
 		seq_dim_(size_t(params[3])),
-		state_(dims_) {
-
-        for (size_t i = 0; i < dims_; i++) {
-            coords_iters_[i] = coords_[i]->MakeDomainIterator(true);
-        }
-    }
+		state_(dims_) {}
 
     /**
      * Destructor.
@@ -99,91 +148,19 @@ public:
     virtual ~SqDistFuncExpr() {}
 
     /**
-     * Returns the minimum distance for all subsequences.
-     *
-     * @return the minimum of the expression
-     */
-    virtual int64 Min() const {
-        if (!ComputeMinMax()) {
-            adapter_->SetCustomFail();
-            solver()->Fail();
-        	//return kint64max;
-        }
-        return state_.min_;
-    }
-
-    /**
-     * Sets the minimum of the expression.
-     *
-     * Currently, we do not propagate it to the variables, but we fail the
-     * search if the required minimum is impossible.
-     *
-     * @param m the minimum to set
-     */
-    virtual void SetMin(int64 m) {
-        if (!ComputeMinMax()) {
-            adapter_->SetCustomFail();
-            solver()->Fail();
-        } else if (m > state_.max_) {
-            solver()->Fail();
-        }
-    }
-
-    /**
-     * Returns the maximum of the expression among all sequences.
-     *
-     * @return the maximum of the expression
-     */
-    virtual int64 Max() const {
-        if (!ComputeMinMax()) {
-            adapter_->SetCustomFail();
-            solver()->Fail();
-        	//return kint64min;
-        }
-        return state_.max_;
-    }
-
-    /**
-     * Sets the maximum of the expression.
-     *
-     * Currently, we do not propagate it to the variables, but we fail the
-     * search if the required maximum is impossible.
-     *
-     * @param m the maximum to set
-     */
-    virtual void SetMax(int64 m) {
-        if (!ComputeMinMax()) {
-            adapter_->SetCustomFail();
-            solver()->Fail();
-        } else if (m < state_.min_) {
-            solver()->Fail();
-        }
-    }
-
-    /**
-     * Attaches a demon to watch for range changes of the expression.
-     *
-     * @param d the demon to attach
-     */
-    virtual void WhenRange(Demon* d) {
-        for (size_t i = 0; i < dims_; i++) {
-            coords_[i]->WhenRange(d);
-        }
-    }
-
-    /**
      * Returns a string representation for debug printing.
      *
      * @return a debug string
      */
-    virtual std::string DebugString() const {
+    virtual std::string DebugString() const override {
+        const auto &vars = GetVars();
         std::string debug_str("SqDistArray(");
         for (int i = 0; i < dims_; i++) {
             if (i > 0) {
                 debug_str += ", ";
             }
             debug_str += StringPrintf("%s",
-                    coords_[i]->DebugString().c_str());
+                    vars[i].DebugString().c_str());
         }
         debug_str += ")";
         return debug_str;
@@ -194,13 +171,12 @@ public:
      *
      * @param visitor calling visitor
      */
-    virtual void Accept(ModelVisitor* const visitor) const {
+    virtual void Accept(ModelVisitor* const visitor) const override {
     	// Function start
         std::string tag("UDF_sqdist");
         visitor->BeginVisitIntegerExpression(tag, this);
         // Variables
-        visitor->VisitIntegerVariableArrayArgument(ModelVisitor::kVarsArgument,
-                coords_);
+        VisitOriginalExprs(visitor);
         // Params
         std::vector<int64> params{int64(attr_), int64(seq_id_),
         	int64(seq_len_), int64(seq_dim_)};
@@ -255,7 +231,7 @@ private:
      * (a) that's how Fail() is implemented (b) we have local objects there that
      * need dtors.
      */
-    bool ComputeMinMax() const;
+    virtual bool ComputeMinMax() const override;
 
     /*
      *  Computes the aggregate for the given fixed coordinates.
@@ -264,51 +240,32 @@ private:
     		const Coordinates &high) const;
 
     // Check if the support for min/max is valid.
-    bool CheckSupport() const;
+    bool CheckSupport(const std::vector<ParameterVar> &vars) const;
 
     // Returns the stringified aggregate name
     std::string GetAggregateName() const {
     	return "UDF_sqdist";
     }
 
-    /*
-     * Saves the old value at addr and assigns the new value
-     * at the same place. Introduced to fix a small incompatibility
-     * between int64 types in or-tools and scidb, which results in
-     * ambiguity in SaveAndSetValue function.
-     *
-     * Strictly speaking, converting the pointer to (int64 *) is not
-     * cool, but since they are both 8 bytes (guaranteed), it should be
-     * fine.
-     */
-    void SaveCoordinate(Coordinate *addr, Coordinate new_val) const {
-        solver()->SaveAndSetValue(reinterpret_cast<int64 *>(addr),
-                int64(new_val));
-    }
-
-    const AdapterPtr adapter_; // the adapter for data access
-    const AttributeID attr_; // attribute we are computing
     const size_t dims_;  // dimensionality
     const size_t seq_id_; // Sequence ID
     const size_t seq_len_; // Sequence length
 
-    // coordinates for the sequences and iterators
-    const std::vector<IntVar *> coords_;
-    std::vector<IntVarIterator *> coords_iters_;
     // Dimension of the sequence variable
     const size_t seq_dim_;
 
     // Min/max aggregate values and caches for support
     struct SqDistState : public SearchlightUDF::State {
-        int64 min_ = 0;
-        const int64 max_ = std::numeric_limits<int64>::max();
         // Support for minimum: min, max values for vars
         Coordinates min_support_low_, min_support_high_;
-        bool min_max_init_ = false;
 
         SqDistState(size_t dims) :
             min_support_low_(dims),
-            min_support_high_(dims) {}
+            min_support_high_(dims) {
+
+            // Re-init max to a different value
+            max_ = std::numeric_limits<int64>::max();
+        }
     };
     mutable SqDistState state_;
 };
@@ -318,7 +275,7 @@ IntervalValue SqDistFuncExpr::ComputeFunc(const Coordinates &low,
     return adapter_->SqDist(low, high, seq_dim_, attr_, seq_id_);
 }
 
-bool SqDistFuncExpr::CheckSupport() const {
+bool SqDistFuncExpr::CheckSupport(const std::vector<ParameterVar> &vars) const {
     // first time: no support
     if (!state_.min_max_init_) {
         return false;
@@ -333,8 +290,8 @@ bool SqDistFuncExpr::CheckSupport() const {
      * as it could be.
      */
     for (size_t i = 0; i < dims_; i++) {
-    	if (Coordinate(coords_[i]->Min()) != state_.min_support_low_[i] ||
-    			Coordinate(coords_[i]->Max()) + seq_len_ - 1 !=
+    	if (Coordinate(vars[i].Min()) != state_.min_support_low_[i] ||
+    			Coordinate(vars[i].Max()) + seq_len_ - 1 !=
     			        state_.min_support_high_[i]) {
     		return false;
     	}
@@ -345,23 +302,24 @@ bool SqDistFuncExpr::CheckSupport() const {
 bool SqDistFuncExpr::ComputeMinMax() const {
     IntervalValue new_min;
     Coordinates new_min_support_low, new_min_support_high;
+    const auto &vars = GetVars();
 
     // First case: variables are bound
     bool vars_bound = true;
     for (size_t i = 0; i < dims_; i++) {
-        if (!coords_[i]->Bound()) {
+        if (!vars[i].Bound()) {
             vars_bound = false;
             break;
         }
     }
 
     if (vars_bound) {
-        if (CheckSupport()) {
+        if (CheckSupport(vars)) {
             return true;
         }
         Coordinates low(dims_), high(dims_);
         for (size_t i = 0; i < dims_; i++) {
-            high[i] = low[i] = coords_[i]->Value();
+            high[i] = low[i] = vars[i].Value();
         }
         high[seq_dim_] += seq_len_ - 1;
 
@@ -370,7 +328,7 @@ bool SqDistFuncExpr::ComputeMinMax() const {
         new_min_support_high = high;
     } else {
         // Second case: checks for all combinations of non-sequence dimensions
-		if (CheckSupport()) {
+		if (CheckSupport(vars)) {
 			return true;
 		}
 		/*
@@ -381,12 +339,13 @@ bool SqDistFuncExpr::ComputeMinMax() const {
 		Coordinates low(dims_), high(dims_);
 		for (size_t i = 0; i < dims_; i++) {
 			if (i != seq_dim_) {
-				coords_iters_[i]->Init();
-				high[i] = low[i] = coords_iters_[i]->Value();
+			    auto iter = vars[i].Iterator();
+			    iter->Init();
+				high[i] = low[i] = iter->Value();
 			}
 		}
-		low[seq_dim_] = coords_[seq_dim_]->Min();
-		high[seq_dim_] = coords_[seq_dim_]->Max() + seq_len_ - 1;
+		low[seq_dim_] = vars[seq_dim_].Min();
+		high[seq_dim_] = vars[seq_dim_].Max() + seq_len_ - 1;
 
 		while (true) {
 			const IntervalValue val = ComputeFunc(low, high);
@@ -415,7 +374,7 @@ bool SqDistFuncExpr::ComputeMinMax() const {
 					continue;
 				}
 				// Try to move to the next value
-				IntVarIterator *it = coords_iters_[i];
+				IntVarIterator *it = vars[i].Iterator();
 				const size_t k = i;
 				it->Next();
 				if (!it->Ok()) {
@@ -501,25 +460,17 @@ public:
      * @param params a vector of parameters; currently one -- the attribute
      */
     AggrFuncExpr(Solver *s, AggType agg, AdapterPtr adapter,
-            const std::vector<IntVar *> &low_lens_coords,
+            const std::vector<IntExpr *> &low_lens_coords,
             const std::vector<int64> &params) :
-        SearchlightUDF(s),
-        adapter_(adapter),
-        attr_(AttributeID(params[0])),
+        SearchlightUDF(s, &state_, adapter, AttributeID(params[0]), low_lens_coords),
         func_(agg),
         dims_(low_lens_coords.size() / 2), // assume even division (check later)
-        low_lens_(low_lens_coords),
-        low_lens_iters_(2 * dims_),
         state_(dims_) {
 
         if (low_lens_coords.size() != dims_ * 2 || params.size() != 1) {
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                     << "Aggregate UDFs coordinates/lengths are inconsistent "
                     "or parameters are incorrect!";
-        }
-
-        for (size_t i = 0; i < 2 * dims_; i++) {
-            low_lens_iters_[i] = low_lens_[i]->MakeDomainIterator(true);
         }
     }
 
@@ -529,92 +480,20 @@ public:
     virtual ~AggrFuncExpr() {}
 
     /**
-     * Returns the minimum of the expression among all windows.
-     *
-     * @return the minimum of the expression
-     */
-    virtual int64 Min() const {
-        if (!ComputeMinMax()) {
-            adapter_->SetCustomFail();
-            solver()->Fail();
-        	//return kint64max;
-        }
-        return state_.min_;
-    }
-
-    /**
-     * Sets the minimum of the expression.
-     *
-     * Currently, we do not propagate it to the variables, but we fail the
-     * search if the required minimum is impossible.
-     *
-     * @param m the minimum to set
-     */
-    virtual void SetMin(int64 m) {
-        if (!ComputeMinMax()) {
-            adapter_->SetCustomFail();
-            solver()->Fail();
-        } else if (m > state_.max_) {
-            solver()->Fail();
-        }
-    }
-
-    /**
-     * Returns the maximum of the expression among all windows.
-     *
-     * @return the maximum of the expression
-     */
-    virtual int64 Max() const {
-        if (!ComputeMinMax()) {
-            adapter_->SetCustomFail();
-            solver()->Fail();
-        	//return kint64min;
-        }
-        return state_.max_;
-    }
-
-    /**
-     * Sets the maximum of the expression.
-     *
-     * Currently, we do not propagate it to the variables, but we fail the
-     * search if the required maximum is impossible.
-     *
-     * @param m the maximum to set
-     */
-    virtual void SetMax(int64 m) {
-        if (!ComputeMinMax()) {
-            adapter_->SetCustomFail();
-            solver()->Fail();
-        } else if (m < state_.min_) {
-            solver()->Fail();
-        }
-    }
-
-    /**
-     * Attaches a demon to watch for range changes of the expression.
-     *
-     * @param d the demon to attach
-     */
-    virtual void WhenRange(Demon* d) {
-        for (size_t i = 0; i < 2 * dims_; i++) {
-            low_lens_[i]->WhenRange(d);
-        }
-    }
-
-    /**
      * Returns a string representation for debug printing.
      *
      * @return a debug string
      */
-    virtual std::string DebugString() const {
+    virtual std::string DebugString() const override {
+        const auto &vars = GetVars();
         std::string debug_str("AggregateArray(");
         for (int i = 0; i < dims_; i++) {
             if (i > 0) {
                 debug_str += ", ";
             }
             debug_str += StringPrintf("%s + %s",
-                    low_lens_[i]->DebugString().c_str(),
-                    low_lens_[dims_ + i]->DebugString().c_str());
+                    vars[i].DebugString().c_str(),
+                    vars[dims_ + i].DebugString().c_str());
         }
         debug_str += ")";
         return debug_str;
@@ -625,7 +504,7 @@ public:
      *
      * @param visitor calling visitor
      */
-    virtual void Accept(ModelVisitor* const visitor) const {
+    virtual void Accept(ModelVisitor* const visitor) const override {
         std::string tag;
         switch (func_) {
             case SUM:
@@ -643,14 +522,12 @@ public:
         }
 
         visitor->BeginVisitIntegerExpression(tag, this);
-
-        visitor->VisitIntegerVariableArrayArgument(ModelVisitor::kVarsArgument,
-                low_lens_);
-
+        // Expressions
+        VisitOriginalExprs(visitor);
+        // Parameters
         std::vector<int64> params(1, int64(attr_));
         visitor->VisitIntegerArrayArgument(ModelVisitor::kValuesArgument,
                 params);
-
         visitor->EndVisitIntegerExpression(tag, this);
     }
 
@@ -709,7 +586,7 @@ private:
      * (a) that's how Fail() is implemented (b) we have local objects there that
      * need dtors.
      */
-    bool ComputeMinMax() const;
+    virtual bool ComputeMinMax() const override;
 
     /*
      *  Computes the aggregate for the given fixed coordinates.
@@ -724,7 +601,7 @@ private:
             const Coordinates &high, uint64_t min_size, uint64_t max_size) const;
 
     // Check if the support for min/max is valid.
-    bool CheckSupport() const;
+    bool CheckSupport(const std::vector<ParameterVar> &vars) const;
 
     // Returns the stringified aggregate name
     std::string GetAggregateName() const {
@@ -746,37 +623,13 @@ private:
         return name;
     }
 
-    /*
-     * Saves the old value at addr and assigns the new value
-     * at the same place. Introduced to fix a small incompatibility
-     * between int64 types in or-tools and scidb, which results in
-     * ambiguity in SaveAndSetValue function.
-     *
-     * Strictly speaking, converting the pointer to (int64 *) is not
-     * cool, but since they are both 8 bytes (guaranteed), it should be
-     * fine.
-     */
-    void SaveCoordinate(Coordinate *addr, Coordinate new_val) const {
-        solver()->SaveAndSetValue(reinterpret_cast<int64 *>(addr),
-                int64(new_val));
-    }
-
-    const AdapterPtr adapter_; // the adapter for data access
-    const AttributeID attr_; // attribute we are computing
     const AggType func_; // type of the aggregate
     const size_t dims_;  // dimensionality
 
-    // coordinates for the window and the iterators (left point + lengths)
-    const std::vector<IntVar *> low_lens_;
-    std::vector<IntVarIterator *> low_lens_iters_;
-
     // Min/max aggregate values and caches for support
     struct AggState : public SearchlightUDF::State {
-        int64 min_ = 0;
-        int64 max_ = 0;
         Coordinates min_support_low_, min_support_lens_;
         Coordinates max_support_low_, max_support_lens_;
-        bool min_max_init_ = false;
 
         AggState(size_t dims) :
             min_support_low_(dims),
@@ -836,7 +689,7 @@ IntervalValue AggrFuncExpr::ComputeFuncSub(const Coordinates &low,
     return res;
 }
 
-bool AggrFuncExpr::CheckSupport() const {
+bool AggrFuncExpr::CheckSupport(const std::vector<ParameterVar> &vars) const {
     // first time: no support
     if (!state_.min_max_init_) {
         return false;
@@ -844,10 +697,10 @@ bool AggrFuncExpr::CheckSupport() const {
 
     // the support is not valid if it is not a valid window anymore
     for (size_t i = 0; i < dims_; i++) {
-        if (!low_lens_[i]->Contains(state_.min_support_low_[i]) ||
-                !low_lens_[dims_ + i]->Contains(state_.min_support_lens_[i]) ||
-                !low_lens_[i]->Contains(state_.max_support_low_[i]) ||
-                !low_lens_[dims_ + i]->Contains(state_.max_support_lens_[i])) {
+        if (!vars[i].Contains(state_.min_support_low_[i]) ||
+                !vars[dims_ + i].Contains(state_.min_support_lens_[i]) ||
+                !vars[i].Contains(state_.max_support_low_[i]) ||
+                !vars[dims_ + i].Contains(state_.max_support_lens_[i])) {
             return false;
         }
     }
@@ -858,24 +711,25 @@ bool AggrFuncExpr::ComputeMinMax() const {
     IntervalValue new_min_max;
     Coordinates new_min_support_low, new_min_support_lens;
     Coordinates new_max_support_low, new_max_support_lens;
+    const auto &vars = GetVars();
 
     // First case: variables are bound
     bool vars_bound = true;
     for (size_t i = 0; i < 2 * dims_; i++) {
-        if (!low_lens_[i]->Bound()) {
+        if (!vars[i].Bound()) {
             vars_bound = false;
             break;
         }
     }
 
     if (vars_bound) {
-        if (CheckSupport()) {
+        if (CheckSupport(vars)) {
             return true;
         }
         Coordinates low(dims_), high(dims_), lens(dims_);
         for (size_t i = 0; i < dims_; i++) {
-            low[i] = low_lens_[i]->Value();
-            lens[i] = low_lens_[dims_ + i]->Value();
+            low[i] = vars[i].Value();
+            lens[i] = vars[dims_ + i].Value();
             high[i] = low[i] + lens[i] - 1;
         }
 
@@ -886,11 +740,11 @@ bool AggrFuncExpr::ComputeMinMax() const {
         // Second case: below threshold and individual checks
         uint64_t reg_num = 1;
         for (size_t i = 0; i < 2 * dims_; i++) {
-            reg_num *= low_lens_[i]->Size();
+            reg_num *= vars[i].Size();
         }
 
         if (reg_num <= INDIVIDUAL_CHECK_THRESHOLD) {
-            if (CheckSupport()) {
+            if (CheckSupport(vars)) {
                 return true;
             }
             /*
@@ -900,10 +754,10 @@ bool AggrFuncExpr::ComputeMinMax() const {
              */
             Coordinates low(dims_), high(dims_), lens(dims_);
             for (size_t i = 0; i < dims_; i++) {
-                low_lens_iters_[i]->Init();
-                low_lens_iters_[dims_ + i]->Init();
-                low[i] = low_lens_iters_[i]->Value();
-                lens[i] = low_lens_iters_[dims_ + i]->Value();
+                vars[i].Iterator()->Init();
+                vars[dims_ + i].Iterator()->Init();
+                low[i] = vars[i].Iterator()->Value();
+                lens[i] = vars[dims_ + i].Iterator()->Value();
                 high[i] = low[i] + lens[i] - 1;
             }
 
@@ -936,7 +790,7 @@ bool AggrFuncExpr::ComputeMinMax() const {
                  */
                 size_t i = 0;
                 while (i < 2 * dims_) {
-                    IntVarIterator *it = low_lens_iters_[i];
+                    IntVarIterator *it = vars[i].Iterator();
                     const size_t k = i;
 
                     it->Next();
@@ -971,12 +825,12 @@ bool AggrFuncExpr::ComputeMinMax() const {
             uint64_t min_size = 1, max_size = 1;
             bool mbr_changed = false;
             for (size_t i = 0; i < dims_; i++) {
-                low[i] = low_lens_[i]->Min();
-                high[i] = low_lens_[i]->Max() +
-                        low_lens_[dims_ + i]->Max() - 1;
+                low[i] = vars[i].Min();
+                high[i] = vars[i].Max() +
+                        vars[dims_ + i].Max() - 1;
                 lens[i] = high[i] - low[i] + 1;
-                min_size *= low_lens_[dims_ + i]->Min();
-                max_size *= low_lens_[dims_ + i]->Max();
+                min_size *= vars[dims_ + i].Min();
+                max_size *= vars[dims_ + i].Max();
 
                 // min/max supports are equal for MBRs
                 if (low[i] != state_.min_support_low_[i] ||
@@ -1049,7 +903,7 @@ bool AggrFuncExpr::ComputeMinMax() const {
 
 extern "C"
 IntExpr *CreateUDF_avg(Solver *solver, AdapterPtr adapter,
-        const std::vector<IntVar *> &coord_lens,
+        const std::vector<IntExpr *> &coord_lens,
         const std::vector<int64> &params) {
     return new AggrFuncExpr(solver, AggrFuncExpr::AVG, adapter, coord_lens,
             params);
@@ -1057,7 +911,7 @@ IntExpr *CreateUDF_avg(Solver *solver, AdapterPtr adapter,
 
 extern "C"
 IntExpr *CreateUDF_sum(Solver *solver, AdapterPtr adapter,
-        const std::vector<IntVar *> &coord_lens,
+        const std::vector<IntExpr *> &coord_lens,
         const std::vector<int64> &params) {
     return new AggrFuncExpr(solver, AggrFuncExpr::SUM, adapter, coord_lens,
             params);
@@ -1065,7 +919,7 @@ IntExpr *CreateUDF_sum(Solver *solver, AdapterPtr adapter,
 
 extern "C"
 IntExpr *CreateUDF_min(Solver *solver, AdapterPtr adapter,
-        const std::vector<IntVar *> &coord_lens,
+        const std::vector<IntExpr *> &coord_lens,
         const std::vector<int64> &params) {
     return new AggrFuncExpr(solver, AggrFuncExpr::MIN, adapter, coord_lens,
             params);
@@ -1073,7 +927,7 @@ IntExpr *CreateUDF_min(Solver *solver, AdapterPtr adapter,
 
 extern "C"
 IntExpr *CreateUDF_max(Solver *solver, AdapterPtr adapter,
-        const std::vector<IntVar *> &coord_lens,
+        const std::vector<IntExpr *> &coord_lens,
         const std::vector<int64> &params) {
     return new AggrFuncExpr(solver, AggrFuncExpr::MAX, adapter, coord_lens,
             params);
@@ -1081,7 +935,7 @@ IntExpr *CreateUDF_max(Solver *solver, AdapterPtr adapter,
 
 extern "C"
 IntExpr *CreateUDF_sqdist(Solver *solver, AdapterPtr adapter,
-        const std::vector<IntVar *> &coords,
+        const std::vector<IntExpr *> &coords,
         const std::vector<int64> &params) {
     return new SqDistFuncExpr(solver, adapter, coords, params);
 }

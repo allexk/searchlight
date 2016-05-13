@@ -92,53 +92,6 @@ struct IntVarDomainInfo {
 using IntVarDomainInfoVector = std::vector<IntVarDomainInfo>;
 
 /**
- * Base class for all Searchlight UDFs.
- */
-class SearchlightUDF : public BaseIntExpr {
-public:
-    /**
-     * Abstract class for UDF states.
-     */
-    struct State {
-        virtual ~State() {}
-    };
-
-protected:
-    /**
-     * Constructor
-     * @param s CP or-tools solver
-     */
-    SearchlightUDF(Solver *s) : BaseIntExpr(s) {}
-
-public:
-    /**
-     * Destructor.
-     */
-    virtual ~SearchlightUDF() = default;
-
-    /**
-     * Save state to a buffer.
-     *
-     * @return pointer to the buffer or nullptr if nothing to save
-     */
-    virtual const State *SaveState() const = 0;
-
-    /**
-     * Load previously saved state.
-     *
-     * It is assumed the state was saved by the SaveState function.
-     *
-     * @param state saved state
-     */
-    virtual void LoadState(const State *state) = 0;
-};
-
-/**
- * Saved state for UDF functions.
- */
-using UDFStates = std::vector<std::unique_ptr<const SearchlightUDF::State>>;
-
-/**
  * Converts a lite assignment to a full Assignment.
  *
  * @param asgn full assignment

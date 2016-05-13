@@ -40,6 +40,7 @@
 
 #include "ortools_model.h"
 #include "relax.h"
+#include "searchlight.h"
 
 #include <base/stl_util.h>
 #include <base/callback.h>
@@ -944,22 +945,26 @@ using operations_research::CPConstraintProto;
 IntExpr* UDFBuilder(UDFFunctionCreator udf_creator, const AdapterPtr &adapter,
         CPModelLoader * const builder,
         const CPIntegerExpressionProto &proto) {
-
-    // should have IntVar parameters protobuffed
-    std::vector<IntVar *> vars;
-    if (!builder->ScanArguments(ModelVisitor::kVarsArgument, proto, &vars)) {
+    // First look for the number of IntExpr parameters
+    int64 expr_size = -1;
+    if (!builder->ScanArguments("expr_size", proto, &expr_size) || expr_size < 0) {
         return nullptr;
     }
-
+    std::vector<IntExpr *> exprs(expr_size);
+    for (size_t i = 0; i < size_t(expr_size); ++i) {
+        const std::string etag = "expr_" + std::to_string(i);
+        if (!builder->ScanArguments(etag, proto, &exprs[i])) {
+            return nullptr;
+        }
+    }
     // should have integer parameters protobuffed
     std::vector<int64> params;
     if (!builder->ScanArguments(ModelVisitor::kValuesArgument, proto,
             &params)) {
         return nullptr;
     }
-
     return builder->solver()->RevAlloc(
-            udf_creator(builder->solver(), adapter, vars, params));
+            udf_creator(builder->solver(), adapter, exprs, params));
 }
 
 // Relaxable constraint builders

@@ -117,6 +117,8 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
     // convenience -- all vars in a single vector
     std::vector<IntVar *> all_vars(coords);
     all_vars.insert(all_vars.end(), lens.begin(), lens.end());
+    // vars expressed as IntExpr (required for UDFs)
+    std::vector<IntExpr *> all_exprs(all_vars.begin(), all_vars.end());
 
     // Search vars
     std::vector<IntVar *> search_vars{coords[0], coords[1], lens[1]};
@@ -132,7 +134,7 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
     UDFFunctionCreator avg_fab = sl->GetUDFFunctionCreator("avg");
 
     std::vector<int64> udf_params(1, int64(attr));
-    IntExpr * const avg = solver.RevAlloc(avg_fab(&solver, adapter, all_vars,
+    IntExpr * const avg = solver.RevAlloc(avg_fab(&solver, adapter, all_exprs,
             udf_params));
     sl->AddTrackExpr(avg, "avg");
     if (config.get("relax.on", false)) {
@@ -154,21 +156,21 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
          * FIXME: This is a mess! And should be rewritten ASAP!
          */
         UDFFunctionCreator max_fab = sl->GetUDFFunctionCreator("max");
-        std::vector<IntVar *> part_vars(4);
+        std::vector<IntExpr *> parts(4);
 
         // max of the region
         IntExpr * const region_max = solver.RevAlloc(max_fab(&solver, adapter,
-                all_vars, udf_params));
+                all_exprs, udf_params));
 
         // left
         if (lneighb_size) {
-            part_vars[0] = coords[0]; // the same id/timeline
-            part_vars[1] = solver.MakeSum(coords[1], -lneighb_size)->Var();
-            part_vars[2] = solver.MakeIntConst(1);
-            part_vars[3] = solver.MakeIntConst(lneighb_size);
+            parts[0] = coords[0]; // the same id/timeline
+            parts[1] = solver.MakeSum(coords[1], -lneighb_size);
+            parts[2] = solver.MakeIntConst(1);
+            parts[3] = solver.MakeIntConst(lneighb_size);
 
             // valid left neighborhood
-            solver.AddConstraint(solver.MakeGreaterOrEqual(part_vars[1],
+            solver.AddConstraint(solver.MakeGreaterOrEqual(parts[1],
                     start_time));
 
             // difference of maximums
@@ -178,7 +180,7 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
                     "mimic.neighborhood.left_relax_diff", left_max_diff);
             // expressions
             IntVar * const left_max = solver.RevAlloc(max_fab(&solver,
-                    adapter, part_vars, udf_params))->Var();
+                    adapter, parts, udf_params))->Var();
             IntExpr * const rl_max_diff = solver.MakeDifference(
                     region_max, left_max);
             sl->AddTrackExpr(rl_max_diff, "left_diff");
@@ -198,14 +200,14 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
         // right
         if (rneighb_size) {
             // right
-            part_vars[0] = coords[0]; // the same id/timeline
-            part_vars[1] = solver.MakeSum(coords[1], lens[1])->Var();
-            part_vars[2] = solver.MakeIntConst(1);
-            part_vars[3] = solver.MakeIntConst(rneighb_size);
+            parts[0] = coords[0]; // the same id/timeline
+            parts[1] = solver.MakeSum(coords[1], lens[1]);
+            parts[2] = solver.MakeIntConst(1);
+            parts[3] = solver.MakeIntConst(rneighb_size);
 
             // valid right neighborhood
             solver.AddConstraint(solver.MakeLessOrEqual(
-                    solver.MakeSum(part_vars[1], rneighb_size),
+                    solver.MakeSum(parts[1], rneighb_size),
                     end_time + 1));
 
             // difference of maximums
@@ -215,7 +217,7 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
                     "mimic.neighborhood.right_relax_diff", right_max_diff);
             // expressions
             IntVar * const right_max = solver.RevAlloc(max_fab(&solver,
-                    adapter, part_vars, udf_params))->Var();
+                    adapter, parts, udf_params))->Var();
             IntExpr * const rr_max_diff = solver.MakeDifference(
                     region_max, right_max);
             sl->AddTrackExpr(rr_max_diff, "right_diff");

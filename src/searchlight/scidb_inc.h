@@ -35,7 +35,7 @@
 /*
  * A workaround to avoid compiler errors when SciDb returns shared_ptrs
  * from functions with bool return types, which requires explicit conversion.
- * This works until we move to C++0X, for which Boost dumps the safe bool idiom
+ * This works until we move to C++11, for which Boost dumps the safe bool idiom
  * and goes with the explicit bool conversion operator.
  */
 #define BOOST_NO_CXX11_EXPLICIT_CONVERSION_OPERATORS

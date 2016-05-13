@@ -139,6 +139,8 @@ void SdssUgrizAvg(Searchlight *sl, uint32_t id) {
     // convenience -- all vars in a single vector
     std::vector<IntVar *> all_vars(coords);
     all_vars.insert(all_vars.end(), lens.begin(), lens.end());
+    // vars expressed as IntExpr (required for UDFs)
+    std::vector<IntExpr *> all_exprs(all_vars.begin(), all_vars.end());
 
     // valid window
     solver.AddConstraint(solver.MakeLessOrEqual(
@@ -164,22 +166,19 @@ void SdssUgrizAvg(Searchlight *sl, uint32_t id) {
             UDFFunctionCreator avg_fab = sl->GetUDFFunctionCreator("avg");
             std::vector<int64> udf_params(1, int64(attr));
             IntExpr * const avg = solver.RevAlloc(avg_fab(
-                    &solver, adapter, all_vars, udf_params));
-
+                    &solver, adapter, all_exprs, udf_params));
             solver.AddConstraint(solver.MakeBetweenCt(avg, l, h));
 
             // min
             UDFFunctionCreator min_fab = sl->GetUDFFunctionCreator("min");
             IntExpr * const min = solver.RevAlloc(min_fab(
-                    &solver, adapter, all_vars, udf_params));
-
+                    &solver, adapter, all_exprs, udf_params));
             solver.AddConstraint(solver.MakeGreaterOrEqual(min, int64(ml)));
 
             // max
             UDFFunctionCreator max_fab = sl->GetUDFFunctionCreator("max");
             IntExpr * const max = solver.RevAlloc(max_fab(
-                    &solver, adapter, all_vars, udf_params));
-
+                    &solver, adapter, all_exprs, udf_params));
             solver.AddConstraint(solver.MakeLessOrEqual(max, int64(mh)));
         }
     }

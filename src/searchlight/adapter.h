@@ -45,62 +45,6 @@ class SearchArrayDesc;
 class Searchlight;
 
 /**
- * Approximate value, returned by an estimator.
- *
- * TODO: there might be some benefits in returning the probability of MAY_NULL
- * in the future.
- */
-struct IntervalValue {
-    /**
-     * Describes the state of the value
-     */
-    enum State {
-        NON_NULL,//!< NON_NULL definitely not NULL
-        MAY_NULL,//!< MIN_NULL might be NULL (thus, min is invalid)
-        NUL      //!< NUL definitely NULL
-    };
-
-    /**
-     * Minimum possible
-     */
-    double min_;
-
-    /**
-     * Maximum possible
-     */
-    double max_;
-
-    /**
-     * An approximate value.
-     */
-    double val_;
-
-    /**
-     * Value state
-     */
-    State state_;
-
-    /**
-     * Creates a NULL interval value.
-     */
-    IntervalValue() : min_(0), max_(0), val_(-1), state_(NUL) {}
-};
-
-/**
- * Outputs an IntervalValue into an output stream.
- *
- * @param os the stream to output to
- * @param iv the value to output
- * @return the stream used for the output
- */
-std::ostream &operator<<(std::ostream &os, const IntervalValue &iv);
-
-/**
- * A vector of interval values.
- */
-typedef std::vector<IntervalValue> IntervalValueVector;
-
-/**
  * This class allows users to access search data. For example, fetching
  * an element by the coordinates or an entire interval/region. It also allows
  * to iterate via elements of a region or call a callback on them. Note, that

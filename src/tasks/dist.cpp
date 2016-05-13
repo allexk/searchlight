@@ -98,6 +98,7 @@ void Dist(Searchlight *sl, uint32_t id) {
     std::vector<IntVar *> coords(1);
     coords[0] = MakeIntVarWithName(solver, start_time, end_time, step_time,
             "time");
+    std::vector<IntExpr *> all_exprs{coords[0]};
 
     // attribute and sequence
     const std::string signal_name = config.get<std::string>("dist.signal");
@@ -114,7 +115,7 @@ void Dist(Searchlight *sl, uint32_t id) {
     UDFFunctionCreator sqdist_fab = sl->GetUDFFunctionCreator("sqdist");
     std::vector<int64> udf_params{attr, int64(seq_id), int64(seq_len), 0};
     IntExpr * const sqdist = solver.RevAlloc(sqdist_fab(&solver, adapter,
-    		coords, udf_params));
+            all_exprs, udf_params));
     sl->AddTrackExpr(sqdist, "sqdist");
     if (config.get("relax.on", false)) {
         RelaxableConstraint *dist_leq = solver.RevAlloc(

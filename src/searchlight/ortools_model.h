@@ -39,10 +39,14 @@
 #ifndef SEARCHLIGHT_ORTOOLS_MODEL_H_
 #define SEARCHLIGHT_ORTOOLS_MODEL_H_
 
-#include "searchlight.h"
 #include <constraint_solver/model.pb.h>
 
+#include "ortools_inc.h"
+#include "adapter.h"
+
 namespace searchlight {
+
+class Searchlight;
 
 /**
  * Buffer for storing solver models.

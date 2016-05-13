@@ -218,7 +218,7 @@ private:
  * with and integer parameters.
  */
 typedef IntExpr *(* UDFFunctionCreator)(Solver *, AdapterPtr,
-        const std::vector<IntVar *> &, const std::vector<int64> &);
+        const std::vector<IntExpr *> &, const std::vector<int64> &);
 
 /**
  * Visitor for finding UDF functions in the CP model.

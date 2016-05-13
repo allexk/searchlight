@@ -32,6 +32,7 @@
 #define SEARCHLIGHT_RELAX_H_
 
 #include "ortools_inc.h"
+#include "searchlight_udfs.h"
 
 #include <queue>
 #include <mutex>

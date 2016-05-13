@@ -32,7 +32,6 @@
 #define SEARCHLIGHT_SAMPLER_H_
 
 #include "base.h"
-#include "adapter.h"
 #include "scidb_inc.h"
 #include "cache.h"
 

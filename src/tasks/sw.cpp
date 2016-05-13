@@ -121,6 +121,8 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
     // convenience -- all vars in a single vector
     std::vector<IntVar *> all_vars(coords);
     all_vars.insert(all_vars.end(), lens.begin(), lens.end());
+    // vars expressed as IntExpr (required for UDFs)
+    std::vector<IntExpr *> all_exprs(all_vars.begin(), all_vars.end());
 
     // valid window
     solver.AddConstraint(solver.MakeLessOrEqual(
@@ -136,7 +138,7 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
     UDFFunctionCreator avg_fab = sl->GetUDFFunctionCreator("avg");
 
     std::vector<int64> udf_params(1, int64(attr));
-    IntExpr * const avg = solver.RevAlloc(avg_fab(&solver, adapter, all_vars,
+    IntExpr * const avg = solver.RevAlloc(avg_fab(&solver, adapter, all_exprs,
             udf_params));
     sl->AddTrackExpr(avg, "avg");
     if (config.get("relax.on", false)) {
@@ -158,40 +160,40 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
          */
         UDFFunctionCreator max_fab = sl->GetUDFFunctionCreator("max");
         UDFFunctionCreator min_fab = sl->GetUDFFunctionCreator("min");
-        std::vector<IntVar *> part_vars(4);
+        std::vector<IntExpr *> parts(4);
         std::vector<IntExpr *> part_maxs(4);
 
         // left
-        part_vars[0] = solver.MakeSum(coords[0], -neighb_size)->Var();
-        part_vars[1] = coords[1];
-        part_vars[2] = solver.MakeIntConst(neighb_size);
-        part_vars[3] = lens[1];
+        parts[0] = solver.MakeSum(coords[0], -neighb_size);
+        parts[1] = coords[1];
+        parts[2] = solver.MakeIntConst(neighb_size);
+        parts[3] = lens[1];
         part_maxs[0] = solver.RevAlloc(max_fab(&solver,
-                adapter, part_vars, udf_params));
+                adapter, parts, udf_params));
 
         // top
-        part_vars[0] = solver.MakeSum(coords[0], -neighb_size)->Var();
-        part_vars[1] = solver.MakeSum(coords[1], -neighb_size)->Var();
-        part_vars[2] = solver.MakeSum(lens[0], 2 * neighb_size)->Var();
-        part_vars[3] = solver.MakeIntConst(neighb_size);
+        parts[0] = solver.MakeSum(coords[0], -neighb_size);
+        parts[1] = solver.MakeSum(coords[1], -neighb_size);
+        parts[2] = solver.MakeSum(lens[0], 2 * neighb_size);
+        parts[3] = solver.MakeIntConst(neighb_size);
         part_maxs[1] = solver.RevAlloc(max_fab(&solver,
-                adapter, part_vars, udf_params));
+                adapter, parts, udf_params));
 
         // right
-        part_vars[0] = solver.MakeSum(coords[0], lens[0])->Var();
-        part_vars[1] = coords[1];
-        part_vars[2] = solver.MakeIntConst(neighb_size);
-        part_vars[3] = lens[1];
+        parts[0] = solver.MakeSum(coords[0], lens[0]);
+        parts[1] = coords[1];
+        parts[2] = solver.MakeIntConst(neighb_size);
+        parts[3] = lens[1];
         part_maxs[2] = solver.RevAlloc(max_fab(&solver,
-                adapter, part_vars, udf_params));
+                adapter, parts, udf_params));
 
         // bottom
-        part_vars[0] = solver.MakeSum(coords[0], -neighb_size)->Var();
-        part_vars[1] = solver.MakeSum(coords[1], lens[1])->Var();
-        part_vars[2] = solver.MakeSum(lens[0], 2 * neighb_size)->Var();
-        part_vars[3] = solver.MakeIntConst(neighb_size);
+        parts[0] = solver.MakeSum(coords[0], -neighb_size);
+        parts[1] = solver.MakeSum(coords[1], lens[1]);
+        parts[2] = solver.MakeSum(lens[0], 2 * neighb_size);
+        parts[3] = solver.MakeIntConst(neighb_size);
         part_maxs[3] = solver.RevAlloc(max_fab(&solver,
-                adapter, part_vars, udf_params));
+                adapter, parts, udf_params));
 
         /*
          * Max of the neighborhood. We do the explicit nested maxs here to
@@ -208,7 +210,7 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
         if (max_diff) {
             // max of the region
             IntExpr * const rmax = solver.RevAlloc(max_fab(&solver, adapter,
-                    all_vars, udf_params));
+                    all_exprs, udf_params));
             IntExpr * const rn_max_diff = solver.MakeDifference(rmax, nmax);
             sl->AddTrackExpr(rn_max_diff, "max_diff");
             if (config.get("relax.on", false)) {
@@ -229,7 +231,7 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
         if (min_diff) {
             // min of the region
             IntExpr * const rmin = solver.RevAlloc(min_fab(&solver, adapter,
-                    all_vars, udf_params));
+                    all_exprs, udf_params));
             IntExpr * const rn_min_diff = solver.MakeDifference(rmin, nmax);
             sl->AddTrackExpr(rn_min_diff, "min_diff");
             if (config.get("relax.on", false)) {

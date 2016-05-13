@@ -35,6 +35,7 @@
 #include "scidb_inc.h"
 #include "ortools_inc.h"
 #include "ortools_model.h"
+#include "adapter.h"
 
 #include <condition_variable>
 #include <mutex>
