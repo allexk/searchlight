@@ -192,10 +192,15 @@ void Searchlight::Prepare(const std::string &name, SLTaskFunc task_fun,
         uint64_t start_id, int solvers) {
     // Create relaxator
     const bool relax = GetConfig().get("relax.on", false);
+    int spec_relax_solvers = GetConfig().get("relax.spec", 0);
+    if (!relax || spec_relax_solvers < 0) {
+        spec_relax_solvers = 0;
+    }
     if (relax) {
         const double rel_dist_w = GetConfig().get("relax.dist_w", 0.5);
         const double rel_card = GetConfig().get("relax.card", 10);
-        relaxator_.reset(new Relaxator(*this, solvers, rel_dist_w, rel_card));
+        relaxator_.reset(new Relaxator(*this, solvers + spec_relax_solvers,
+                rel_dist_w, rel_card));
     }
 
     // Create solvers
@@ -208,22 +213,19 @@ void Searchlight::Prepare(const std::string &name, SLTaskFunc task_fun,
     }
 
     // And maybe speculative solvers
-    if (relax) {
-        const int spec_solvers = GetConfig().get("relax.spec", 0);
-        if (spec_solvers > 0) {
-            const std::string spec_name(name + "_spec");
-            spec_exec_.relax_ = true;
-            for (int i = solvers; i < solvers + spec_solvers; ++i) {
-                const uint64_t solver_id = start_id + i;
-                spec_exec_.active_.insert(solver_id);
-                solvers_.emplace_back(new SearchlightSolver(
-                        SearchlightSolver::SolverType::SPEC_RELAX, *this,
-                        solver_id, spec_name));
-                task_fun(this, i);
-            }
-            LOG4CXX_INFO(logger, "Created " << spec_solvers <<
-                " speculative relaxation solvers");
+    if (spec_relax_solvers > 0) {
+        const std::string spec_name(name + "_spec");
+        spec_exec_.relax_ = true;
+        for (int i = solvers; i < solvers + spec_relax_solvers; ++i) {
+            const uint64_t solver_id = start_id + i;
+            spec_exec_.active_.insert(solver_id);
+            solvers_.emplace_back(new SearchlightSolver(
+                    SearchlightSolver::SolverType::SPEC_RELAX, *this,
+                    solver_id, spec_name));
+            task_fun(this, i);
         }
+        LOG4CXX_INFO(logger, "Created " << spec_relax_solvers <<
+            " speculative relaxation solvers");
     }
 
     /*
