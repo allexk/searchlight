@@ -1049,6 +1049,15 @@ CandidateVector *Validator::GetNextAssignments() {
         }
     }
 
+    // Check if we went below low watermark and notify Searchlight
+    if (total_cands > low_watermark_) {
+        const size_t current_total_cands =
+            to_validate_total_.load(std::memory_order_relaxed);
+        if (current_total_cands < low_watermark_) {
+            sl_.ValidatorLowLoadNotify();
+        }
+    }
+
     // Flow control: notify the main solver about catching up
     validate_cond_.notify_all();
 

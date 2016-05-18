@@ -160,6 +160,18 @@ public:
         validators_cands_info_[val] = cands;
     }
 
+    /**
+     * Check if the validator is having low load.
+     *
+     * For now the low load is defined to be below low watermark.
+     *
+     * @return true, if the validator is havinglow load
+     */
+    bool LowLoad() const {
+        return to_validate_total_.load(std::memory_order_relaxed) <
+                low_watermark_;
+    }
+
 private:
     // Type of validator forwarding
     enum class Forwarding {

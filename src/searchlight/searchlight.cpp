@@ -125,6 +125,33 @@ void Searchlight::AddTrackExpr(IntExpr *expr, const std::string &name) {
 	track_var_names_.insert(name);
 }
 
+void Searchlight::ReportIdleSolver(const SearchlightSolver &solver) {
+    const auto solver_type = solver.GetSolverType();
+    const auto solver_id = solver.GetGlobalID();
+    if (solver_type == SearchlightSolver::SolverType::MAIN) {
+        // Just pass-through
+        assert(!spec_exec_.relax_ && spec_exec_.active_.empty());
+        sl_task_.ReportIdleSolver(solver_id, true);
+    } else {
+        assert(solver_type == SearchlightSolver::SolverType::SPEC_RELAX);
+        assert(!spec_exec_.relax_);
+        std::lock_guard<std::mutex> lock{spec_exec_.mtx_};
+        spec_exec_.active_.erase(solver_id);
+        if (spec_exec_.active_.empty()) {
+            spec_exec_.main_wait_.notify_all();
+        }
+    }
+}
+
+bool Searchlight::CanRelaxSpec() const {
+    std::unique_lock<std::mutex> lock{spec_exec_.mtx_};
+    while (spec_exec_.relax_ &&
+            (!validator_->LowLoad() || !ReplaysAvailable())) {
+        spec_exec_.spec_wait_.wait(lock);
+    }
+    return spec_exec_.relax_;
+}
+
 size_t Searchlight::RegisterQuerySequence(AttributeID sattr,
 		const std::string &filename) {
 	const auto it = query_seqs_map_.find(filename);
@@ -174,9 +201,29 @@ void Searchlight::Prepare(const std::string &name, SLTaskFunc task_fun,
     // Create solvers
     for (int i = 0; i < solvers; i++) {
         const uint64_t solver_id = start_id + i;
-        solvers_.emplace_back(new SearchlightSolver(*this, solver_id, name));
+        solvers_.emplace_back(new SearchlightSolver(
+                SearchlightSolver::SolverType::MAIN, *this, solver_id, name));
         task_fun(this, i);
         // Note: task will call solver's prepare()
+    }
+
+    // And maybe speculative solvers
+    if (relax) {
+        const int spec_solvers = GetConfig().get("relax.spec", 0);
+        if (spec_solvers > 0) {
+            const std::string spec_name(name + "_spec");
+            spec_exec_.relax_ = true;
+            for (int i = solvers; i < solvers + spec_solvers; ++i) {
+                const uint64_t solver_id = start_id + i;
+                spec_exec_.active_.insert(solver_id);
+                solvers_.emplace_back(new SearchlightSolver(
+                        SearchlightSolver::SolverType::SPEC_RELAX, *this,
+                        solver_id, spec_name));
+                task_fun(this, i);
+            }
+            LOG4CXX_INFO(logger, "Created " << spec_solvers <<
+                " speculative relaxation solvers");
+        }
     }
 
     /*
@@ -202,7 +249,7 @@ void Searchlight::Prepare(const std::string &name, SLTaskFunc task_fun,
         validator_thread_ = new std::thread(std::ref(*validator_));
 
         // Prepare solvers
-        for (auto &solver: solvers_) {
+        for (const auto &solver: solvers_) {
             solver->Prepare(*validator_);
         }
     } else {
@@ -248,7 +295,7 @@ void SearchlightSolver::Prepare(Validator &validator) {
             // Add fail monitor
             search_monitors_.fail_monitor_ = solver_.RevAlloc(
                     new FailCollectorMonitor(solver_, *this, *relaxator));
-            if (sl_.GetConfig().get("relax.save_udfs", false)) {
+            if (sl_.GetConfig().get("relax.save_udfs", true)) {
                 // Need to find UDFs to save state for replays
                 UDFFinder udf_finder;
                 solver_.Accept(&udf_finder);
@@ -262,7 +309,10 @@ void SearchlightSolver::Prepare(Validator &validator) {
         }
 
         // Determine the worload; it will be assigned at Solve()
-        DetermineLocalWorkload();
+        if (solver_type_ == SolverType::MAIN) {
+            // This setup needed only for main search solvers
+            DetermineLocalWorkload();
+        }
 
         // Switch adapters to interval mode
         SetAdapterMode(Adapter::INTERVAL, false);
@@ -395,10 +445,30 @@ void SearchlightSolver::PrepareHelper(CandidateVector &load) {
 }
 
 bool SearchlightSolver::SolverHasWork() const {
-    return !local_load_.empty() ||
-           !helper_load_.empty() ||
-           non_solve_setup_ ||
-           (sl_.GetRelaxator() && sl_.GetRelaxator()->HasReplays());
+    switch (solver_type_) {
+        case SolverType::MAIN:
+            /*
+             * The main solver should go for work if:
+             *
+             * 1) It has a local load (some initial slices)
+             * 2) Remote work (helper load)
+             * 3) It was setup by somebody (non-solve setup)
+             * 4) It has fails to replay
+             * 5) Speculation is still active
+             */
+            return !local_load_.empty() ||
+                   !helper_load_.empty() ||
+                   non_solve_setup_ ||
+                   sl_.ReplaysAvailable() ||
+                   sl_.spec_exec_.SpecActive();
+            break;
+        case SolverType::SPEC_RELAX:
+            return sl_.CanRelaxSpec();
+            break;
+        default:
+            assert(false);
+            return false;
+    }
 }
 
 void SearchlightSolver::DetermineLocalWorkload() {
@@ -553,8 +623,23 @@ void SearchlightSolver::Solve() {
                     solver_has_work = SolverHasWork();
                     continue;
                 }
+                // If a main solver started replays, disable speculative
+                if (solver_type_ == SolverType::MAIN) {
+                    sl_.spec_exec_.TurnOffRelax();
+                }
             } else {
-                assert(false);
+                /*
+                 * Wait. Might happen for two reasons:
+                 *
+                 * 1) A main solver is finished, but speculative aren't
+                 * 2) Speculative solver has to wait for a new work
+                 */
+                if (solver_type_ == SolverType::MAIN) {
+                    sl_.spec_exec_.TurnOffRelax();
+                    sl_.spec_exec_.WaitForSpec();
+                }
+                solver_has_work = SolverHasWork();
+                continue;
             }
 
             /*
@@ -646,12 +731,15 @@ void SearchlightSolver::Solve() {
         solver_has_work = SolverHasWork();
     }
 
-    LOG4CXX_INFO(logger, "Finished solver's workload...");
+    const std::string solver_type_str(solver_type_ == SolverType::SPEC_RELAX ?
+            "speculative" : "main");
+    LOG4CXX_INFO(logger, "Finished " << solver_type_str <<
+        " solver's workload...");
     if (status_ != Status::TERMINATED) {
         status_ = Status::VOID;
 
         // Report idleness
-        sl_.sl_task_.ReportIdleSolver(id_, true);
+        sl_.ReportIdleSolver(*this);
 
         // Then get rid of remaining helpers
         RejectHelpers(false);

@@ -294,19 +294,29 @@ public:
     };
 
     /**
+     * Solver type.
+     */
+    enum class SolverType {
+        MAIN,       //!< MAIN main search solver
+        SPEC_RELAX  //!< SPEC_RELAX speculative relax solver
+    };
+
+    /**
      * Constructs a new solver.
      *
+     * @param type solver type
      * @param sl searchlight instance
      * @param id solver's id (instance + global ordinal)
      * @param sl_name name of the model (search)
      */
-    SearchlightSolver(Searchlight &sl, uint64_t id,
+    SearchlightSolver(SolverType type, Searchlight &sl, uint64_t id,
             const std::string &sl_name) :
         sl_(sl),
         solver_(sl_name + "_" + std::to_string(id)),
         db_(nullptr),
         vars_leaf_(&solver_),
         status_(Status::VOID),
+        solver_type_{type},
         id_(id) {}
 
     /**
@@ -563,6 +573,24 @@ public:
     }
 
     /**
+     * Rteurn global solver ID.
+     *
+     * @return global solver ID
+     */
+    uint64_t GetGlobalID() const {
+        return id_;
+    }
+
+    /**
+     * Get solver type.
+     *
+     * @return solver type
+     */
+    SolverType GetSolverType() const {
+        return solver_type_;
+    }
+
+    /**
      * Return solver's status.
      *
      * @return solver's status
@@ -713,6 +741,9 @@ private:
 
     // Searchlight status
     std::atomic<Status> status_;
+
+    // Solver type
+    const SolverType solver_type_;
 
     // Helpers currently dispatched for this solver
     std::list<uint64_t> helpers_;
@@ -1049,7 +1080,7 @@ public:
      * Starts the solvers.
      */
     void StartSolvers() {
-        for (auto &s: solvers_) {
+        for (const auto &s: solvers_) {
             s->Start();
         }
     }
@@ -1140,9 +1171,83 @@ public:
         return relaxator_.get();
     }
 
+    /**
+     * Notify Searchlight about a new registered fail.
+     */
+    void NewFailNotify() const {
+        spec_exec_.WakeUpASpec();
+    }
+
+    /**
+     * Notify about low Validator load.
+     */
+    void ValidatorLowLoadNotify() const {
+        spec_exec_.WakeUpASpec();
+    }
+
 private:
 
     friend class SearchlightSolver;
+
+    // Speculative execution info
+    struct SpeculativeExecution {
+        // Active speculative solvers
+        std::unordered_set<uint64_t> active_;
+        // Speculative relaxation?
+        std::atomic<bool> relax_{false};
+        // Waiting main solvers
+        mutable std::condition_variable main_wait_;
+        // Waiting spec solvers
+        mutable std::condition_variable spec_wait_;
+        // Mutex
+        mutable std::mutex mtx_;
+
+        void WakeUpASpec() const {
+            if (relax_.load(std::memory_order_relaxed)) {
+                spec_wait_.notify_one();
+            }
+        }
+
+        void TurnOffRelax() {
+            relax_ = false;
+            spec_wait_.notify_all();
+        }
+
+        // Are we still running speculative stuff?
+        bool SpecActive() const {
+            std::lock_guard<std::mutex> lock{mtx_};
+            return SpecActive_NL();
+        }
+
+        // Wait for speculation to end
+        void WaitForSpec() const {
+            std::unique_lock<std::mutex> lock{mtx_};
+            while (SpecActive_NL()) {
+                main_wait_.wait(lock);
+            }
+        }
+
+    private:
+        bool SpecActive_NL() const {
+            return relax_ || !active_.empty();
+        }
+    } spec_exec_;
+
+    // Return speculative execution info
+    SpeculativeExecution &SpecInfo() {
+        return spec_exec_;
+    }
+
+    // For reporting idle solvers
+    void ReportIdleSolver(const SearchlightSolver &solver);
+
+    // Check if we can relax speculatively
+    bool CanRelaxSpec() const;
+
+    // Fail replays might be available
+    bool ReplaysAvailable() const {
+        return relaxator_ && relaxator_->HasReplays();
+    }
 
     // Solvers on this instance
     std::vector<std::unique_ptr<SearchlightSolver>> solvers_;
