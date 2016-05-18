@@ -627,7 +627,11 @@ void SearchlightSolver::Solve() {
                 }
                 // If a main solver started replays, disable speculative
                 if (solver_type_ == SolverType::MAIN) {
+                    LOG4CXX_INFO(logger, "Turning off speculative relaxation");
                     sl_.spec_exec_.TurnOffRelax();
+                } else {
+                    assert(solver_type_ == SolverType::SPEC_RELAX);
+                    LOG4CXX_DEBUG(logger, "Speculative solver got a replay");
                 }
             } else {
                 /*
@@ -637,7 +641,9 @@ void SearchlightSolver::Solve() {
                  * 2) Speculative solver has to wait for a new work
                  */
                 if (solver_type_ == SolverType::MAIN) {
+                    LOG4CXX_INFO(logger, "Turning off speculative relaxation");
                     sl_.spec_exec_.TurnOffRelax();
+                    LOG4CXX_INFO(logger, "Waiting for speculative relaxation");
                     sl_.spec_exec_.WaitForSpec();
                 }
                 solver_has_work = SolverHasWork();
