@@ -66,6 +66,11 @@ public:
             const StringVector &var_names);
 
     /**
+     * Destructor.
+     */
+    ~Validator();
+
+    /**
      * Adds a solution (assignment) to validate later.
      *
      * @param sol the solution to validate
@@ -181,6 +186,27 @@ private:
         // Based on the chunks each validator has (static + dynamic)
         DYNAMIC
     };
+
+    // Validator stats
+    struct Stats {
+        // Total candidates registered
+        std::atomic<size_t> total_cands_{0};
+        // Total forwards
+        std::atomic<size_t> total_forw_{0};
+        // Total re0forwards
+        std::atomic<size_t> total_reforw_{0};
+        // Local checks (disk)
+        std::atomic<size_t> local_check_{0};
+        // Remote checks (disk)
+        std::atomic<size_t> remote_check_{0};
+        // Relaxation pre-check filtered (based on LRD/spec)
+        std::atomic<size_t> relax_pre_filtered_{0};
+        // Relaxation post-check filtered (based on LRD)
+        std::atomic<size_t> relax_post_filtered_{0};
+    } stats_;
+    // Output to stream
+    friend std::ostream &operator<<(std::ostream &os,
+        const Validator::Stats &vs);
 
     /*
      * We define the DB as a friend to grab the next portion of assignments

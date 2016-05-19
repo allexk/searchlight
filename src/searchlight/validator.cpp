@@ -38,6 +38,19 @@ namespace searchlight {
 static log4cxx::LoggerPtr logger(
         log4cxx::Logger::getLogger("searchlight.validator"));
 
+// Output validator stats to a stream
+std::ostream &operator<<(std::ostream &os, const Validator::Stats &vs) {
+    os << "Validator stats:\n";
+    os << "\tTotal canidates: " << vs.total_cands_ << '\n';
+    os << "\tForwarded: " << vs.total_forw_ << '\n';
+    os << "\tRe-forwarded: " << vs.total_reforw_ << '\n';
+    os << "\tLocal checks: " << vs.local_check_ << '\n';
+    os << "\tRemote checks: " << vs.remote_check_ << '\n';
+    os << "\tRelax pre-filter: " << vs.relax_pre_filtered_ << '\n';
+    os << "\tRelax post-filter: " << vs.relax_post_filtered_ << '\n';
+    return os;
+}
+
 /**
  * A decision that just restores the given assignment causing the corresponding
  * variables to take the values from the assignment. In its right branch it
@@ -206,6 +219,8 @@ public:
         if (last_action_.type_ != Action::Type::NOP) {
             // We performed some action: should handle the result
             if (last_action_.type_ == Action::Type::LOCAL_CHECK) {
+                validator_.stats_.local_check_.fetch_add(
+                        1, std::memory_order_relaxed);
                 if (action_succeeded_) {
                     LiteVarAssignment lite_asgn;
                     FullAssignmentToLite(relax_asgn_, lite_asgn);
@@ -220,15 +235,25 @@ public:
                         validator_.sl_task_.ReportSolution(
                                 asgns_.back().var_asgn_.mins_,
                                 lite_asgn.mins_);
+                    } else {
+                        validator_.stats_.relax_post_filtered_.fetch_add(
+                                1, std::memory_order_relaxed);
                     }
                 }
             } else if (last_action_.type_ == Action::Type::REMOTE_CHECK) {
+                validator_.stats_.remote_check_.fetch_add(
+                        1, std::memory_order_relaxed);
                 LiteVarAssignment lite_asgn;
                 FullAssignmentToLite(relax_asgn_, lite_asgn);
                 double asgn_rd = -1;
-                action_succeeded_ = action_succeeded_ &&
-                      validator_.CheckRelaxation(lite_asgn, asgn_rd, true);
                 if (action_succeeded_) {
+                    const bool lrd_check = validator_.CheckRelaxation(
+                            lite_asgn, asgn_rd, true);
+                    if (!lrd_check) {
+                        validator_.stats_.relax_post_filtered_.fetch_add(
+                                1, std::memory_order_relaxed);
+                        action_succeeded_ = false;
+                    }
                     lite_asgn.clear();
                 	FullAssignmentToLite(track_vars_asgn_, lite_asgn);
                 	if (asgn_rd != -1) {
@@ -315,6 +340,8 @@ public:
                 break;
             } else {
                 // Didn't pass the LRD check -- ignore
+                validator_.stats_.relax_pre_filtered_.fetch_add(
+                        1, std::memory_order_relaxed);
                 if (ca.forw_id_ >= 0) {
                     validator_.SendForwardResult(ca.forw_id_, false, {});
                 }
@@ -596,6 +623,12 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
     validators_cands_info_.resize(active_validators.size());
 }
 
+Validator::~Validator() {
+    std::ostringstream os;
+    os << stats_;
+    LOG4CXX_INFO(logger, os.str());
+}
+
 void Validator::AddSolution(const Assignment &sol,
                             const Int64Vector &rel_const) {
     LiteVarAssignment lite_sol;
@@ -625,6 +658,7 @@ void Validator::AddSolution(const Assignment &sol,
 }
 
 void Validator::PushCandidate(CandidateAssignment &&asgn, size_t zone) {
+    stats_.total_cands_.fetch_add(1, std::memory_order_relaxed);
     auto &zone_cands = to_validate_[zone];
     if (zone_cands.empty() || zone_cands.back().size() >= helper_workload_) {
         zone_cands.emplace_back();
@@ -827,7 +861,7 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
 //            }
 //            coords.emplace_back(dedup_coords.begin(), dedup_coords.end());
 //        }
-
+        stats_.total_forw_.fetch_add(1, std::memory_order_relaxed);
         sl_task_.ForwardCandidates({asgn}, zones, active_validators[max_inst],
                 cand_id);
         return true;
@@ -1093,10 +1127,14 @@ void Validator::RebalanceAndSend(size_t cands, int validator) {
     if (!reforwards.empty()) {
         sl_task_.ForwardCandidates(reforwards, reforwards_zones,
                 active_validators[validator], start_reforw_id);
+        stats_.total_reforw_.fetch_add(
+                reforwards.size(), std::memory_order_relaxed);
     }
     if (!forwards.empty()) {
         sl_task_.ForwardCandidates(forwards, forwards_zones,
                 active_validators[validator], start_forw_id);
+        stats_.total_forw_.fetch_add(
+                forwards.size(), std::memory_order_relaxed);
     }
 }
 
