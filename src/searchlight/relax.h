@@ -583,6 +583,19 @@ public:
 	}
 
 	/**
+	 * Compute current VC-specification and best RD for it.
+	 *
+	 * Current means for the current state of the solver. The function should
+	 * be called when the solver is paused, e.g., at a leaf.
+	 *
+	 * @param sid local solver id
+	 * @param rd best relaxation degree (out)
+	 * @param vc VC-specification (out)
+	 * @return true, if the current state is relaxable; fals, otherwise
+	 */
+	bool ComputeCurrentVCAndRD(size_t sid, double &rd, Int64Vector &vc) const;
+
+	/**
 	 * Return current LRD.
 	 *
 	 * @return current LRD
@@ -677,9 +690,10 @@ public:
 	 * corresponds to the maximum possible relaxation distances for each
 	 * according to the LRD.
 	 *
+	 * @param viol_num number of violated constraints
 	 * @return VC specification with maximal relaxation
 	 */
-	Int64Vector GetMaximumRelaxationVCSpec() const;
+	Int64Vector GetMaximumRelaxationVCSpec(size_t viol_num) const;
 
 	/**
 	 * Check if re-replays might be needed.
@@ -796,6 +810,20 @@ private:
 		    h = MaxRelaxDist(false);
 		    if (h != kint64max) {
                 h = int_.Max() + h * max_relax;
+		    }
+		}
+
+		// Corrects maximum relaxation for the interval
+		void CorrectMaxRelaxInerval(double max_relax, int64_t &l,
+		                            int64_t &h) const {
+		    int64_t min_l, max_h;
+		    MaxRelaxDist(max_relax, min_l, max_h);
+		    if (l > int_.Max()) {
+		        // l-h is to the right
+		        h = std::min(h, max_h);
+		    } else if( h < int_.Min()) {
+		        // l-h is to the left
+		        l = std::max(l, min_l);
 		    }
 		}
 

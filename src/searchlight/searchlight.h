@@ -188,15 +188,15 @@ public:
     }
 
     /**
-     * Set violated constraints specification.
+     * Return the number of candidates filtered on LRD.
      *
-     * This vector will be used to propagate violated constraints info to
-     * the validator with each collected candidate.
+     * Every leaf is checked for LRD, in case we're relaxing. The number of
+     * filtered candidates this way is returned by this function.
      *
-     * @param vc_spec violated constraints specification
+     * @return filtered candidates number
      */
-    void SetVCSpec(const Int64Vector &vc_spec) {
-        current_vc_spec_ = vc_spec;
+    int64_t FilteredCandidatesNumber() const {
+        return candidates_filtered_;
     }
 
 private:
@@ -213,10 +213,7 @@ private:
     const IntVarVector vars_;
 
     // Candidates encountered
-    int64_t candidates_ = 0;
-
-    // Violated constraints specification
-    Int64Vector current_vc_spec_;
+    int64_t candidates_ = 0, candidates_filtered_ = 0;
 };
 
 /**
@@ -675,6 +672,13 @@ public:
      * @return local instance solver id
      */
     uint32_t GetLocalID() const;
+
+    /**
+     * Return relaxator.
+     *
+     * @return relaxator (nullptr, if not relaxing)
+     */
+    Relaxator *GetRelaxator() const;
 
 private:
     // Reject/release helpers

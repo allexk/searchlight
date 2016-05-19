@@ -96,9 +96,12 @@ SearchlightSolver::~SearchlightSolver() {
         const int64 total_fails = solver_.failures();
         const int64_t total_candidates =
                 search_monitors_.validator_monitor_->CandidatesNumber();
+        const int64_t filtered_candidates =
+                search_monitors_.validator_monitor_->FilteredCandidatesNumber();
         LOG4CXX_INFO(logger, "Main search stats: fails=" << total_fails <<
                 ", true fails=" << (total_fails - total_candidates) <<
-                ", candidates=" << total_candidates);
+                ", candidates=" << total_candidates <<
+                ", filtered=" << filtered_candidates);
     }
 
     if (status_ != Status::FINISHED) {
@@ -595,6 +598,11 @@ void SearchlightSolver::SetRelaxatorMonitor(bool fail_replay) {
     }
 }
 
+Relaxator *SearchlightSolver::GetRelaxator() const {
+    return sl_.GetRelaxator();
+}
+
+
 void SearchlightSolver::Solve() {
     // Enter the search
     status_ = Status::SEARCHING;
@@ -686,7 +694,6 @@ void SearchlightSolver::Solve() {
                 sl_.GetRelaxator()->ApplyViolatedConstSpec(current_vc_spec_,
                                SearchlightTask::GetLocalIDFromSolverID(id_));
             }
-            search_monitors_.validator_monitor_->SetVCSpec(current_vc_spec_);
             vars_leaf_.UnfreezeQueue();
         } else {
             // Set the relaxator monitor for external setup as well
@@ -767,7 +774,26 @@ bool ValidatorMonitor::AtSolution() {
     LOG4CXX_TRACE(logger, "Encountered a leaf: " << asgn->DebugString() <<
             ", depth=" << solver()->SearchDepth());
     candidates_++;
-    validator_.AddSolution(*asgn, current_vc_spec_);
+    // If we're relaxing, compute VC and RD
+    const Relaxator *relaxator = sl_solver_.GetRelaxator();
+    bool will_validate = true;
+    double rd;
+    Int64Vector vc;
+    if (relaxator) {
+        will_validate = relaxator->ComputeCurrentVCAndRD(
+                sl_solver_.GetLocalID(), rd, vc);
+    }
+    if (will_validate) {
+        // Should submit
+        CandidateAssignment cas;
+        FullAssignmentToLite(*asgn, cas.var_asgn_);
+        cas.relaxed_constrs_ = std::move(vc);
+        cas.best_rd_ = rd;
+        validator_.AddSolution(std::move(cas));
+    } else {
+        LOG4CXX_TRACE(logger, "Ignoring the leaf due to high RD: " << rd);
+        candidates_filtered_++;
+    }
     // Make the leaf fail custom -- we never want catching that
     sl_solver_.BeginCustomFail();
     return true;

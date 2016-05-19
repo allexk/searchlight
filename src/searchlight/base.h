@@ -149,6 +149,11 @@ struct CandidateAssignment {
      * When we send candidates for forward, forw_id_ >=0
      */
     int64_t forw_id_;
+
+    /**
+     * Best relaxation degree possible for the assignment.
+     */
+    double best_rd_;
 };
 
 /**

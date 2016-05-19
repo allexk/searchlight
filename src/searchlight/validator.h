@@ -73,10 +73,9 @@ public:
     /**
      * Adds a solution (assignment) to validate later.
      *
-     * @param sol the solution to validate
-     * @param rel_consts relaxed constraints
+     * @param cas canidate assignment
      */
-    void AddSolution(const Assignment &sol, const Int64Vector &rel_const);
+    void AddSolution(CandidateAssignment &&cas);
 
     /**
      * Submits forwarded candidates for validation.
@@ -373,8 +372,8 @@ private:
     bool CheckRelaxation(const LiteVarAssignment &relax_asgn, double &rd,
                          bool report_rd) const;
 
-    // Check best relaxation degree for the violated constraint spec.
-    bool CheckBestRelaxation(const Int64Vector &vc) const;
+    // Check if the candidate passes LRD.
+    bool CheckCandidateRD(const CandidateAssignment &ca) const;
 
     // Compute maximum relaxation VC
     void GetMaximumRelaxationVC(Int64Vector &vc) const;

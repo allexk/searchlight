@@ -275,6 +275,34 @@ void Relaxator::UpdateTimeStats(RelaxatorStats &stats,
     }
 }
 
+bool Relaxator::ComputeCurrentVCAndRD(size_t sid, double &rd,
+                                      Int64Vector &vc) const {
+    vc.reserve(orig_consts_.size() * 3);
+    for (size_t i = 0; i < orig_consts_.size(); ++i) {
+        const ConstraintInfo &ci = orig_consts_[i];
+        const IntExpr *c_expr = ci.solver_const_[sid]->GetExpr();
+        const int64_t cmin = int64_t(c_expr->Min());
+        const int64_t cmax = int64_t(c_expr->Max());
+        // if cmin > cmax, that means the constraint cannot be fulfilled ever
+        assert(cmin <= cmax);
+        if (cmin > ci.int_.Max() || cmax < ci.int_.Min()) {
+            // violation to the right or left
+            vc.insert(vc.end(), {int64_t(i), cmin, cmax});
+        }
+    }
+    assert(vc.size() % 3 == 0);
+    const size_t viol_consts = vc.size() / 3;
+    if (viol_consts) {
+        const double max_relax = MaxUnitRelaxDistance(viol_consts);
+        for (size_t i = 0; i < vc.size(); i += 3) {
+            orig_consts_[vc[i]].CorrectMaxRelaxInerval(max_relax, vc[i + 1],
+                                                       vc[i + 2]);
+        }
+        rd = ComputeViolSpecBestRelaxationDegree(vc);
+    }
+    return vc.empty() || rd <= lrd_.load(std::memory_order_relaxed);
+}
+
 void Relaxator::RegisterFail(size_t solver_id, RegisterHeuristic rh) {
 	// Compute relaxation degree: first pass, determine violated constraints
     const SolverReplayInfo &solver_info = solver_info_[solver_id];
@@ -498,10 +526,10 @@ Int64Vector Relaxator::ViolConstSpec(const FailReplay &replay) const {
     return res;
 }
 
-Int64Vector Relaxator::GetMaximumRelaxationVCSpec() const {
+Int64Vector Relaxator::GetMaximumRelaxationVCSpec(size_t viol_num) const {
     Int64Vector res(orig_consts_.size() * 3);
     // Maximum distance is reached when only 1 constraint is violated
-    const double max_relax_dist = MaxUnitRelaxDistance(1);
+    const double max_relax_dist = MaxUnitRelaxDistance(viol_num);
     if (max_relax_dist <= 0.0) {
         // No violations possible
         res.clear();

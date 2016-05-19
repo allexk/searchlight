@@ -194,10 +194,7 @@ public:
           last_asgn_{new Assignment{prototype}},
 		  track_vars_asgn_{&track_prototype},
 		  relax_asgn_{&relax_prototype},
-          slave_{slave} {
-              // Initial VC (See comment for the same call at Next())
-              validator_.GetMaximumRelaxationVC(maximum_relax_vc_);
-          }
+          slave_{slave} {}
 
 
     /**
@@ -270,22 +267,23 @@ public:
                 // Simulation finished: we need to decide if we want to forward
                 assert(action_succeeded_);
                 adapter_->StopCollectingStats();
+                const CandidateAssignment &last_cas = asgns_.back();
                 const bool forwarded =
                         validator_.CheckForward(
                                 adapter_->GetCurrentStats().chunks_pos_,
-                                asgns_.back());
+                                last_cas);
                 if (!forwarded) {
                     if (validator_.LocalZonesNumber() > 1) {
                         validator_.PushToLocalZone(
                                 adapter_->GetCurrentStats().chunks_pos_,
-                                asgns_.back());
+                                last_cas);
                     } else {
                         // one zone, check here
                         last_action_.type_ = Action::Type::LOCAL_CHECK;
                         adapter_->SetAdapterMode(Adapter::EXACT);
                         return solver->RevAlloc(
                                 new RestoreAssignment{last_asgn_.get(),
-                                    maximum_relax_vc_,
+                                    last_cas.relaxed_constrs_,
                                     constrs_});
                     }
                 }
@@ -314,19 +312,6 @@ public:
                         return solver->MakeFailDecision();
                     }
                     asgns_.swap(*new_asgns);
-                    /*
-                     * If we're relaxing get the new maximum relaxation VC.
-                     * We need this, since candidates might fail the currently
-                     * non-relaxed constraint, but still qualify for a relaxed
-                     * result (by passing the LRD check).
-                     *
-                     * Strictly speaking, we could obtain this vector for
-                     * before validating every candidate or at every LRD change,
-                     * but as a small performance optimization, we do it once
-                     * per batch
-                     */
-                    validator_.GetMaximumRelaxationVC(maximum_relax_vc_);
-
                     LOG4CXX_TRACE(logger, "Got " << asgns_.size()
                             << " new assignments to check");
                     delete new_asgns;
@@ -337,12 +322,15 @@ public:
             }
             assert(!asgns_.empty());
             const CandidateAssignment &ca = asgns_.back();
-            if (ca.relaxed_constrs_.empty() ||
-                    validator_.CheckBestRelaxation(ca.relaxed_constrs_)) {
+            if (validator_.CheckCandidateRD(ca)) {
                 // Exit if this is not a relaxation or if it passes LRD
                 break;
             } else {
-                // Didn't pass the LRD check -- ignore
+                /*
+                 * Didn't pass the LRD check -- ignore. We do the check based
+                 * on the best RD obtained in the solver's leaf. Since we
+                 * haven't had any new info since, the check is up-to-date.
+                 */
                 validator_.stats_.relax_pre_filtered_.fetch_add(
                         1, std::memory_order_relaxed);
                 if (ca.forw_id_ >= 0) {
@@ -353,8 +341,18 @@ public:
         }
 
         // Prepare assignment
-        const int64_t forw_id = asgns_.back().forw_id_;
-        LiteToFullAssignment(*last_asgn_, asgns_.back().var_asgn_);
+        CandidateAssignment &ca = asgns_.back();
+        /*
+         * If we're relaxing, get the new maximum relaxation VC.
+         * We need this, since candidates might fail the currently
+         * non-relaxed constraint, but still qualify for a relaxed
+         * result (by passing the LRD check).
+         *
+         * Note, this might modify the candidate's VC.
+         */
+        validator_.GetMaximumRelaxationVC(ca.relaxed_constrs_);
+        const int64_t forw_id = ca.forw_id_;
+        LiteToFullAssignment(*last_asgn_, ca.var_asgn_);
 
         last_action_.forward_id_ = forw_id;
         if (forw_id >= 0) {
@@ -378,7 +376,7 @@ public:
         }
 
         return solver->RevAlloc(new RestoreAssignment{last_asgn_.get(),
-            maximum_relax_vc_, constrs_});
+            ca.relaxed_constrs_, constrs_});
     }
 
     /**
@@ -459,9 +457,6 @@ public:
 
     // Relaxable constraints
     const RelaxableConstraints &constrs_;
-
-    // Maximum relaxation VC specification
-    Int64Vector maximum_relax_vc_;
 
     // Assignments to validate
     CandidateVector asgns_;
@@ -632,17 +627,11 @@ Validator::~Validator() {
     LOG4CXX_INFO(logger, os.str());
 }
 
-void Validator::AddSolution(const Assignment &sol,
-                            const Int64Vector &rel_const) {
-    LiteVarAssignment lite_sol;
-    FullAssignmentToLite(sol, lite_sol);
-
-    LOG4CXX_TRACE(logger, "New solution to validate: " << sol.DebugString());
-
+void Validator::AddSolution(CandidateAssignment &&cas) {
     std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
     stats_.total_local_cands_.fetch_add(1, std::memory_order_relaxed);
-    PushCandidate({std::move(lite_sol), rel_const, -1},
-                  to_validate_.size() - 1);
+    cas.forw_id_ = -1;
+    PushCandidate(std::move(cas), to_validate_.size() - 1);
 
     // We might have to wait -- flood control
     while (to_validate_total_.load(std::memory_order_relaxed) >
@@ -895,19 +884,23 @@ bool Validator::CheckRelaxation(const LiteVarAssignment &relax_asgn, double &rd,
     return passes_lrd;
 }
 
-bool Validator::CheckBestRelaxation(const Int64Vector &vc) const {
-    if (!relaxator_) {
-        // Not relaxing; check always passes
-        return true;
-    }
-    const double lrd = relaxator_->GetLRD();
-    const double rd = relaxator_->ComputeViolSpecBestRelaxationDegree(vc);
-    return rd <= lrd;
+bool Validator::CheckCandidateRD(const CandidateAssignment &ca) const {
+    assert(ca.relaxed_constrs_.empty() || relaxator_);
+    return !relaxator_ || ca.relaxed_constrs_.empty() ||
+            ca.best_rd_ <= relaxator_->GetLRD();
 }
 
 void Validator::GetMaximumRelaxationVC(Int64Vector &vc) const {
     if (relaxator_) {
-        vc = relaxator_->GetMaximumRelaxationVCSpec();
+        assert(vc.size() % 3 == 0);
+        // vc spec consists of triplets
+        const size_t viol_num = vc.size() / 3;
+        /*
+         * Note, viol_num might be 0, if there're no violations. In this case,
+         * the validated result might still be a relaxed one and pass LRD.
+         * We use 1 probable violation to determine the maximum intervals.
+         */
+        vc = relaxator_->GetMaximumRelaxationVCSpec(viol_num ? viol_num : 1);
     }
 }
 
