@@ -189,8 +189,10 @@ private:
 
     // Validator stats
     struct Stats {
-        // Total candidates registered
-        std::atomic<size_t> total_cands_{0};
+        // Total local candidates registered
+        std::atomic<size_t> total_local_cands_{0};
+        // Total remote candidates registered
+        std::atomic<size_t> total_remote_cands_{0};
         // Total forwards
         std::atomic<size_t> total_forw_{0};
         // Total re0forwards

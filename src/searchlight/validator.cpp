@@ -41,7 +41,10 @@ static log4cxx::LoggerPtr logger(
 // Output validator stats to a stream
 std::ostream &operator<<(std::ostream &os, const Validator::Stats &vs) {
     os << "Validator stats:\n";
-    os << "\tTotal canidates: " << vs.total_cands_ << '\n';
+    os << "\tTotal canidates: " <<
+            vs.total_local_cands_ + vs.total_remote_cands_ <<
+            " (local: " << vs.total_local_cands_ <<
+            ", remote: " << vs.total_remote_cands_ << ")\n";
     os << "\tForwarded: " << vs.total_forw_ << '\n';
     os << "\tRe-forwarded: " << vs.total_reforw_ << '\n';
     os << "\tLocal checks: " << vs.local_check_ << '\n';
@@ -637,6 +640,7 @@ void Validator::AddSolution(const Assignment &sol,
     LOG4CXX_TRACE(logger, "New solution to validate: " << sol.DebugString());
 
     std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
+    stats_.total_local_cands_.fetch_add(1, std::memory_order_relaxed);
     PushCandidate({std::move(lite_sol), rel_const, -1},
                   to_validate_.size() - 1);
 
@@ -658,7 +662,6 @@ void Validator::AddSolution(const Assignment &sol,
 }
 
 void Validator::PushCandidate(CandidateAssignment &&asgn, size_t zone) {
-    stats_.total_cands_.fetch_add(1, std::memory_order_relaxed);
     auto &zone_cands = to_validate_[zone];
     if (zone_cands.empty() || zone_cands.back().size() >= helper_workload_) {
         zone_cands.emplace_back();
@@ -704,6 +707,8 @@ void Validator::AddRemoteCandidates(CandidateVector &cands,
         PushCandidate(std::move(cands[i]), zones[i]);
         remote_candidates_.emplace(cand_id, std::make_pair(src, forw_id++));
     }
+    stats_.total_remote_cands_.fetch_add(
+            cands.size(), std::memory_order_relaxed);
     validate_cond_.notify_all();
 }
 
