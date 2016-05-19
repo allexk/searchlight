@@ -146,7 +146,7 @@ void Searchlight::ReportIdleSolver(const SearchlightSolver &solver) {
 bool Searchlight::CanRelaxSpec() const {
     std::unique_lock<std::mutex> lock{spec_exec_.mtx_};
     while (spec_exec_.relax_ &&
-            (!validator_->LowLoad() || !ReplaysAvailable())) {
+            (!validator_->Idle() || !ReplaysAvailable())) {
         spec_exec_.spec_wait_.wait(lock);
     }
     return spec_exec_.relax_;

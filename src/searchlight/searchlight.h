@@ -64,6 +64,14 @@ class Relaxator;
 typedef void (*SLTaskFunc)(Searchlight *, uint32_t);
 
 /**
+ * Various events searchlight can be notified of.
+ */
+enum class SearchlightEvent {
+    VALIDATOR_IDLE,  //!< VALIDATOR_IDLE     validator is idle
+    REPLAY_REGISTERED//!< REPLAY_REGISTERED  new replay registered
+};
+
+/**
  * This class manages supplementary DLL resources required by Searchlight.
  * It is guaranteed to close all opened libraries at the end, on destruction.
  * It also serves as a map of names->dll handles, thus allowing retrieval of
@@ -1171,18 +1179,13 @@ public:
         return relaxator_.get();
     }
 
-    /**
-     * Notify Searchlight about a new registered fail.
-     */
-    void NewFailNotify() const {
-        spec_exec_.WakeUpASpec();
-    }
-
-    /**
-     * Notify about low Validator load.
-     */
-    void ValidatorLowLoadNotify() const {
-        spec_exec_.WakeUpASpec();
+    void EventNotify(SearchlightEvent event) const {
+        switch (event) {
+            case SearchlightEvent::VALIDATOR_IDLE:
+            case SearchlightEvent::REPLAY_REGISTERED:
+                spec_exec_.WakeUpASpec();
+                break;
+        }
     }
 
 private:

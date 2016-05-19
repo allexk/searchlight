@@ -167,9 +167,8 @@ public:
      *
      * @return true, if the validator is havinglow load
      */
-    bool LowLoad() const {
-        return to_validate_total_.load(std::memory_order_relaxed) <
-                low_watermark_;
+    bool Idle() const {
+        return to_validate_total_.load(std::memory_order_relaxed) == 0;
     }
 
 private:

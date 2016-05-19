@@ -367,7 +367,7 @@ void Relaxator::RegisterFail(size_t solver_id, RegisterHeuristic rh) {
         UpdateTimeStats(rel_stats, reg_start_time, true);
 	}
 	// Notify Searchlight
-	sl_.NewFailNotify();
+	sl_.EventNotify(SearchlightEvent::REPLAY_REGISTERED);
 }
 
 double Relaxator::ComputeResultRelaxationDegree(
