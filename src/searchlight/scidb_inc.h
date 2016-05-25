@@ -137,6 +137,11 @@ using scidb::NetworkManager;
 typedef boost::shared_ptr<Array> ArrayPtr;
 
 /**
+ * Map for attributes: name -> ID.
+ */
+typedef std::unordered_map<std::string, AttributeID> AttributeMap;
+
+/**
  * Vector of SciDb array pointers.
  */
 typedef std::vector<ArrayPtr> ArrayPtrVector;
@@ -203,6 +208,45 @@ typedef std::unordered_set<Coordinates, CoordinatesHash> CoordinateSet;
  */
 typedef std::array<Coordinate, 1> Coordinates1D;
 
+/**
+ * Convenience struct for storing a region: a pair of coordinate vectors.
+ */
+struct Region {
+    Coordinates low_, high_;
+
+    /**
+     * Return the area of the region.
+     *
+     * @return region area
+     */
+    size_t Area() const {
+        size_t res = 1;
+        for (size_t i = 0; i < low_.size(); i++) {
+            res *= high_[i] - low_[i] + 1;
+        }
+        return res;
+    }
+
+    /**
+     * Return the ratio of this region's area to the other's.
+     *
+     * @param other other region
+     * @return areas ratio
+     */
+    double AreaRatio(const Region &other) const {
+        assert(low_.size() == high_.size());
+        assert(low_.size() == other.low_.size());
+        assert(other.low_.size() == other.high_.size());
+
+        double res = 1;
+        for (size_t i = 0; i < low_.size(); i++) {
+            const double len = high_[i] - low_[i] + 1;
+            const size_t other_len = other.high_[i] - other.low_[i] + 1;
+            res *= len / other_len;
+        }
+        return res;
+    }
+};
 } /* namespace searchlight */
 
 #undef BOOST_NO_CXX11_EXPLICIT_CONVERSION_OPERATORS

@@ -228,15 +228,13 @@ public:
          * where high[i] >= low[i].
          */
         RegionIterator(GridSynopsis &synopsis, const Coordinates &low,
-                const Coordinates &high) :
-                    pos_(low),
-                    cell_pos_(-1),
-                    region_low_(low),
-                    region_high_(high),
-                    synopsis_(synopsis),
-                    valid_(true) {
-            cell_pos_ = GetCellPos();
-        }
+                       const Coordinates &high) :
+                region_low_(low),
+                region_high_(high),
+                synopsis_(synopsis),
+                cell_reader_{synopsis.synopsis_array_, synopsis.attributes_},
+                pos_{low},
+                cell_pos_{GetCellPos()} {}
 
         /**
          * Return cell reader for the iterator.
@@ -288,12 +286,6 @@ public:
             }
         }
 
-        // Current position
-        Coordinates pos_;
-
-        // Current linear cell position (to use for the cell cache)
-        uint64_t cell_pos_;
-
         // Boundaries for the region
         Coordinates region_low_, region_high_;
 
@@ -304,7 +296,13 @@ public:
         mutable CellReader cell_reader_;
 
         // Do we point to a valid position?
-        bool valid_;
+        bool valid_ = true;
+
+        // Current position
+        Coordinates pos_;
+
+        // Current linear cell position (to use for the cell cache)
+        uint64_t cell_pos_;
     };
 
     /**
@@ -322,7 +320,9 @@ public:
      * @param dims number of grid dimensions
      */
     GridSynopsis(const ArrayDesc &data_desc, const ArrayPtr &array,
-        size_t dims) : synopsis_array_(array) {
+        size_t dims) :
+            synopsis_array_(array),
+            logger_(log4cxx::Logger::getLogger("searchlight.sampler")) {
         // Array descriptor
         const ArrayDesc &synopsis_desc = array->getArrayDesc();
         const size_t total_dims = synopsis_desc.getDimensions().size();
@@ -502,7 +502,8 @@ public:
      */
     bool CheckBounds(const Coordinates &point) const {
         if (point.size() != synopsis_origin_.size()) {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                                   SCIDB_LE_ILLEGAL_OPERATION)
                     << "Specified point has inconsistent dimensions!";
         }
 
@@ -538,7 +539,7 @@ public:
      */
     void Preload() {
         if (cache_type_ != CachingType::EAGER) {
-            LOG4CXX_WARN(logger, "Attempting to preload non-eager synopsis.");
+            LOG4CXX_WARN(logger_, "Attempting to preload non-eager synopsis.");
             return;
         }
         // preload by touching every cell
@@ -548,18 +549,6 @@ public:
             ++iter;
         }
         preloaded_ = true;
-    }
-
-    /**
-     * Memory required to store each cell.
-     *
-     * Cells might have some additional info attached, so the function
-     * can be overriden to reflect that.
-     *
-     * @return memory per cell
-     */
-    virtual size_t MemoryPerCell() const {
-        return sizeof(Cell);
     }
 
     /**
@@ -643,6 +632,18 @@ public:
     }
 
 private:
+    /*
+     * Memory required to store each cell.
+     *
+     * Cells might have some additional info attached, so the function
+     * can be overriden to reflect that.
+     *
+     * @return memory per cell
+     */
+    virtual size_t MemoryPerCell() const {
+        return sizeof(Cell);
+    }
+
     // Vector of cells
     using Cells = std::vector<Cell>;
 
@@ -699,7 +700,7 @@ private:
      * @param ctx reader context
      * @return cell pointed to by the iterator
      */
-    Cell &GetCell(const RegionIterator &iter) {
+    const Cell &GetCell(const RegionIterator &iter) {
         CellReader &reader = iter.GetCellReader();
         if (cache_type_ == CachingType::EAGER) {
             assert(chunks_.size() == 1 &&
@@ -722,8 +723,6 @@ private:
                     valid = cell.valid_.load(std::memory_order_relaxed);
                     if (!valid) {
                         reader.Read(iter.GetCurrentSynopsisPosition(), cell);
-                        FillCellFromArray(iter.GetCurrentSynopsisPosition(),
-                                ctx.iters_, cell);
                         cell.valid_.store(true, std::memory_order_release);
                     }
                 }
@@ -741,7 +740,8 @@ private:
                 std::lock_guard<std::mutex> lock{mtx_};
                 valid = chunk.valid_.load(std::memory_order_relaxed);
                 if (!valid) {
-                    LOG4CXX_DEBUG(logger, "Lazy-loading chunk " << pos.chunk_linear_);
+                    LOG4CXX_DEBUG(logger_, "Lazy-loading chunk " <<
+                                  pos.chunk_linear_);
                     FillCellsFromChunk(pos, reader);
                     chunk.valid_.store(true, std::memory_order_release);
                 }
@@ -752,10 +752,7 @@ private:
             return chunk.cells_[pos.cell_chunk_linear_];
         } else {
             reader.Read(iter.GetCurrentSynopsisPosition(), reader.TempCell());
-            FillCellFromArray(iter.GetCurrentSynopsisPosition(), ctx.iters_,
-                    ctx.cell_);
             return reader.TempCell();
-            return ctx.cell_;
         }
     }
 
@@ -845,7 +842,6 @@ private:
             ChunkCellCoordinates chunk_cell_pos{current_pos, *this};
             Cell &cell = chunk.cells_[chunk_cell_pos.cell_chunk_linear_];
             reader.Read(chunk_cell_pos.cell_, cell);
-            FillCellFromArray(chunk_cell_pos.cell_, iters, cell);
             // Make it valid. Relaxed is fine, everything is locked for LAZY.
             cell.valid_.store(true, std::memory_order_relaxed);
 
@@ -917,6 +913,11 @@ private:
      */
     mutable std::mutex mtx_;
 
+    /*
+     * Need a copy of the logger here. We use the one from the sampler.
+     */
+    log4cxx::LoggerPtr logger_;
+
 protected:
     // The sample array
     ArrayPtr synopsis_array_;
@@ -940,7 +941,180 @@ protected:
     SizeVector chunk_sizes_;
 
     // Attribute map
-    std::unordered_map<std::string, AttributeID> attributes_;
+    AttributeMap attributes_;
+};
+
+/**
+ * A region (cell) of the synopsis.
+ */
+struct AggCell {
+    /**
+     * The minimum value in the region
+     */
+    double min_ = 0;
+
+    /**
+     * The maximum value in the region.
+     */
+    double max_ = 0;
+
+    /**
+     * The sum of the elements in the region.
+     */
+    double sum_ = 0;
+
+    /**
+     * The number of non-empty/non-null elements.
+     */
+    uint64_t count_ = 0;
+
+    /**
+     * Cell has been loaded.
+     */
+    std::atomic<bool> valid_{false};
+
+    /**
+     * Constructs a new cell.
+     *
+     * @param min the minimum value in the chunk
+     * @param max the maximum value in the chunk
+     * @param sum the sum of all values in the chunk
+     * @param count the number of non-empty/non-null elements
+     */
+    AggCell(double min, double max, double sum, uint64_t count) :
+        min_(min), max_(max), sum_(sum), count_(count), valid_{true} {}
+
+    /**
+     * Copy constructor.
+     *
+     * Needed because of the atomic and usage of this class in a vector.
+     *
+     * @param cell cell to copy from
+     */
+    AggCell(const AggCell &cell) :
+        min_(cell.min_), max_(cell.max_), sum_(cell.sum_),
+        count_(cell.count_),
+        valid_(cell.valid_.load(std::memory_order_relaxed)) {}
+
+    /**
+     * Constructs an invalid (default) cell.
+     *
+     * If the cell is invalid, that means it has to be loaded from disk.
+     */
+    AggCell() = default;
+};
+
+/**
+ * DFT synopsis cell.
+ *
+ * Basically DFT trace MBRs with low/high coordinates.
+ */
+struct DFTCell {
+    /**
+     * MBR for storing a DFT region.
+     */
+    struct {
+        DoubleVector low_, high_;
+
+        /**
+         * Compute minimum square distance from point to this rectangle.
+         *
+         * @param point point coordinates
+         * @return minimum square distance
+         */
+        double MinSqDist(const double *point) const {
+            assert(low_.size() == high_.size());
+
+            double res = 0;
+            for (size_t i = 0; i < low_.size(); ++i) {
+                double min_coord_dist = std::max(point[i] - high_[i], 0.0);
+                min_coord_dist = std::max(min_coord_dist, low_[i] - point[i]);
+                res += min_coord_dist * min_coord_dist;
+            }
+            return res;
+        }
+    } mbr_;
+
+    /**
+     * Cell has been loaded.
+     */
+    std::atomic<bool> valid_{false};
+
+    /**
+     * Copy constructor.
+     *
+     * Needed because of the atomic and usage of this class in a vector.
+     *
+     * @param cell cell to copy from
+     */
+    DFTCell(const DFTCell &cell) :
+        mbr_(cell.mbr_),
+        valid_(cell.valid_.load(std::memory_order_relaxed)) {}
+
+    /**
+     * Constructs an invalid (default) cell.
+     *
+     * If the cell is invalid, that means it has to be loaded from disk.
+     */
+    DFTCell() = default;
+};
+
+/**
+ * Aggregate cell reader for synopsis arrays.
+ */
+class AggCellItemReader {
+public:
+    // Constructor.
+    AggCellItemReader(const ArrayPtr &array, const AttributeMap &attrs) :
+        array_{array},
+        attributes_{attrs} {}
+
+    // Reads a cell
+    void Read(const Coordinates &pos, AggCell &cell);
+
+    // Temporary cell
+    AggCell &TempCell() const {
+        return cell_;
+    }
+
+private:
+    // Init iterators
+    void InitIterators();
+
+    ArrayPtr array_;
+    const AttributeMap &attributes_;
+    ConstItemIteratorPtr min_it_, max_it_, sum_it_, count_it_;
+    AggCell cell_;
+};
+
+/**
+ * DFT cell reader for synopsis arrays.
+ */
+class DFTCellItemReader {
+public:
+    // Constructor.
+    DFTCellItemReader(const ArrayPtr &array, const AttributeMap &attrs) :
+        array_{array},
+        attributes_{attrs} {}
+
+    // Reads a cell
+    void Read(const Coordinates &pos, DFTCell &cell);
+
+    // Temporary cell
+    DFTCell &TempCell() const {
+        return cell_;
+    }
+
+private:
+    // Init iterators
+    void InitIterators();
+
+    ArrayPtr array_;
+    const AttributeMap &attributes_;
+    ConstItemIteratorPtr low_it_, high_it_;
+    size_t coords_num_ = 0; // number of DFT components
+    Coordinates read_pos_;
+    DFTCell cell_;
 };
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_SYNOPSIS_H_ */

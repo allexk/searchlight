@@ -640,7 +640,7 @@ void Validator::AddSolution(CandidateAssignment &&cas) {
          * It is safe to use the same condition since the validator will be
          * certainly non-blocked.
          */
-        LOG4CXX_TRACE(logger, "Waiting for the validator to catch up"
+        LOG4CXX_DEBUG(logger, "Waiting for the validator to catch up"
                 ", queue size=" <<
                 to_validate_total_.load(std::memory_order_relaxed));
         validate_cond_.wait(validate_lock);

@@ -56,7 +56,7 @@ public:
     }
 
     virtual void AccumulateChunk(uint64_t cell_size, uint64_t part_size,
-            const Sampler::Cell &cell) {
+            const AggCell &cell) override{
         // chunk info
         const double sum = cell.sum_;
         const uint64_t count = cell.count_;
@@ -308,7 +308,7 @@ public:
     }
 
     virtual void AccumulateChunk(uint64_t cell_size,
-            uint64_t part_size, const Sampler::Cell &cell) {
+            uint64_t part_size, const AggCell &cell) override {
         // cell info
         const double sum = cell.sum_;
         const uint64_t count = cell.count_;
@@ -395,7 +395,7 @@ public:
     }
 
     virtual void AccumulateChunk(uint64_t cell_size,
-            uint64_t part_size, const Sampler::Cell &cell) {
+            uint64_t part_size, const AggCell &cell) override {
         // cell info
         const double min = cell.min_;
         const double max = cell.max_;
@@ -478,91 +478,70 @@ private:
     bool not_null_, null_;
 };
 
-Sampler::DFTSynopsis::DFTSynopsis(const ArrayDesc &data_desc,
-        const ArrayPtr &array) : synopsis_array_(array) {
+DFTSynopsis::DFTSynopsis(const ArrayDesc &data_desc,
+                         const ArrayPtr &array) :
+        Base{data_desc, array,
+             array->getArrayDesc().getDimensions().size() - 1} {
     // Array descriptor
     const ArrayDesc &synopsis_desc = array->getArrayDesc();
-    // By convenience we store sizes in the name after the last '_'
+    // Read the DFT-specific config (the Base has already read some)
     const std::string &synopsis_config =
             ArrayDesc::makeUnversionedName(synopsis_desc.getName());
-    ParseDFTSynopsisParams(ParseArrayParamsFromName(synopsis_config).back());
-
-    // First dimension is the waveform dimension
-    const DimensionDesc &data_dim = data_desc.getDimensions()[0];
-    /*
-     * Cannot use low/high boundary, since SciDB aligns them by the
-     * chunk, so high_boundary might not be equal to current_end.
-     *
-     * See trim() in ArrayDesc for unbounded arrays.
-     *
-     * Use StartMin() here since it determines the total left boundary,
-     * which we need for proper origin.
-     */
-    synopsis_origin_ = data_dim.getStartMin();
-    // Covered sequences must fit exactly, should be careful with synopsis_end_
-    synopsis_end_ = data_dim.getCurrEnd() - subseq_size_ + 1;
-    // Number of cells (cell sizes are read from the array's name)
-    const uint64_t curr_length = synopsis_end_ - synopsis_origin_ + 1;
-    cell_num_ = (curr_length - 1) / cell_size_ + 1;
-    // Synopsis correctness checking
-    const DimensionDesc &syn_dim = synopsis_desc.getDimensions()[0];
-    if (syn_dim.getStartMin() != 0) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Synopsis coordinates must start from 0";
+    const auto synopsis_params =
+            Sampler::ParseArrayParamsFromName(synopsis_config);
+    if (synopsis_params.size() < 3) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION) <<
+                "DFT synopsis array must have name:"
+                "<name>_<dft_params>_<cell_params>";
     }
-    /*
-     * Use getEndMax to check the number of cells. The thing here is that
-     * empty element just means an empty MBR. This is fine with us.
-     * Strictly speaking the following check is not required, but it might
-     * allow us to detect simple sample array construction errors.
-     */
-    if (syn_dim.getEndMax() < cell_num_ - 1) { // StartMin() == 0
-        std::ostringstream err_msg;
-        err_msg << "Synopsis must have at least "
-                << cell_num_ << "cells"
-                << " in the dimension " << syn_dim.getBaseName();
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << err_msg.str();
+    ParseDFTSynopsisParams(*(synopsis_params.rbegin() + 1));
+
+    // Check if the DFT param corresponds to the last dimension
+    const auto &synopsis_dims = synopsis_desc.getDimensions();
+    if (synopsis_dims.back().getLength() != dft_num_ ||
+            synopsis_dims.back().getStartMin() != 0) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION) <<
+                "The last dimension for DFT synopsis must start with 0 and"
+                "have the length of the number of DFT coordinates";
     }
 
-    // Synopsis chunks info
-    chunk_size_ = syn_dim.getChunkInterval();
-    chunk_num_ = syn_dim.getCurrEnd() / chunk_size_ + 1;
-
-    // The last synopsis array dimension is the DFT coordinates
-    const DimensionDesc &dft_dim = synopsis_desc.getDimensions()[1];
-    if (dft_dim.getStartMin() != 0) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Synopsis coordinates must start from 0";
+    // Check if the waveform dimension looks okay
+    if (cell_size_.back() != mbr_size_) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION) <<
+                "Discrepancy in DFT params: the second before last dimension"
+                " must be the waveform onewith the same MBR size";
     }
-    dft_num_ = dft_dim.getCurrEnd() + 1;
 
-    // Determine low/high attributes
-    const Attributes &attrs = synopsis_desc.getAttributes(true);
-    if (!SearchArrayDesc::FindAttributeId(attrs, std::string("low"), low_id_) ||
-        !SearchArrayDesc::FindAttributeId(attrs, std::string("high"), high_id_)) {
-        std::ostringstream err_msg;
-        err_msg << "Cannot find low/high attribute in the sample: sample="
-                << synopsis_desc.getName();
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << err_msg.str();
+    // Check if we have the required attributes
+    if (!attributes_.count("low") || !attributes_.count("high")) {
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION) <<
+                "DFT synopsis must have 'low' and 'high' attributes";
     }
 }
 
-void Sampler::DFTSynopsis::ParseDFTSynopsisParams(const std::string &params) {
-    typedef boost::tokenizer<boost::char_separator<char>> tokenizer_t;
-    boost::char_separator<char> sep("xX"); // size_1xsize_2x...xsize_n
-    tokenizer_t tokenizer(params, sep);
+void DFTSynopsis::ParseDFTSynopsisParams(const std::string &params) {
+    using TokenSeparator = boost::char_separator<char>;
+    using Tokenizer = boost::tokenizer<TokenSeparator>;
+    TokenSeparator sep("xX"); // size_1xsize_2x...xsize_n
+    Tokenizer tokenizer(params, sep);
 
-    // Expecting: AxB, where A is subsequence size and B is MBR size
-    tokenizer_t::const_iterator cit = tokenizer.begin();
+    // Expecting: AxBxC for (subsequence size, number of DFTs, MBR size)
+    auto cit = tokenizer.begin();
     if (cit == tokenizer.end()) {
         std::ostringstream err_msg;
         err_msg << "Cannot parse subsequence size from DFT params: " << params;
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << err_msg.str();
     }
-    subseq_size_ = boost::lexical_cast<size_t>(cit->c_str());
+    subseq_size_ = std::stoi(*cit);
+    ++cit;
+    if (cit == tokenizer.end()) {
+        std::ostringstream err_msg;
+        err_msg << "Cannot parse number of DFTs from DFT params: " << params;
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
+                << err_msg.str();
+    }
+    dft_num_ = std::stoi(*cit);
     ++cit;
     if (cit == tokenizer.end()) {
         std::ostringstream err_msg;
@@ -570,104 +549,11 @@ void Sampler::DFTSynopsis::ParseDFTSynopsisParams(const std::string &params) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                 << err_msg.str();
     }
-    cell_size_ = boost::lexical_cast<size_t>(cit->c_str());
+    mbr_size_ = std::stoi(*cit);
+    assert(++cit == tokenizer.end());
 }
 
-void Sampler::DFTSynopsis::SetCacheType(CachingType mode) {
-    cache_type_ = mode;
-    if (mode == CachingType::EAGER) {
-        /*
-         * Create the entire cell cache right now to simplify concurrency
-         * later. The cells are invalid and will be loaded from the synopsis
-         * later in lazy fashion.
-         */
-        chunks_ = Chunks({true});
-        chunks_[0].cells_ = DFTCells(cell_num_);
-    } else if (mode == CachingType::LAZY) {
-        /*
-         * Reserve space for array chunks. All chunks are invalid at the
-         * beginning.
-         */
-        chunks_ = Chunks(chunk_num_);
-    } else {
-        chunks_ = Chunks(); // make it empty
-    }
-}
-
-void Sampler::DFTSynopsis::Preload() {
-    if (cache_type_ != CachingType::EAGER) {
-        LOG4CXX_WARN(logger, "Attempting to preload non-eager synopsis.");
-        return;
-    }
-
-    // DFT synopsis is linear
-    AccessContext ctx;
-    for (size_t pos = 0; pos < cell_num_; ++pos) {
-    	GetCell(pos, ctx);
-    }
-    preloaded_ = true;
-}
-
-Sampler::DFTCell &Sampler::DFTSynopsis::GetCell(size_t cell_id,
-		AccessContext &ctx) {
-    if (cache_type_ == CachingType::EAGER) {
-        assert(chunks_.size() == 1 && cell_id < chunks_[0].cells_.size());
-        DFTCell &cell = chunks_[0].cells_[cell_id];
-
-        // Load cell if needed (cannot check validity here -- concurrency issues)
-        if (!preloaded_) {
-            /*
-             * Need a lock here. For efficiency reasons this has been
-             * implemented as a double-checked locking with fences and atomics.
-             *
-             * This used to be a separate function, but later it was inlined
-             * to avoid a huge overhead on non-preloaded synopses. This is a
-             * critical code path!
-             */
-            bool valid = cell.valid_.load(std::memory_order_acquire);
-            if (!valid) {
-                std::lock_guard<std::mutex> lock{mtx_};
-                valid = cell.valid_.load(std::memory_order_relaxed);
-                if (!valid) {
-                    FillCellFromArray(cell_id, ctx.iters_, cell);
-                    cell.valid_.store(true, std::memory_order_release);
-                }
-            }
-        }
-        assert(cell.valid_);
-        return cell;
-    } else if (cache_type_ == CachingType::LAZY) {
-        // Determine position
-    	const Coordinate chunk_pos = cell_id - cell_id % chunk_size_;
-    	const size_t chunk_linear_pos = chunk_pos / chunk_size_;
-        DFTSynopsisChunk &chunk = chunks_[chunk_linear_pos];
-
-        // Fetch (see the double-checked locking comment above)
-        bool valid = chunk.valid_.load(std::memory_order_acquire);
-        if (!valid) {
-            std::lock_guard<std::mutex> lock{mtx_};
-            valid = chunk.valid_.load(std::memory_order_relaxed);
-            if (!valid) {
-                LOG4CXX_DEBUG(logger, "Lazy-loading chunk " << chunk_linear_pos);
-                for (size_t i = 0; i < chunk_size_; ++i) {
-                	DFTCell &cell = chunk.cells_[i];
-                	FillCellFromArray(chunk_pos + i, ctx.iters_, cell);
-                	// Relaxed store is fine -- everything is locked
-                	cell.valid_.store(true, std::memory_order_relaxed);
-                }
-                chunk.valid_.store(true, std::memory_order_release);
-            }
-        }
-
-        // The resulting cell
-        assert(chunk.cells_[cell_id - chunk_pos].valid_);
-        return chunk.cells_[cell_id - chunk_pos];
-    } else {
-        FillCellFromArray(cell_id, ctx.iters_, ctx.cell_);
-        return ctx.cell_;
-    }
-}
-
+revisit dfdf
 void Sampler::DFTSynopsis::CheckBounds(Coordinate &point) const {
 	if (point < synopsis_origin_) {
 		point = synopsis_origin_;
@@ -676,7 +562,7 @@ void Sampler::DFTSynopsis::CheckBounds(Coordinate &point) const {
 	}
 }
 
-IntervalValue Sampler::DFTSynopsis::SqDist(Coordinate low, Coordinate high,
+IntervalValue DFTSynopsis::SqDist(Coordinate low, Coordinate high,
 		const DoubleVector &points) {
 	assert(low <= high);
 	assert(points.size() % dft_num_ == 0);
@@ -738,380 +624,22 @@ IntervalValue Sampler::DFTSynopsis::SqDist(Coordinate low, Coordinate high,
 	return res;
 }
 
-void Sampler::DFTSynopsis::FillCellFromArray(size_t pos,
-        ArrayIterators &iters, DFTCell &cell) const {
-
-    // Init iterators (first time only)
-    if (!iters.low_it_) {
-        InitIterators(iters);
-    }
-
-    Coordinates syn_pos({Coordinate(pos), 0});
-    if (iters.low_it_->setPosition(syn_pos) && !iters.low_it_->isEmpty()) {
-    	cell.mbr_.low_.resize(dft_num_);
-    	cell.mbr_.high_.resize(dft_num_);
-    	for (size_t i = 0; i < dft_num_; ++i) {
-    		syn_pos[1] = i;
-			// should be a non-empty chunk for sure
-			if (!iters.low_it_->setPosition(syn_pos) ||
-					!iters.high_it_->setPosition(syn_pos)) {
-				std::ostringstream err_msg;
-				err_msg << "Cannot get info from synopsis, pos=(";
-				std::copy(syn_pos.begin(), syn_pos.end(),
-						std::ostream_iterator<Coordinate>(err_msg, ", "));
-				err_msg << ")";
-
-				throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
-						SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
-			}
-			cell.mbr_.low_[i] = iters.low_it_->getItem().getDouble();
-			cell.mbr_.high_[i] = iters.high_it_->getItem().getDouble();
-    	}
-    }
-}
-
-void Sampler::DFTSynopsis::InitIterators(ArrayIterators &iters) const {
+Synopsis::Synopsis(const ArrayDesc &data_desc,
+        const ArrayPtr &array) :
+        Base{data_desc, array, array->getArrayDesc().getDimensions().size()} {
     /*
-     * One thing to consider here. Creating item iterator results in
-     * fetching the first array chunk, which might create a small performance
-     * penalty. Another solution is to use array iterators and create
-     * chunk iterators when fetching a synopsis cell (see commented code
-     * for the FillCell... function).
+     * Check if we have the required attributes.
      */
-    iters.low_it_ = synopsis_array_->getItemIterator(low_id_);
-    iters.high_it_ = synopsis_array_->getItemIterator(high_id_);
-}
-
-size_t Sampler::DFTSynopsis::ComputeMemoryFootprint() const {
-    if (cache_type_ == CachingType::EAGER) {
-        return cell_num_ * sizeof(DFTCell) + sizeof(DFTSynopsisChunk);
-    } else if (cache_type_ == CachingType::LAZY) {
-        size_t res = chunk_num_ * sizeof(DFTSynopsisChunk);
-        // Count valid chunks' cells.
-        for (const auto &c: chunks_) {
-            if (c.valid_.load(std::memory_order_relaxed)) {
-                res += c.cells_.size() * sizeof(DFTCell);
-            }
-        }
-        return res;
-    } else {
-        // None
-        return 0;
-    }
-}
-
-Sampler::Synopsis::Synopsis(const ArrayDesc &data_desc,
-        const ArrayPtr &array) : synopsis_array_(array) {
-    // Array descriptor
-    const ArrayDesc &synopsis_desc = array->getArrayDesc();
-    const size_t dims_num = synopsis_desc.getDimensions().size();
-
-    // By convenience we store sizes in the name after the last '_'
-    const std::string &synopsis_config =
-            ArrayDesc::makeUnversionedName(synopsis_desc.getName());
-    cell_size_.resize(dims_num);
-    ParseChunkSizes(ParseArrayParamsFromName(synopsis_config).back());
-
-    // Compute sample boundaries (in original coordinates)
-    synopsis_origin_.resize(dims_num);
-    synopsis_end_.resize(dims_num);
-    cell_nums_.resize(dims_num);
-    chunk_nums_.resize(dims_num);
-    chunk_sizes_.resize(dims_num);
-    for (size_t i = 0; i < dims_num; i++) {
-        // Metadata is filled from the data descriptor
-        const DimensionDesc &data_dim = data_desc.getDimensions()[i];
-        /*
-         * Cannot use low/high boundary, since SciDB aligns them by the
-         * chunk, so high_boundary might not be equal to current_end.
-         *
-         * See trim() in ArrayDesc for unbounded arrays.
-         *
-         * Use StartMin() here since it determines the total left boundary,
-         * which we need for proper origin.
-         */
-        synopsis_origin_[i] = data_dim.getStartMin();
-        synopsis_end_[i] = data_dim.getCurrEnd();
-
-        // Number of cells (cell sizes are read from the array's name)
-        const uint64_t curr_length = synopsis_end_[i] - synopsis_origin_[i] + 1;
-        cell_nums_[i] = (curr_length - 1) / cell_size_[i] + 1;
-
-        // Synopsis correctness checking
-        const DimensionDesc &syn_dim = synopsis_desc.getDimensions()[i];
-        if (syn_dim.getStartMin() != 0) {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << "Synopsis coordinates must start from 0";
-        }
-        if (syn_dim.getCurrEnd() + 1 < cell_nums_[i]) { // StartMin() == 0
+    const char * const attr_names[] = {"min", "max", "sum", "count"};
+    for (const char *attr: attr_names) {
+        const auto it = attributes_.find(attr);
+        if (it == attributes_.end()) {
             std::ostringstream err_msg;
-            err_msg << "Synopsis must have at least "
-                    << cell_nums_[i] << "cells"
-                    << " in the dimension " << syn_dim.getBaseName();
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << err_msg.str();
-        }
-
-        // Synopsis chunks info
-        chunk_sizes_[i] = syn_dim.getChunkInterval();
-        chunk_nums_[i] = syn_dim.getCurrEnd() / chunk_sizes_[i] + 1;
-    }
-
-    /*
-     * Find min/max/sum/count ids.
-     */
-    const Attributes &attrs = synopsis_desc.getAttributes(true);
-    if (!SearchArrayDesc::FindAttributeId(attrs, std::string("min"), min_id_) ||
-        !SearchArrayDesc::FindAttributeId(attrs, std::string("max"), max_id_) ||
-        !SearchArrayDesc::FindAttributeId(attrs,
-                std::string("count"), count_id_) ||
-        !SearchArrayDesc::FindAttributeId(attrs, std::string("sum"), sum_id_)) {
-        std::ostringstream err_msg;
-        err_msg << "Cannot find min/max attribute in the sample: sample="
-                << synopsis_desc.getName();
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << err_msg.str();
-    }
-}
-
-void Sampler::Synopsis::SetCacheType(CachingType mode) {
-    cache_type_ = mode;
-    if (mode == CachingType::EAGER) {
-        /*
-         * Create the entire cell cache right now to simplify concurrency
-         * later. The cells are invalid and will be loaded from the synopsis
-         * later in lazy fashion.
-         */
-        chunks_ = Chunks({true});
-        chunks_[0].cells_ = Cells(GetTotalCellCount());
-    } else if (mode == CachingType::LAZY) {
-        /*
-         * Reserve space for array chunks. All chunks are invalid at the
-         * beginning.
-         */
-        chunks_ = Chunks(GetTotalChunksCount());
-    } else {
-        chunks_ = Chunks(); // make it empty
-    }
-}
-
-void Sampler::Synopsis::Preload() {
-    if (cache_type_ != CachingType::EAGER) {
-        LOG4CXX_WARN(logger, "Attempting to preload non-eager synopsis.");
-        return;
-    }
-
-    RegionIterator iter{*this, synopsis_origin_, synopsis_end_};
-    while (!iter.end()) {
-        iter.GetCell();
-        ++iter;
-    }
-    preloaded_ = true;
-}
-
-Sampler::Region Sampler::Synopsis::GetSynopsisMBR(const Region &reg) const {
-    Region res(reg);
-    for (size_t i = 0; i < reg.low_.size(); ++i) {
-        res.low_[i] -= (reg.low_[i] - synopsis_origin_[i]) % cell_size_[i];
-        res.high_[i] -= (reg.high_[i] - synopsis_origin_[i]) % cell_size_[i];
-        res.high_[i] += cell_size_[i] - 1;
-    }
-    return res;
-}
-
-size_t Sampler::Synopsis::GetRegionCost(const Region &reg) const {
-    Region mbr(GetSynopsisMBR(reg));
-
-    // MBR is aligned with the synopsis grid, the cost is simple division
-    size_t cost = 1;
-    for (size_t i = 0; i < mbr.low_.size(); ++i) {
-        const size_t len = mbr.high_[i] - mbr.low_[i] + 1;
-        assert(len % cell_size_[i] == 0);
-        cost *= len / cell_size_[i];
-    }
-    return cost;
-}
-
-Sampler::Cell &Sampler::Synopsis::GetCell(
-        const RegionIterator &iter, AccessContext &ctx) {
-    if (cache_type_ == CachingType::EAGER) {
-        assert(chunks_.size() == 1 &&
-                iter.GetCellLinear() < chunks_[0].cells_.size());
-        Cell &cell = chunks_[0].cells_[iter.GetCellLinear()];
-
-        // Load cell if needed (cannot check validity here -- concurrency issues)
-        if (!preloaded_) {
-            /*
-             * Need a lock here. For efficiency reasons this has been
-             * implemented as a double-checked locking with fences and atomics.
-             *
-             * This used to be a separate function, but later it was inlined
-             * to avoid a huge overhead on non-preloaded synopses. This is a
-             * critical code path!
-             */
-            bool valid = cell.valid_.load(std::memory_order_acquire);
-            if (!valid) {
-                std::lock_guard<std::mutex> lock{mtx_};
-                valid = cell.valid_.load(std::memory_order_relaxed);
-                if (!valid) {
-                    FillCellFromArray(iter.GetCurrentSynopsisPosition(),
-                            ctx.iters_, cell);
-                    cell.valid_.store(true, std::memory_order_release);
-                }
-            }
-        }
-        assert(cell.valid_);
-        return cell;
-    } else if (cache_type_ == CachingType::LAZY) {
-        // Determine position
-        ChunkCellCoordinates pos{iter.GetCurrentSynopsisPosition(), *this};
-        SynopsisChunk &chunk = chunks_[pos.chunk_linear_];
-
-        // Fetch (see the double-checked locking comment above)
-        bool valid = chunk.valid_.load(std::memory_order_acquire);
-        if (!valid) {
-            std::lock_guard<std::mutex> lock{mtx_};
-            valid = chunk.valid_.load(std::memory_order_relaxed);
-            if (!valid) {
-                LOG4CXX_DEBUG(logger, "Lazy-loading chunk " << pos.chunk_linear_);
-                FillCellsFromChunk(pos, ctx.iters_);
-                chunk.valid_.store(true, std::memory_order_release);
-            }
-        }
-
-        // The cell
-        assert(chunk.cells_[pos.cell_chunk_linear_].valid_);
-        return chunk.cells_[pos.cell_chunk_linear_];
-    } else {
-        FillCellFromArray(iter.GetCurrentSynopsisPosition(), ctx.iters_,
-                ctx.cell_);
-        return ctx.cell_;
-    }
-}
-
-void Sampler::Synopsis::InitIterators(ArrayIterators &iters) const {
-    /*
-     * One thing to consider here. Creating item iterator results in
-     * fetching the first array chunk, which might create a small performance
-     * penalty. Another solution is to use array iterators and create
-     * chunk iterators when fetching a synopsis cell (see commented code
-     * for the FillCell... function).
-     */
-    iters.min_it_ = synopsis_array_->getItemIterator(min_id_);
-    iters.max_it_ = synopsis_array_->getItemIterator(max_id_);
-    iters.sum_it_ = synopsis_array_->getItemIterator(sum_id_);
-    iters.count_it_ = synopsis_array_->getItemIterator(count_id_);
-}
-
-void Sampler::Synopsis::FillCellsFromChunk(const ChunkCellCoordinates &pos,
-        ArrayIterators &iters) const {
-    const size_t chunk_index = pos.chunk_linear_;
-    assert(chunk_index < chunks_.size() && !chunks_[chunk_index].valid_);
-    SynopsisChunk &chunk = chunks_[chunk_index];
-
-    // The number of cells in a chunk
-    size_t total_cells_per_chunk = 1;
-    for (auto cs: chunk_sizes_) {
-        total_cells_per_chunk *= cs;
-    }
-    // Will make it valid later (see GetCell()).
-    chunk.cells_ = Cells(total_cells_per_chunk);
-
-    // Start and end chunk positions
-    const Coordinates &chunk_start = pos.chunk_;
-    Coordinates chunk_end(chunk_start);
-    for (size_t i = 0; i < chunk_start.size(); ++i) {
-        chunk_end[i] += chunk_sizes_[i] - 1;
-    }
-
-    // Retrieve the chunk's cells
-    Coordinates current_pos{pos.chunk_};
-    bool cell_is_valid = true;
-    while (cell_is_valid) {
-        // Get the cell and make it valid
-        ChunkCellCoordinates chunk_cell_pos{current_pos, *this};
-        Cell &cell = chunk.cells_[chunk_cell_pos.cell_chunk_linear_];
-        FillCellFromArray(chunk_cell_pos.cell_, iters, cell);
-        // Make it valid. Relaxed is fine, everything is locked for LAZY.
-        cell.valid_.store(true, std::memory_order_relaxed);
-
-        // increment the position
-        size_t i = current_pos.size() - 1;
-        while (++current_pos[i] > chunk_end[i]) {
-            current_pos[i] = chunk_start[i];
-            if (i == 0) {
-                cell_is_valid = false;
-                break;
-            }
-            --i;
-        }
-    }
-}
-
-void Sampler::Synopsis::FillCellFromArray(const Coordinates &pos,
-        ArrayIterators &iters, Cell &cell) const {
-    // Init iterators (first time only)
-    if (!iters.count_it_) {
-        InitIterators(iters);
-    }
-
-    if (!iters.count_it_->setPosition(pos) || iters.count_it_->isEmpty()) {
-        // No chunk in the array -- assume the cell is empty
-        cell.count_ = 0;
-    } else {
-        // should be a non-empty chunk for sure
-        if (!iters.min_it_->setPosition(pos) ||
-            !iters.max_it_->setPosition(pos) ||
-            !iters.sum_it_->setPosition(pos)) {
-
-            std::ostringstream err_msg;
-            err_msg << "Cannot get info from synopsis, pos=(";
-            std::copy(pos.begin(), pos.end(),
-                    std::ostream_iterator<Coordinate>(err_msg, ", "));
-            err_msg << ")";
-
+            err_msg << "Cannot find attribute " << attr << " in the sample "
+                    << synopsis_array_->getArrayDesc().getName();
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
-                    SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
+                                   SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
         }
-
-        cell.count_ = iters.count_it_->getItem().getUint64();
-        /*
-         * We might still have an empty cell, e.g., when all values are null
-         * there.
-         */
-        if (cell.count_) {
-            cell.min_ = iters.min_it_->getItem().getDouble();
-            cell.max_ = iters.max_it_->getItem().getDouble();
-            cell.sum_ = iters.sum_it_->getItem().getDouble();
-            if (std::isnan(cell.min_) || std::isnan(cell.max_) ||
-                    std::isnan(cell.sum_)) {
-                // Treat cells with NANs as "corrupted"; just count as empty
-                cell.count_ = 0;
-            }
-        }
-    }
-}
-
-void Sampler::Synopsis::ParseChunkSizes(const std::string &size_param) {
-    typedef boost::tokenizer<boost::char_separator<char> > tokenizer_t;
-    boost::char_separator<char> sep("xX"); // size_1xsize_2x...xsize_n
-    tokenizer_t tokenizer(size_param, sep);
-
-    shape_cell_size_ = 1;
-    int i = 0;
-    for (tokenizer_t::const_iterator cit = tokenizer.begin();
-            cit != tokenizer.end(); cit++) {
-        cell_size_[i] = boost::lexical_cast<Coordinate>(cit->c_str());
-        shape_cell_size_ *= cell_size_[i];
-        i++;
-    }
-
-    if (i != cell_size_.size()) {
-        std::ostringstream err_msg;
-        err_msg << "Could not retrieve all cell sizes: conf=" <<
-                size_param << ", needed sizes=" << cell_size_.size();
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << err_msg.str();
     }
 }
 
@@ -1228,16 +756,14 @@ Sampler::~Sampler() {
 //    cell.sum_ = sum_chunk_it->getItem().getDouble();
 //}
 
-StringVector Sampler::ParseArrayParamsFromName(
-        const std::string &array_name) {
+StringVector Sampler::ParseArrayParamsFromName(const std::string &array_name) {
     StringVector res;
+    using TokenSeparator = boost::char_separator<char>;
+    using Tokenizer = boost::tokenizer<TokenSeparator>;
+    TokenSeparator sep{"_"}; // parts are separated by '_'
+    Tokenizer tokenizer{array_name, sep};
 
-    typedef boost::tokenizer<boost::char_separator<char>> tokenizer_t;
-    boost::char_separator<char> sep{"_"}; // parts are separated by '_'
-    tokenizer_t tokenizer{array_name, sep};
-
-    for (tokenizer_t::const_iterator cit = tokenizer.begin();
-            cit != tokenizer.end(); cit++) {
+    for (auto cit = tokenizer.begin(); cit != tokenizer.end(); ++cit) {
         res.push_back(*cit);
     }
 
@@ -1373,72 +899,7 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
     }
 }
 
-size_t Sampler::Synopsis::ComputeMemoryFootprint() const {
-    if (cache_type_ == CachingType::EAGER) {
-        return GetTotalCellCount() * sizeof(Cell) + sizeof(SynopsisChunk);
-    } else if (cache_type_ == CachingType::LAZY) {
-        size_t res = GetTotalChunksCount() * sizeof(SynopsisChunk);
-        // Count valid chunks' cells.
-        for (const auto &c: chunks_) {
-            if (c.valid_.load(std::memory_order_relaxed)) {
-                res += c.cells_.size() * sizeof(Cell);
-            }
-        }
-        return res;
-    } else {
-        // None
-        return 0;
-    }
-}
-
-void Sampler::Synopsis::CheckAndCorrectBounds(
-        Coordinates &low, Coordinates &high) const {
-    const size_t dims = synopsis_origin_.size();
-    for (size_t i = 0; i < dims; i++) {
-        if (low[i] < synopsis_origin_[i]) {
-            low[i] = synopsis_origin_[i];
-        }
-        if (high[i] > synopsis_end_[i]) {
-            high[i] = synopsis_end_[i];
-        }
-    }
-}
-
-bool Sampler::Synopsis::CheckIfValid(const Coordinates &low,
-        const Coordinates &high) const {
-    const size_t dims = synopsis_origin_.size();
-    if (low.size() != high.size() || low.size() != dims) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Specified region has inconsistent dimensions!";
-    }
-    for (size_t i = 0; i < dims; ++i) {
-        if (low[i] > high[i]) {
-            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                    << "Specified region has inconsistent dimensions!";
-        }
-        if (high[i] < synopsis_origin_[i] || low[i] > synopsis_end_[i]) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool Sampler::Synopsis::CheckBounds(const Coordinates &point) const {
-    if (point.size() != synopsis_origin_.size()) {
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << "Specified point has inconsistent dimensions!";
-    }
-
-    for (size_t i = 0; i < synopsis_origin_.size(); i++) {
-        if (point[i] < synopsis_origin_[i] || point[i] > synopsis_end_[i]) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool Sampler::Synopsis::RegionValidForSample(const Coordinates &low,
+bool Synopsis::RegionValidForSample(const Coordinates &low,
         const Coordinates &high) const {
     // copy to align
     Coordinates inlow(low), inhigh(high);
@@ -1463,7 +924,7 @@ bool Sampler::Synopsis::RegionValidForSample(const Coordinates &low,
     return true;
 }
 
-void Sampler::Synopsis::ComputeAggregate(const Coordinates &low,
+void Synopsis::ComputeAggregate(const Coordinates &low,
         const Coordinates &high, const SampleAggregatePtrVector &aggs) {
     // copy to check correctness and align
     Coordinates inlow(low), inhigh(high);
@@ -1473,7 +934,7 @@ void Sampler::Synopsis::ComputeAggregate(const Coordinates &low,
     RegionIterator iter(*this, inlow, inhigh);
     uint64_t cells_accessed = 0;
     while (!iter.end()) {
-        const Cell &cell = iter.GetCell();
+        const AggCell &cell = iter.GetCell();
         cells_accessed++;
         const uint64_t part_size = iter.GetPartSize();
         for (size_t i = 0; i < aggs.size(); i++) {
@@ -1487,7 +948,7 @@ void Sampler::Synopsis::ComputeAggregate(const Coordinates &low,
     cells_accessed_.fetch_add(cells_accessed, std::memory_order_relaxed);
 }
 
-void Sampler::Synopsis::ComputeAggregatesWithThr(
+void Synopsis::ComputeAggregatesWithThr(
         const SampleAggregatePtrVector &aggs,
         const std::vector<Region> &in_regions,
         std::vector<Region> &left_regions, double cell_thr) {
@@ -1499,7 +960,7 @@ void Sampler::Synopsis::ComputeAggregatesWithThr(
         while (!iter.end()) {
             const uint64_t part_size = iter.GetPartSize();
             if (double(part_size) / shape_cell_size_ >= cell_thr) {
-                const Cell &cell = iter.GetCell();
+                const AggCell &cell = iter.GetCell();
                 cells_accessed++;
                 for (size_t i = 0; i < aggs.size(); i++) {
                     if (cell.count_ > 0) {
@@ -1518,14 +979,14 @@ void Sampler::Synopsis::ComputeAggregatesWithThr(
     cells_accessed_.fetch_add(cells_accessed, std::memory_order_relaxed);
 }
 
-IntervalValue Sampler::Synopsis::GetElement(const Coordinates &point) {
+IntervalValue Synopsis::GetElement(const Coordinates &point) {
     IntervalValue res;
     if (!CheckBounds(point)) {
         return res; // out of bounds -- NULL
     }
 
     RegionIterator iter(*this, point, point);
-    const Cell &cell = iter.GetCell();
+    const AggCell &cell = iter.GetCell();
     cells_accessed_.fetch_add(1, std::memory_order_relaxed);
 
     if (cell.count_ == 0) {
@@ -1562,7 +1023,7 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
         aggs[i].reset(it->second());
     }
 
-    // Check if the region is valid
+    // Check if the region is valid (assume all synopses cover the same area)
     IntervalValueVector res(aggs.size());
     assert(!synopses_[s_attr].empty());
     if (!synopses_[s_attr][0]->CheckIfValid(low, high)) {
@@ -1607,7 +1068,8 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
 
             // Check the MBR threshold
             if (mbr_thr_ > 0.0) {
-                const Region syn_mbr(syns[i]->GetSynopsisMBR(orig_region));
+                Region syn_mbr{orig_region};
+                syns[i]->GetSynopsisMBR(syn_mbr.low_, syn_mbr.high_);
                 if (orig_region.AreaRatio(syn_mbr) >= mbr_thr_) {
                     have_better_synopses = false;
                 }
