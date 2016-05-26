@@ -31,10 +31,7 @@
 #include "sampler.h"
 #include "array_desc.h"
 
-#include <boost/lexical_cast.hpp>
-#include <boost/make_shared.hpp>
 #include <boost/tokenizer.hpp>
-
 #include <fftw3.h>
 
 namespace searchlight {
@@ -478,39 +475,40 @@ private:
     bool not_null_, null_;
 };
 
-DFTSynopsis::DFTSynopsis(const ArrayDesc &data_desc,
+SeqSynopsis::SeqSynopsis(const ArrayDesc &data_desc,
                          const ArrayPtr &array) :
         Base{data_desc, array,
              array->getArrayDesc().getDimensions().size() - 1} {
     // Array descriptor
     const ArrayDesc &synopsis_desc = array->getArrayDesc();
-    // Read the DFT-specific config (the Base has already read some)
-    const std::string &synopsis_config =
-            ArrayDesc::makeUnversionedName(synopsis_desc.getName());
-    const auto synopsis_params =
-            Sampler::ParseArrayParamsFromName(synopsis_config);
+    // Read the seq-specific config (the Base has already read some)
+    const auto synopsis_params = TokenizeString(
+            ArrayDesc::makeUnversionedName(synopsis_desc.getName()), "_");
     if (synopsis_params.size() < 3) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION) <<
                 "DFT synopsis array must have name:"
-                "<name>_<dft_params>_<cell_params>";
+                "<type>_<subseq_size>_<name>_<attr>_<cell_params>";
     }
-    ParseDFTSynopsisParams(*(synopsis_params.rbegin() + 1));
-
-    // Check if the DFT param corresponds to the last dimension
-    const auto &synopsis_dims = synopsis_desc.getDimensions();
-    if (synopsis_dims.back().getLength() != dft_num_ ||
-            synopsis_dims.back().getStartMin() != 0) {
+    // For sequence synopsis, type is the first component
+    const std::string type_param = synopsis_params[0];
+    if (type_param == "dft") {
+        type_ = Type::DFT;
+    } else if (type_param == "paa") {
+        type_ = Type::PAA;
+    } else {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION) <<
-                "The last dimension for DFT synopsis must start with 0 and"
-                "have the length of the number of DFT coordinates";
+                "Unknown sequence synopsis type";
     }
-
-    // Check if the waveform dimension looks okay
-    if (cell_size_.back() != mbr_size_) {
+    // The second to last contains the subsequence length
+    try {
+        subseq_size_ = std::stoi(synopsis_params[1]);
+    } catch (const std::invalid_argument &) {
         throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION) <<
-                "Discrepancy in DFT params: the second before last dimension"
-                " must be the waveform onewith the same MBR size";
+                "The second to last argument must be subsequence size";
     }
+    // The remaining parameters are derived from the descriptor
+    mbr_size_ = cell_size_.back();
+    features_num_ = synopsis_desc.getDimensions().back().getLength();
 
     // Check if we have the required attributes
     if (!attributes_.count("low") || !attributes_.count("high")) {
@@ -519,112 +517,76 @@ DFTSynopsis::DFTSynopsis(const ArrayDesc &data_desc,
     }
 }
 
-void DFTSynopsis::ParseDFTSynopsisParams(const std::string &params) {
-    using TokenSeparator = boost::char_separator<char>;
-    using Tokenizer = boost::tokenizer<TokenSeparator>;
-    TokenSeparator sep("xX"); // size_1xsize_2x...xsize_n
-    Tokenizer tokenizer(params, sep);
-
-    // Expecting: AxBxC for (subsequence size, number of DFTs, MBR size)
-    auto cit = tokenizer.begin();
-    if (cit == tokenizer.end()) {
-        std::ostringstream err_msg;
-        err_msg << "Cannot parse subsequence size from DFT params: " << params;
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << err_msg.str();
-    }
-    subseq_size_ = std::stoi(*cit);
-    ++cit;
-    if (cit == tokenizer.end()) {
-        std::ostringstream err_msg;
-        err_msg << "Cannot parse number of DFTs from DFT params: " << params;
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << err_msg.str();
-    }
-    dft_num_ = std::stoi(*cit);
-    ++cit;
-    if (cit == tokenizer.end()) {
-        std::ostringstream err_msg;
-        err_msg << "Cannot parse MBR size from DFT params: " << params;
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << err_msg.str();
-    }
-    mbr_size_ = std::stoi(*cit);
-    assert(++cit == tokenizer.end());
+IntervalValue SeqSynopsis::SqDist(const Coordinates &low,
+        const Coordinates &high, const TransformedSequenceInfo &seq_info) {
+    // Corrected coordinates
+//    Coordinates lowc{low}, highc{high};
+//    CheckAndCorrectBounds(lowc, highc);
+//    // Proper transformed sequence
+//    assert(seq_info.sequence_.count(subseq_size_));
+//    const auto &seq = seq_info.sequence_.find(subseq_size_)->second;
+//	assert(seq.size() % features_num_ == 0);
+//
+//	// The sequence must fit
+//	if (highc - lowc + 1 < seq_info.original_length_) {
+//		// Query sequence doesn't fit -- return NULL
+//		return IntervalValue();
+//	}
+//	/*
+//	 * Low/high should conform to the possible starting points.
+//	 */
+//	const size_t query_pieces = seq.size() / features_num_;
+//	highc -= seq_info.original_length_ - query_pieces * subseq_size_;
+//
+//	/*
+//	 * High actually defines the end of the search interval. Should adjust
+//	 * for the last subsequence, since we want low/high to be first and last
+//	 * trace points.
+//	 */
+//	high -= subseq_size_ - 1;
+//
+//	// Determine start/end MBRs (synopsis cells)
+//	AccessContext ctx;
+//	IntervalValue res; // NUL; min_ = 0
+//	/*
+//	 * If we have several subsequences of the original query sequence, we
+//	 * can adjust low/high a little bit (e.g., second subsequence cannot
+//	 * start at the original low). So, we recompute them at every step.
+//	 */
+//	Coordinate subseq_low = low;
+//	Coordinate subseq_high = high - (query_subseq_num - 1) * subseq_size_;
+//	res.max_ = std::numeric_limits<double>::max();
+//	for (size_t pos = 0; pos < points.size(); pos += dft_num_) {
+//		const size_t start_cell = (subseq_low - synopsis_origin_) / cell_size_;
+//		subseq_low += subseq_size_;
+//		const size_t end_cell = (subseq_high - synopsis_origin_) / cell_size_;
+//		subseq_high += subseq_size_;
+//		IntervalValue point_res;
+//		point_res.min_ = std::numeric_limits<double>::max();
+//		for (size_t cell_id = start_cell; cell_id <= end_cell; ++cell_id) {
+//			const DFTCell &cell = GetCell(cell_id, ctx);
+//			// Check for empty MBR
+//			if (!cell.mbr_.low_.empty()) {
+//				point_res.state_ = IntervalValue::NON_NULL;
+//				const double min_mbr_dist = cell.mbr_.MinSqDist(
+//						points.data() + pos);
+//				if (min_mbr_dist < point_res.min_) {
+//					point_res.min_ = min_mbr_dist;
+//				}
+//			}
+//		}
+//		if (point_res.state_ != IntervalValue::NUL) {
+//			res.state_ = IntervalValue::NON_NULL;
+//			res.min_ += point_res.min_;
+//		} else {
+//			break;
+//		}
+//	}
+//	return res;
+    return {};
 }
 
-revisit dfdf
-void Sampler::DFTSynopsis::CheckBounds(Coordinate &point) const {
-	if (point < synopsis_origin_) {
-		point = synopsis_origin_;
-	} else if (point > synopsis_end_ + subseq_size_ - 1) {
-		point = synopsis_end_ + subseq_size_ - 1;
-	}
-}
-
-IntervalValue DFTSynopsis::SqDist(Coordinate low, Coordinate high,
-		const DoubleVector &points) {
-	assert(low <= high);
-	assert(points.size() % dft_num_ == 0);
-	CheckBounds(low);
-	CheckBounds(high);
-	/*
-	 * points.size() / dft_num shows the number of subsequences. The number
-	 * of trace points cannot be less than the query sequence size.
-	 */
-	const size_t query_subseq_num = points.size() / dft_num_;
-	if (high - low + 1 < query_subseq_num * subseq_size_) {
-		// Query sequence doesn't fit -- return NULL
-		return IntervalValue();
-	}
-	/*
-	 * High actually defines the end of the search interval. Should adjust
-	 * for the last subsequence, since we want low/high to be first and last
-	 * trace points.
-	 */
-	high -= subseq_size_ - 1;
-
-	// Determine start/end MBRs (synopsis cells)
-	AccessContext ctx;
-	IntervalValue res; // NUL; min_ = 0
-	/*
-	 * If we have several subsequences of the original query sequence, we
-	 * can adjust low/high a little bit (e.g., second subsequence cannot
-	 * start at the original low). So, we recompute them at every step.
-	 */
-	Coordinate subseq_low = low;
-	Coordinate subseq_high = high - (query_subseq_num - 1) * subseq_size_;
-	res.max_ = std::numeric_limits<double>::max();
-	for (size_t pos = 0; pos < points.size(); pos += dft_num_) {
-		const size_t start_cell = (subseq_low - synopsis_origin_) / cell_size_;
-		subseq_low += subseq_size_;
-		const size_t end_cell = (subseq_high - synopsis_origin_) / cell_size_;
-		subseq_high += subseq_size_;
-		IntervalValue point_res;
-		point_res.min_ = std::numeric_limits<double>::max();
-		for (size_t cell_id = start_cell; cell_id <= end_cell; ++cell_id) {
-			const DFTCell &cell = GetCell(cell_id, ctx);
-			// Check for empty MBR
-			if (!cell.mbr_.low_.empty()) {
-				point_res.state_ = IntervalValue::NON_NULL;
-				const double min_mbr_dist = cell.mbr_.MinSqDist(
-						points.data() + pos);
-				if (min_mbr_dist < point_res.min_) {
-					point_res.min_ = min_mbr_dist;
-				}
-			}
-		}
-		if (point_res.state_ != IntervalValue::NUL) {
-			res.state_ = IntervalValue::NON_NULL;
-			res.min_ += point_res.min_;
-		} else {
-			break;
-		}
-	}
-	return res;
-}
-
-Synopsis::Synopsis(const ArrayDesc &data_desc,
+AggSynopsis::AggSynopsis(const ArrayDesc &data_desc,
         const ArrayPtr &array) :
         Base{data_desc, array, array->getArrayDesc().getDimensions().size()} {
     /*
@@ -647,15 +609,16 @@ Sampler::Sampler(const ArrayDesc &data_desc,
         const std::vector<ArrayPtr> &synopsis_arrays,
         const SearchlightConfig &sl_config) :
             data_desc_{data_desc},
-            sl_config_(sl_config) {
+            sl_config_(sl_config),
+            logger_(logger) {
     // Create catalog of describing synopses
     for (const auto &array: synopsis_arrays) {
         const std::string &array_name =
                 ArrayDesc::makeUnversionedName(array->getName());
-        const auto &params = ParseArrayParamsFromName(array_name);
+        const auto &params = TokenizeString(array_name, "_");
 
         // Attribute name is the second to last component of the name
-        const std::string &attr_name = *(params.end() - 2);
+        const std::string &attr_name = *(params.rbegin() + 1);
         array_synopses_[attr_name].push_back(array);
     }
 
@@ -677,7 +640,11 @@ Sampler::~Sampler() {
     stats_str << "Stats for synopses follows:\n";
     for (size_t i = 0; i < synopses_.size(); i++) {
         stats_str << "\tStats for attribute " << i << ": \n";
-        for (const auto &syn: synopses_[i]) {
+        for (const auto &syn: synopses_[i].agg_synopses_) {
+            syn->OutputStats(stats_str);
+            stats_str << "\n";
+        }
+        for (const auto &syn: synopses_[i].seq_synopses_) {
             syn->OutputStats(stats_str);
             stats_str << "\n";
         }
@@ -756,113 +723,48 @@ Sampler::~Sampler() {
 //    cell.sum_ = sum_chunk_it->getItem().getDouble();
 //}
 
-StringVector Sampler::ParseArrayParamsFromName(const std::string &array_name) {
-    StringVector res;
-    using TokenSeparator = boost::char_separator<char>;
-    using Tokenizer = boost::tokenizer<TokenSeparator>;
-    TokenSeparator sep{"_"}; // parts are separated by '_'
-    Tokenizer tokenizer{array_name, sep};
-
-    for (auto cit = tokenizer.begin(); cit != tokenizer.end(); ++cit) {
-        res.push_back(*cit);
-    }
-
-    if (res.size() < 3) {
-        std::ostringstream err_msg;
-        err_msg << "Incorrect name for sample array. "
-                "Must be name_attr_NxNx...: name=" << array_name;
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
-                << err_msg.str();
-    }
-    return res;
-}
-
-template<class T>
-void Sampler::PrepareSynopses(std::vector<T> &synopses,
-        const std::unordered_set<size_t> &skip_synopses,
-		CachingType cache_type, bool preload, size_t mem_limit,
-		const std::string &attr_name, AttributeID attr_search_id) {
-	// First, sort synopses by their cell sizes
-    std::stable_sort(synopses.begin(), synopses.end(),
-            [](const T &s1, const T &s2) {
-        return s1->GetCellSize() > s2->GetCellSize();
-    });
-
-    // Then set cache type and preload
-    for (size_t i = 0; i < synopses.size(); ++i) {
-	    const auto &syn = synopses[i];
-		const size_t syn_mem_mb = syn->MemorySize() / 1024 / 1024; // in MB
-		if (syn_mem_mb <= mem_limit) {
-		    if (skip_synopses.find(i) == skip_synopses.end()) {
-                // Cache the synopsis
-                syn->SetCacheType(cache_type);
-                // .. and preload it if needed
-                if (preload) {
-                    LOG4CXX_INFO(logger, "Preloading synopsis: "<< syn->GetName());
-                    syn->Preload();
-                }
-		    }
-			mem_limit -= syn_mem_mb;
-		} else {
-			break;
-		}
-	}
-
-    // Warn about performance problems...
-    if (!synopses.front()->IsCached()) {
-        LOG4CXX_WARN(logger, "No synopses are cached for attribute "
-                << attr_name << "(" << attr_search_id << ")");
-    }
-
-    // Debug printing
-    if (logger->isDebugEnabled()) {
-        std::ostringstream msg;
-        msg << "Synopses loaded for attribute " << attr_name
-                << '(' << attr_search_id << "): ";
-        for (const auto &syn: synopses) {
-            msg << syn->GetName() << "(cached: " << int(syn->GetCachingType())
-                    << "), ";
-        }
-        logger->debug(msg.str());
-    }
-}
-
 void Sampler::LoadSampleForAttribute(const std::string &attr_name,
         AttributeID attr_search_id) {
     // Add a new vector of synopses if needed
     if (attr_search_id + 1 > synopses_.size()) {
         synopses_.resize(attr_search_id + 1);
-        dft_synopses_.resize(attr_search_id + 1);
     }
 
     // If we have loaded something for the attribute, ignore
-    auto &loaded_synopses = synopses_[attr_search_id];
-    if (!loaded_synopses.empty()) {
+    auto &attribute_synopses = synopses_[attr_search_id];
+    if (attribute_synopses.loaded_) {
         return;
     }
 
     // See what we have for the attribute
     const auto &synops = array_synopses_[attr_name];
-    auto &loaded_dft_synopses = dft_synopses_[attr_search_id];
-    std::unordered_set<size_t> skip_synopses;
     for (const auto &syn: synops) {
     	// Determine if we're loading a DFT synopsis: they start as "dft_"
         const std::string &syn_name =
                 ArrayDesc::makeUnversionedName(syn->getName());
-    	if (ParseArrayParamsFromName(syn_name)[0] == "dft") {
-    		loaded_dft_synopses.emplace_back(new DFTSynopsis{data_desc_, syn});
-    	} else {
-    	    const auto emplaced = synopsis_cache_.emplace(syn_name,
-    	            data_desc_, syn);
-    	    if (!emplaced.second) {
-    	        // Found in the cache
-    	        LOG4CXX_INFO(logger,
-    	            "Synopsis found in the cache: " << syn_name);
-                skip_synopses.insert(loaded_synopses.size());
+        const std::string possible_type = TokenizeString(syn_name, "_")[0];
+        if (possible_type == "dft" || possible_type == "paa") {
+            const auto emplaced = seq_synopsis_cache_.emplace(syn_name,
+                    data_desc_, syn);
+            if (!emplaced.second) {
+                // Found in the cache
+                LOG4CXX_INFO(logger,
+                    "Synopsis found in the cache: " << syn_name);
                 emplaced.first->ReplaceArray(syn);
-    	    }
-            loaded_synopses.push_back(emplaced.first);
-    	}
+            }
+            attribute_synopses.seq_synopses_.push_back(emplaced.first);
+        } else {
+            // Aggregate synopsis
+            const auto emplaced = agg_synopsis_cache_.emplace(syn_name,
+                    data_desc_, syn);
+            if (!emplaced.second) {
+                // Found in the cache
+                LOG4CXX_INFO(logger,
+                    "Synopsis found in the cache: " << syn_name);
+                emplaced.first->ReplaceArray(syn);
+            }
+            attribute_synopses.agg_synopses_.push_back(emplaced.first);
+        }
     }
 
     // Cache type
@@ -882,24 +784,23 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
 			sl_config_.get("searchlight.sampler.preload", 0);
 
     // Set cache type and preload aggregate synopses
-    if (!loaded_synopses.empty()) {
+    if (!attribute_synopses.agg_synopses_.empty()) {
 		const size_t memory_limit_mb =
 				sl_config_.get("searchlight.sampler.memory_per_attr", 1024);
-    	PrepareSynopses(loaded_synopses, skip_synopses, cache_type,
+    	PrepareSynopses(attribute_synopses.seq_synopses_, cache_type,
     	        preload_syns, memory_limit_mb, attr_name, attr_search_id);
     }
 
     // Set cache type and preload for DFT synopses
-    if (!loaded_dft_synopses.empty()) {
-        const std::unordered_set<size_t> dummy_dft_skip;
+    if (!attribute_synopses.seq_synopses_.empty()) {
 		const size_t memory_limit_mb =
 				sl_config_.get("searchlight.sampler.memory_per_attr_dft", 1024);
-    	PrepareSynopses(loaded_dft_synopses, dummy_dft_skip, cache_type,
+    	PrepareSynopses(attribute_synopses.seq_synopses_, cache_type,
     	        preload_syns, memory_limit_mb, attr_name, attr_search_id);
     }
 }
 
-bool Synopsis::RegionValidForSample(const Coordinates &low,
+bool AggSynopsis::RegionValidForSample(const Coordinates &low,
         const Coordinates &high) const {
     // copy to align
     Coordinates inlow(low), inhigh(high);
@@ -924,7 +825,7 @@ bool Synopsis::RegionValidForSample(const Coordinates &low,
     return true;
 }
 
-void Synopsis::ComputeAggregate(const Coordinates &low,
+void AggSynopsis::ComputeAggregate(const Coordinates &low,
         const Coordinates &high, const SampleAggregatePtrVector &aggs) {
     // copy to check correctness and align
     Coordinates inlow(low), inhigh(high);
@@ -948,7 +849,7 @@ void Synopsis::ComputeAggregate(const Coordinates &low,
     cells_accessed_.fetch_add(cells_accessed, std::memory_order_relaxed);
 }
 
-void Synopsis::ComputeAggregatesWithThr(
+void AggSynopsis::ComputeAggregatesWithThr(
         const SampleAggregatePtrVector &aggs,
         const std::vector<Region> &in_regions,
         std::vector<Region> &left_regions, double cell_thr) {
@@ -979,7 +880,7 @@ void Synopsis::ComputeAggregatesWithThr(
     cells_accessed_.fetch_add(cells_accessed, std::memory_order_relaxed);
 }
 
-IntervalValue Synopsis::GetElement(const Coordinates &point) {
+IntervalValue AggSynopsis::GetElement(const Coordinates &point) {
     IntervalValue res;
     if (!CheckBounds(point)) {
         return res; // out of bounds -- NULL
@@ -1025,14 +926,14 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
 
     // Check if the region is valid (assume all synopses cover the same area)
     IntervalValueVector res(aggs.size());
-    assert(!synopses_[s_attr].empty());
-    if (!synopses_[s_attr][0]->CheckIfValid(low, high)) {
+    assert(!synopses_[s_attr].agg_synopses_.empty());
+    if (!synopses_[s_attr].agg_synopses_[0]->CheckIfValid(low, high)) {
         // Not valid region, return nulls
         return res;
     }
 
     // Choose synopsis
-    Synopsis *syn = nullptr;
+    AggSynopsis *syn = nullptr;
     if (exact) {
         for (const auto &s: synopses_[s_attr]) {
             if (s->RegionValidForSample(low, high)) {
@@ -1053,8 +954,8 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
         }
     } else {
         // Non-exact computation: use the threshold algorithm
-        assert(!synopses_[s_attr].empty());
-        auto &syns = synopses_[s_attr];
+        assert(!synopses_[s_attr].agg_synopses_.empty());
+        auto &syns = synopses_[s_attr].agg_synopses_;
 
         Region orig_region{low, high};
         syns[0]->CheckAndCorrectBounds(orig_region.low_, orig_region.high_);
@@ -1098,23 +999,25 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
 IntervalValue Sampler::GetElement(const Coordinates &point,
         AttributeID attr) const {
     // We always estimate element via the primary sample
-    assert(!synopses_[attr].empty());
-    const auto &syn = synopses_[attr][0];
+    assert(!synopses_[attr].agg_synopses_.empty());
+    const auto &syn = synopses_[attr].agg_synopses_[0];
     return syn->GetElement(point);
 }
 
-void Sampler::ComputeDFTs(const DoubleVector &seq, size_t dft_size,
+void Sampler::ComputeDFTs(const DoubleVector &seq, size_t ss_size,
 		size_t dft_num, DoubleVector &res) {
+    // Result space
+    res.reserve(seq.size() / ss_size * dft_num);
 	// In out arrays (reusable)
-	double *in = (double *)fftw_malloc(sizeof(double) * dft_size);
+	double *in = (double *)fftw_malloc(sizeof(double) * ss_size);
 	fftw_complex *out = (fftw_complex *)fftw_malloc(
-			sizeof(fftw_complex) * (dft_size / 2 + 1));
-	fftw_plan p = fftw_plan_dft_r2c_1d(dft_size, in, out, FFTW_ESTIMATE);
+			sizeof(fftw_complex) * (ss_size / 2 + 1));
+	fftw_plan p = fftw_plan_dft_r2c_1d(ss_size, in, out, FFTW_ESTIMATE);
 	// Break the sequence and compute DFTs
-	const double sqrt_N = std::sqrt(dft_size);
-	for (size_t i = 0; i + dft_size - 1 < seq.size(); i += dft_size) {
+	const double sqrt_N = std::sqrt(ss_size);
+	for (size_t i = 0; i + ss_size - 1 < seq.size(); i += ss_size) {
 		// Copy to the planned array
-		memcpy(in, seq.data() + i, sizeof(double) * dft_size);
+		memcpy(in, seq.data() + i, sizeof(double) * ss_size);
 		// Perform DFT
 		fftw_execute(p);
 		// Copy to the result
@@ -1134,35 +1037,36 @@ void Sampler::ComputeDFTs(const DoubleVector &seq, size_t dft_size,
 
 void Sampler::RegisterQuerySequence(AttributeID attr, size_t seq_id,
 		const DoubleVector &seq) {
-	for (const auto &dft_syn: dft_synopses_[attr]) {
-		const size_t dft_size = dft_syn->GetSubsequenceSize();
-		const size_t dft_num = dft_syn->GetDFTNum();
-		const DFTSequenceID cache_id{attr, seq_id, dft_size};
-		auto &cache_seq = dft_seq_cache_[cache_id];
-		cache_seq.reserve(seq.size() / dft_size * dft_num);
-		ComputeDFTs(seq, dft_size, dft_num, cache_seq);
+    const auto ins = seq_cache_.emplace(seq_id,
+            TransformedSequenceInfo{seq.size(), attr, {}});
+    assert(ins.second);
+    auto &seq_info = ins.first->second;
+	for (const auto &seq_syn: synopses_[attr].seq_synopses_) {
+		const size_t ss_size = seq_syn->GetSubsequenceSize();
+		const size_t feat_num = seq_syn->GetFeaturesNum();
+		ComputeDFTs(seq, ss_size, feat_num, seq_info.sequence_[ss_size]);
 	}
 }
 
-IntervalValue Sampler::SqDist(AttributeID attr, Coordinate low, Coordinate high,
-		size_t seq_id) const {
+IntervalValue Sampler::SqDist(const Coordinates &low, const Coordinates &high,
+        size_t seq_id) const {
+    const auto it = seq_cache_.find(seq_id);
+    assert(it != seq_cache_.end());
+    const TransformedSequenceInfo &seq_info = it->second;
     // FIXME: For now we compute distance via the primary sample
-	assert(!dft_synopses_[attr].empty());
-	const auto &syn = dft_synopses_[attr][0];
-	const size_t subseq_size = syn->GetSubsequenceSize();
-	const DFTSequenceID cache_id{attr, seq_id, subseq_size};
-	// Query points
-	assert(dft_seq_cache_.find(cache_id) != dft_seq_cache_.end());
-	const auto &query_points = dft_seq_cache_.at(cache_id);
-	return syn->SqDist(low, high, query_points);
+    assert(!synopses_[seq_info.sattr_].seq_synopses_.empty());
+    const auto &syn = synopses_[seq_info.sattr_].seq_synopses_[0];
+    return syn->SqDist(low, high, seq_info);
 }
 
 void Sampler::ClearPersistentCache() {
     LOG4CXX_INFO(logger, "Clearing cache for Sampler...");
-    synopsis_cache_.Clear();
+    agg_synopsis_cache_.Clear();
+    seq_synopsis_cache_.Clear();
 }
 
 // Synopsis cache
-Sampler::SynopsisCache Sampler::synopsis_cache_;
+Sampler::AggSynopsisCache Sampler::agg_synopsis_cache_;
+Sampler::SeqSynopsisCache Sampler::seq_synopsis_cache_;
 
 } /* namespace searchlight */

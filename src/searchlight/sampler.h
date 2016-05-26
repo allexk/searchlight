@@ -58,8 +58,8 @@ typedef SampleAggregate *(*SampleAggregateFactory)();
  * metadata. Different synopses, even for a single attribute,
  * are represented by different Synopsis objects.
  */
-class Synopsis : private boost::noncopyable,
-                 public GridSynopsis<AggCell, AggCellItemReader> {
+class AggSynopsis : private boost::noncopyable,
+                    public GridSynopsis<AggCell, AggCellItemReader> {
 private:
     typedef GridSynopsis<AggCell, AggCellItemReader> Base;
 
@@ -72,7 +72,7 @@ public:
      * @param data_desc data array descriptor
      * @param array synopsis array
      */
-    Synopsis(const ArrayDesc &data_desc, const ArrayPtr &array);
+    AggSynopsis(const ArrayDesc &data_desc, const ArrayPtr &array);
 
     /**
      * Check if the region can be computed by this synopsis.
@@ -127,36 +127,41 @@ public:
             const std::vector<Region> &in_regions,
             std::vector<Region> &left_regions, double cell_thr);
 };
-using SynopsisPtr = std::unique_ptr<Synopsis>;
-using SynopsisSharedPtr = std::shared_ptr<Synopsis>;
+using AggSynopsisSharedPtr = std::shared_ptr<AggSynopsis>;
 
 /**
- * This class contains DFT-based synopsis information about 1D
- * sequences. Its cells are actually MBRs of the
- * corresponding DFT trace subsequences.
+ * This class is a sequence-based synopsis (i.e., DFT/PAA type).
+ * Its cells are actually MBRs of the corresponding trace subsequences.
  *
  * This type of synopsis has a number of conventions:
  *
- * 1) Its name is <name>_<dft_params>_<usual_chunk_size>
- *      Where <dft_params_is>: <subseq_sizeXdft_componentsXMBR_size>
- * 2) The last dimension stores DFT coordinates (i.e., its not grid)
- * 3) The dimension before last is the waveform one
+ * 1) Its name is <name>_<params>_<usual_chunk_size>
+ *      Where <params> is: <name(dft/paa)Xsubseq_size>
+ * 2) The last dimension stores components (i.e., its not a grid one),
+ *      from which we take the number of components
+ * 3) The dimension before last is the waveform one. Thus <usual_chunk_size>
+ *      contains the size of the MBR.
  */
-class DFTSynopsis : private boost::noncopyable,
-                    public GridSynopsis<DFTCell, DFTCellItemReader> {
+class SeqSynopsis : private boost::noncopyable,
+                    public GridSynopsis<SeqCell, SeqCellItemReader> {
 private:
-    typedef GridSynopsis<DFTCell, DFTCellItemReader> Base;
+    typedef GridSynopsis<SeqCell, SeqCellItemReader> Base;
 
 public:
+    enum class Type {
+        DFT,  // DFT synopsis
+        PAA   // PAA synopsis
+    };
+
     /**
-     * Create a new DFT synopsis.
+     * Create a new sequence synopsis.
      *
      * No cells are loaded at this point. Only meta-data is initialized.
      *
      * @param data_desc data array descriptor
      * @param array synopsis array
      */
-    DFTSynopsis(const ArrayDesc &data_desc, const ArrayPtr &array);
+    SeqSynopsis(const ArrayDesc &data_desc, const ArrayPtr &array);
 
     /**
      * Returns the MBR size of the synopsis.
@@ -178,11 +183,11 @@ public:
      *
      * @param low low interval boundary
      * @param high high interval boundary
-     * @param point query points
+     * @param seq_info information about the query sequence
      * @return minumum square distance from the interval to the point
      */
-    IntervalValue SqDist(Coordinate low, Coordinate high,
-            const DoubleVector &points);
+    IntervalValue SqDist(const Coordinates &low, const Coordinates &high,
+            const TransformedSequenceInfo &seq_info);
 
     /**
      * Return subsequence size (omega) for this synopsis.
@@ -197,8 +202,8 @@ public:
      *
      * @return number of DFT coordinates
      */
-    size_t GetDFTNum() const {
-        return dft_num_;
+    size_t GetFeaturesNum() const {
+        return features_num_;
     }
 
 private:
@@ -209,25 +214,22 @@ private:
      */
     virtual size_t MemoryPerCell() const override {
         // In general, we store 2 vectors for MBRs
-        return sizeof(DFTCell) + sizeof(double) * dft_num_ * 2;
+        return sizeof(SeqCell) + sizeof(double) * features_num_ * 2;
     }
 
-    // Check if the point inside the managed interval
-    void CheckBounds(Coordinate &point) const;
-
-    // Parse DFT-synopsis specific params
-    void ParseDFTSynopsisParams(const std::string &params);
-
-    // Subsequence size for which DFT coordinates were computed
+    // Subsequence size for which the features were computed
     size_t subseq_size_;
 
-    // The number of DFT coordinates.
-    uint64_t dft_num_;
+    // The number of features.
+    uint64_t features_num_;
 
     // The size of the MBR (i.e., the trace size)
     size_t mbr_size_;
+
+    // Sequence synopsis type
+    Type type_;
 };
-using DFTSynopsisPtr = std::unique_ptr<DFTSynopsis>;
+using SeqSynopsisSharedPtr = std::shared_ptr<SeqSynopsis>;
 
 /**
  * Sampler allows access to array synopses stored in memory. A synopsis is
@@ -372,49 +374,18 @@ public:
      * This function assumes the query sequence has been registered with the
      * sampler. The id must be provided as a parameter by the user.
      *
-     * @param attr attribute to compute the distance for
      * @param low low interval boundary
      * @param high high interval boundary
      * @param seq_id query sequence id
      * @return minimum square distance from the interval to the point
      */
-    IntervalValue SqDist(AttributeID attr, Coordinate low, Coordinate high,
+    IntervalValue SqDist(const Coordinates &low, const Coordinates &high,
     		size_t seq_id) const;
-
-    /**
-     * Return available DFT synopsis sizes.
-     *
-     * When the query sequence is transformed into a DFT point, it is
-     * necessary to know which synopses the sampler has, since each synopsis is
-     * created for the fixed (parameter) size. This function returns available
-     * sizes.
-     *
-     * The sizes are returned only for the specified attribute id
-     *
-     * @param internal attribute id
-     * @return vector of available DFT synopsis sizes
-     */
-    std::vector<size_t> AvailableDFTSizes(AttributeID attr) const {
-    	std::vector<size_t> res;
-    	if (attr < dft_synopses_.size() && !dft_synopses_[attr].empty()) {
-        	// FIXME: For now we use only a single DFT synopsis
-    		res.push_back(dft_synopses_[attr][0]->GetSubsequenceSize());
-    	}
-    	return res;
-    }
 
 private:
     // Synopsis cache
-    using SynopsisCache = SearchlightCache<std::string, Synopsis>;
-
-    /*
-     * Every synopsis array name consists of:
-     *   <user-defined name>_<attr_name>_NxN... where N are synopsis cell
-     *   sizes.
-     *
-     *   This function just returns the three parts in separate strings.
-     */
-    static StringVector ParseArrayParamsFromName(const std::string &array_name);
+    using AggSynopsisCache = SearchlightCache<std::string, AggSynopsis>;
+    using SeqSynopsisCache = SearchlightCache<std::string, SeqSynopsis>;
 
     /*
      * Prepares synopses (sorts by cell size, caches, preloads).
@@ -422,11 +393,53 @@ private:
      * skip_synopses specifies synopses to SKIP from prepare. Others are
      * prepared, which is usefule for inter-query cached synopses.
      */
-    template<class T>
-    void PrepareSynopses(std::vector<T> &synopses,
-            const std::unordered_set<size_t> &skip_synopses,
+    template<class SynType>
+    void PrepareSynopses(std::vector<SynType> &synopses,
     		CachingType cache_type, bool preload, size_t mem_limit,
-			const std::string &attr_name, AttributeID attr_search_id);
+			const std::string &attr_name, AttributeID attr_search_id) {
+        // First, sort synopses by their cell sizes
+        std::stable_sort(synopses.begin(), synopses.end(),
+                [](const SynType &s1, const SynType& s2) {
+            return s1->GetCellSize() > s2->GetCellSize();
+        });
+
+        // Then set cache type and preload
+        for (size_t i = 0; i < synopses.size(); ++i) {
+            const auto &syn = synopses[i];
+            const size_t syn_mem_mb = syn->MemorySize() / 1024 / 1024; // in MB
+            if (syn_mem_mb <= mem_limit) {
+                if (syn->GetCachingType() == CachingType::NONE) {
+                    // Cache the synopsis
+                    syn->SetCacheType(cache_type);
+                    // .. and preload it if needed
+                    if (preload) {
+                        syn->Preload();
+                    }
+                }
+                mem_limit -= syn_mem_mb;
+            } else {
+                break;
+            }
+        }
+
+        // Warn about performance problems...
+        if (!synopses.front()->IsCached()) {
+            LOG4CXX_WARN(logger_, "No synopses are cached for attribute "
+                    << attr_name << "(" << attr_search_id << ")");
+        }
+
+        // Debug printing
+        if (logger_->isDebugEnabled()) {
+            std::ostringstream msg;
+            msg << "Synopses loaded for attribute " << attr_name
+                    << '(' << attr_search_id << "): ";
+            for (const auto &syn: synopses) {
+                msg << syn->GetName() << "(cached: " << int(syn->GetCachingType())
+                        << "), ";
+            }
+            logger_->debug(msg.str());
+        }
+    }
 
     /*
      * Compute DFTs of size dft_size from the sequence seq and store first
@@ -436,7 +449,7 @@ private:
      * parts sequentially for components. For example, if dft_num == 6,
      * we take the first 3 components of the DFT.
      */
-    static void ComputeDFTs(const DoubleVector &seq, size_t dft_size,
+    static void ComputeDFTs(const DoubleVector &seq, size_t ss_size,
     		size_t dft_num, DoubleVector &res);
 
     // Synopses catalog (attr. name --> list of synopsis)
@@ -447,13 +460,18 @@ private:
      * attribute ids, second vector contains synopses ranged by the cell
      * size in decreasing order.
      */
-    std::vector<std::vector<SynopsisSharedPtr>> synopses_;
-    std::vector<std::vector<DFTSynopsisPtr>> dft_synopses_;
+    struct AttributeSynopses {
+        bool loaded_ = false;
+        std::vector<AggSynopsisSharedPtr> agg_synopses_;
+        std::vector<SeqSynopsisSharedPtr> seq_synopses_;
+    };
+    std::vector<AttributeSynopses> synopses_;
 
     /*
      * Searchlight inter-query cache for synopses.
      */
-    static SynopsisCache synopsis_cache_;
+    static AggSynopsisCache agg_synopsis_cache_;
+    static SeqSynopsisCache seq_synopsis_cache_;
 
     // Descriptor of the data array we store synopses for
     const ArrayDesc data_desc_;
@@ -478,24 +496,13 @@ private:
     bool cache_synopses_;
 
     /*
-     *  Query sequences DFT cache types and routines.
+     *  Query sequences cache types and routines.
      */
-    // DFTs are cached by attribute, sequence id and synopsis resolution
-    using DFTSequenceID = std::tuple<AttributeID, size_t, size_t>;
-    // Hash function to use in maps
-    struct DFTSequenceIDHash : public std::unary_function<DFTSequenceID, size_t> {
-    	size_t operator()(const DFTSequenceID &id) const {
-    		size_t h = 17;
-    		h = 31 * h + std::get<0>(id);
-    		h = 31 * h + std::get<1>(id);
-    		h = 31 * h + std::get<2>(id);
-    		return h;
-    	}
-    };
-    // Cache of DFT sequences
-    using DFTSequenceCache = std::unordered_map<DFTSequenceID, DoubleVector, DFTSequenceIDHash>;
-    // Cache itself
-    DFTSequenceCache dft_seq_cache_;
+    using SequenceCache = std::unordered_map<size_t, TransformedSequenceInfo>;
+    SequenceCache seq_cache_;
+
+    // Logger
+    log4cxx::LoggerPtr logger_;
 };
 
 /**

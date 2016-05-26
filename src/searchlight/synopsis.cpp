@@ -89,7 +89,7 @@ void AggCellItemReader::Read(const Coordinates &pos, AggCell &cell) {
     }
 }
 
-void DFTCellItemReader::InitIterators() {
+void SeqCellItemReader::InitIterators() {
     /*
      * Here we assume the attributes have been discovered and checked.
      */
@@ -111,7 +111,7 @@ void DFTCellItemReader::InitIterators() {
     read_pos_.resize(dims.size());
 }
 
-void DFTCellItemReader::Read(const Coordinates &pos, DFTCell &cell) {
+void SeqCellItemReader::Read(const Coordinates &pos, SeqCell &cell) {
     // Init iterators (first time only)
     if (!low_it_) {
         InitIterators(iters);

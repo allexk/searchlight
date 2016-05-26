@@ -32,7 +32,6 @@
 #define SEARCHLIGHT_SYNOPSIS_H_
 
 #include "scidb_inc.h"
-#include "sampler.h"
 
 namespace searchlight {
 
@@ -331,8 +330,16 @@ public:
         const std::string &synopsis_config =
                ArrayDesc::makeUnversionedName(synopsis_desc.getName());
         cell_size_.resize(dims);
-        ParseChunkSizes(Sampler::ParseArrayParamsFromName(
-            synopsis_config).back());
+        const auto params = TokenizeString(synopsis_config, "_");
+        if (params.size() < 3) {
+            std::ostringstream err_msg;
+            err_msg << "Incorrect name for sample array. "
+                    "Must be name_attr_NxNx...: name=" << synopsis_config;
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                                   SCIDB_LE_ILLEGAL_OPERATION)
+                    << err_msg.str();
+        }
+        ParseChunkSizes(params.back());
 
         // Compute sample boundaries (in original coordinates)
         synopsis_origin_.resize(dims);
@@ -542,6 +549,7 @@ public:
             LOG4CXX_WARN(logger_, "Attempting to preload non-eager synopsis.");
             return;
         }
+        LOG4CXX_INFO(logger_, "Preloading synopsis: " << GetName());
         // preload by touching every cell
         RegionIterator iter{*this, synopsis_origin_, synopsis_end_};
         while (!iter.end()) {
@@ -1005,13 +1013,13 @@ struct AggCell {
 };
 
 /**
- * DFT synopsis cell.
+ * Sequence synopsis cell.
  *
- * Basically DFT trace MBRs with low/high coordinates.
+ * Basically trace MBRs with low/high coordinates.
  */
-struct DFTCell {
+struct SeqCell {
     /**
-     * MBR for storing a DFT region.
+     * MBR for storing a trace region.
      */
     struct {
         DoubleVector low_, high_;
@@ -1047,7 +1055,7 @@ struct DFTCell {
      *
      * @param cell cell to copy from
      */
-    DFTCell(const DFTCell &cell) :
+    SeqCell(const SeqCell &cell) :
         mbr_(cell.mbr_),
         valid_(cell.valid_.load(std::memory_order_relaxed)) {}
 
@@ -1056,7 +1064,7 @@ struct DFTCell {
      *
      * If the cell is invalid, that means it has to be loaded from disk.
      */
-    DFTCell() = default;
+    SeqCell() = default;
 };
 
 /**
@@ -1073,7 +1081,7 @@ public:
     void Read(const Coordinates &pos, AggCell &cell);
 
     // Temporary cell
-    AggCell &TempCell() const {
+    AggCell &TempCell() {
         return cell_;
     }
 
@@ -1088,20 +1096,20 @@ private:
 };
 
 /**
- * DFT cell reader for synopsis arrays.
+ * Seqcell reader for synopsis arrays.
  */
-class DFTCellItemReader {
+class SeqCellItemReader {
 public:
     // Constructor.
-    DFTCellItemReader(const ArrayPtr &array, const AttributeMap &attrs) :
+    SeqCellItemReader(const ArrayPtr &array, const AttributeMap &attrs) :
         array_{array},
         attributes_{attrs} {}
 
     // Reads a cell
-    void Read(const Coordinates &pos, DFTCell &cell);
+    void Read(const Coordinates &pos, SeqCell &cell);
 
     // Temporary cell
-    DFTCell &TempCell() const {
+    SeqCell &TempCell() {
         return cell_;
     }
 
@@ -1114,7 +1122,19 @@ private:
     ConstItemIteratorPtr low_it_, high_it_;
     size_t coords_num_ = 0; // number of DFT components
     Coordinates read_pos_;
-    DFTCell cell_;
+    SeqCell cell_;
+};
+
+/**
+ * Info about the transformed sequence.
+ */
+struct TransformedSequenceInfo {
+    // Original sequence length
+    size_t original_length_;
+    // Attribute of the sequence (the search one)
+    AttributeID sattr_;
+    // The transformed sequences (subsequence size --> transformed)
+    std::unordered_map<size_t, DoubleVector> sequence_;
 };
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_SYNOPSIS_H_ */

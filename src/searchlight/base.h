@@ -41,6 +41,7 @@
 
 #include <log4cxx/log4cxx.h>
 #include <boost/property_tree/ptree.hpp>
+#include <boost/tokenizer.hpp>
 
 namespace searchlight {
 
@@ -217,5 +218,25 @@ std::ostream &operator<<(std::ostream &os, const IntervalValue &iv);
  */
 typedef std::vector<IntervalValue> IntervalValueVector;
 
+/**
+ * String tokenizer.
+ *
+ * @param str string to tokenize
+ * @param seps separator characters
+ * @return resulting tokens
+ */
+StringVector TokenizeString(const std::string &str,
+                            const char *seps) {
+    StringVector res;
+    using TokenSeparator = boost::char_separator<char>;
+    using Tokenizer = boost::tokenizer<TokenSeparator>;
+    TokenSeparator sep{seps}; // parts are separated by '_'
+    Tokenizer tokenizer{str, sep};
+
+    for (auto cit = tokenizer.begin(); cit != tokenizer.end(); ++cit) {
+        res.push_back(*cit);
+    }
+    return res;
+}
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_BASE_H_ */
