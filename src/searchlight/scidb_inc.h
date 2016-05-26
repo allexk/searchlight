@@ -63,6 +63,7 @@ namespace scidb {
 #include <network/MessageUtils.h>
 
 #include <unordered_set>
+#include <unordered_map>
 
 namespace searchlight {
 
@@ -246,6 +247,75 @@ struct Region {
         }
         return res;
     }
+};
+
+/**
+ * Row-major iterator over the specified region.
+ */
+class RowMajorIterator {
+public:
+    RowMajorIterator(const Coordinates &low, const Coordinates &high) :
+        low_{low}, high_{high}, current_{low} {
+            if (low_.size() != high_.size() || low_.empty()) {
+                throw std::invalid_argument(
+                    "Coordinates must be of the same size and not empty");
+            }
+            for (size_t i = 0; i < low_.size(); ++i) {
+                if (low_[i] > high_[i]) {
+                    throw std::invalid_argument(
+                        "Low coordinates must be strictly less than high");
+                }
+            }
+        }
+
+    /**
+     * Prefix increment.
+     *
+     * @return itself
+     */
+    RowMajorIterator &operator++() {
+        assert(valid_);
+        size_t i = current_.size() - 1;
+        while ((++current_[i]) > high_[i]) {
+            current_[i] = low_[i];
+            if (i == 0) {
+                valid_ = false;
+                break;
+            }
+            --i;
+        }
+        return *this;
+    }
+
+    /**
+     * Check if the iterator is at end.
+     *
+     * @return true, if points to end; false, otherwise
+     */
+    bool end() const {
+        return valid_;
+    }
+
+    /**
+     * Reset the iterator to the initial state.
+     */
+    void Reset() {
+        current_ = low_;
+        valid_ = true;
+    }
+
+    /**
+     * Dereference operator.
+     *
+     * @return current position
+     */
+    const Coordinates& operator*() const {
+        return current_;
+    }
+
+private:
+    Coordinates low_, high_, current_;
+    bool valid_ = true;
 };
 } /* namespace searchlight */
 

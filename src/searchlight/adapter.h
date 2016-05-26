@@ -184,7 +184,7 @@ public:
     /**
      * Return square distance from the query sequence to the interval values.
      *
-     * The value can be approximated by an interval via the DFT sampling with
+     * The value can be approximated by an interval via the DFT/PAA sampling
      * MBRs, covering traces. The exact value is computed by retrieving array
      * values belonging to the interval.
      *
@@ -198,12 +198,11 @@ public:
      *
      * @param low left interval boundary
      * @param high right interval boundary
-     * @param int_dim interval dimension among low/high
      * @param seq_id query sequence id
      * @return square distance from point to interval values
      */
     IntervalValue SqDist(const Coordinates &low, const Coordinates &high,
-    		size_t int_dim, AttributeID attr, size_t seq_id) const;
+    		AttributeID attr, size_t seq_id) const;
 
     /**
      * Enables stats collecting mode.

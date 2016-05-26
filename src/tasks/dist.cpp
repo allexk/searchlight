@@ -85,6 +85,8 @@ void Dist(Searchlight *sl, uint32_t id) {
     const SearchlightConfig &config = sl->GetConfig();
 
     // task params
+    const int32 start_id = config.get<int32>("dist.l_id");
+    const int32 end_id   = config.get<int32>("dist.u_id");
     const int32 start_time = config.get<int32>("dist.l_time");
     const int32 end_time   = config.get<int32>("dist.u_time");
     const int32 query_dist = config.get<int32>("dist.dist", 0);
@@ -95,10 +97,11 @@ void Dist(Searchlight *sl, uint32_t id) {
     const int luby_scale = config.get("searchlight.sl.luby_scale", 1);
 
     // problem variables
-    std::vector<IntVar *> coords(1);
-    coords[0] = MakeIntVarWithName(solver, start_time, end_time, step_time,
+    std::vector<IntVar *> coords(2);
+    coords[0] = MakeIntVarWithName(solver, start_id, end_id, 1, "id");
+    coords[1] = MakeIntVarWithName(solver, start_time, end_time, step_time,
             "time");
-    std::vector<IntExpr *> all_exprs{coords[0]};
+    std::vector<IntExpr *> all_exprs{coords[0], coords[1]};
 
     // attribute and sequence
     const std::string signal_name = config.get<std::string>("dist.signal");
@@ -109,11 +112,11 @@ void Dist(Searchlight *sl, uint32_t id) {
 
     // valid sequence
     solver.AddConstraint(solver.MakeLessOrEqual(
-            solver.MakeSum(coords[0], seq_len), end_time + 1));
+            solver.MakeSum(coords[1], seq_len), end_time + 1));
 
     // create function
     UDFFunctionCreator sqdist_fab = sl->GetUDFFunctionCreator("sqdist");
-    std::vector<int64> udf_params{attr, int64(seq_id), int64(seq_len), 0};
+    std::vector<int64> udf_params{attr, int64(seq_id), int64(seq_len)};
     IntExpr * const sqdist = solver.RevAlloc(sqdist_fab(&solver, adapter,
             all_exprs, udf_params));
     sl->AddTrackExpr(sqdist, "sqdist");
@@ -143,7 +146,7 @@ void Dist(Searchlight *sl, uint32_t id) {
         }
         mons.push_back(solver.MakeTimeLimit(time_limit * 1000));
     } else if (search_heuristic == "split") {
-        db = solver.MakePhase(coords, Solver::CHOOSE_MAX_SIZE,
+        db = solver.MakePhase(coords, Solver::CHOOSE_FIRST_UNBOUND,
             Solver::SPLIT_LOWER_HALF);
         const bool balance = config.get("balance.solver_balance", 1);
         const double low_thr = config.get("balance.general_low", 0.1);

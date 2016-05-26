@@ -59,6 +59,22 @@ public:
     class RegionIterator {
     public:
         /**
+         * Creates an iterator over the region, specified by low and
+         * high coordinates (both inclusive).
+         *
+         * We assume that the low-high coordinates comprise a valid region,
+         * where high[i] >= low[i].
+         */
+        RegionIterator(GridSynopsis &synopsis, const Coordinates &low,
+                       const Coordinates &high) :
+                region_low_(low),
+                region_high_(high),
+                synopsis_(synopsis),
+                cell_reader_{synopsis.synopsis_array_, synopsis.attributes_},
+                pos_{low},
+                cell_pos_{GetCellPos()} {}
+
+        /**
          * Reset this iterator to a new region.
          *
          * @param low left region coordinates
@@ -216,24 +232,7 @@ public:
         }
 
     private:
-        // To create iterators
         friend class GridSynopsis;
-
-        /*
-         * Creates an iterator over the region, specified by low and
-         * high coordinates (both inclusive).
-         *
-         * We assume that the low-high coordinates comprise a valid region,
-         * where high[i] >= low[i].
-         */
-        RegionIterator(GridSynopsis &synopsis, const Coordinates &low,
-                       const Coordinates &high) :
-                region_low_(low),
-                region_high_(high),
-                synopsis_(synopsis),
-                cell_reader_{synopsis.synopsis_array_, synopsis.attributes_},
-                pos_{low},
-                cell_pos_{GetCellPos()} {}
 
         /**
          * Return cell reader for the iterator.
@@ -320,11 +319,10 @@ public:
      */
     GridSynopsis(const ArrayDesc &data_desc, const ArrayPtr &array,
         size_t dims) :
-            synopsis_array_(array),
-            logger_(log4cxx::Logger::getLogger("searchlight.sampler")) {
+            logger_(log4cxx::Logger::getLogger("searchlight.sampler")),
+            synopsis_array_(array) {
         // Array descriptor
         const ArrayDesc &synopsis_desc = array->getArrayDesc();
-        const size_t total_dims = synopsis_desc.getDimensions().size();
 
         // By convenience we store sizes in the name after the last '_'
         const std::string &synopsis_config =
@@ -413,8 +411,9 @@ public:
              * later. The cells are invalid and will be loaded from the synopsis
              * later in lazy fashion.
              */
-            chunks_ = Chunks({true});
+            chunks_ = Chunks(1);
             chunks_[0].cells_ = Cells(GetTotalCellCount());
+            chunks_[0].valid_.store(true, std::memory_order_release);
         } else if (mode == CachingType::LAZY) {
             /*
              * Reserve space for array chunks. All chunks are invalid at the
@@ -662,6 +661,11 @@ private:
 
         // Default validity constructor
         SynopsisChunk(bool valid = false) : valid_{valid} {}
+
+        // Copy constructor (needed to copy atomic)
+        SynopsisChunk(SynopsisChunk &&other) :
+            valid_{other.valid_.load(std::memory_order_relaxed)},
+            cells_{std::move(other.cells_)} {}
     };
     // Synopsis chunks
     using Chunks = std::vector<SynopsisChunk>;
@@ -905,9 +909,6 @@ private:
     // Is this synopses preloaded? No cell validation required, if it is.
     bool preloaded_ = false;
 
-    // Stats: total number of cell accessed
-    std::atomic<uint64_t> cells_accessed_{0};
-
     /* To synchronize access during cell loads.
      *
      * TODO: Strictly speaking, there is no need to have a single mutex for
@@ -927,6 +928,9 @@ private:
     log4cxx::LoggerPtr logger_;
 
 protected:
+    // Stats: total number of cell accessed
+    std::atomic<uint64_t> cells_accessed_{0};
+
     // The sample array
     ArrayPtr synopsis_array_;
 
@@ -1055,8 +1059,8 @@ struct SeqCell {
      *
      * @param cell cell to copy from
      */
-    SeqCell(const SeqCell &cell) :
-        mbr_(cell.mbr_),
+    SeqCell(SeqCell &&cell) :
+        mbr_(std::move(cell.mbr_)),
         valid_(cell.valid_.load(std::memory_order_relaxed)) {}
 
     /**
@@ -1135,6 +1139,9 @@ struct TransformedSequenceInfo {
     AttributeID sattr_;
     // The transformed sequences (subsequence size --> transformed)
     std::unordered_map<size_t, DoubleVector> sequence_;
+
+    TransformedSequenceInfo(size_t len, AttributeID sattr) :
+        original_length_(len), sattr_(sattr) {}
 };
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_SYNOPSIS_H_ */

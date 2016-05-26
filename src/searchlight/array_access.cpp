@@ -201,11 +201,10 @@ void ArrayAccess::ComputeGeneralAggregate(const Array &array,
 }
 
 bool ArrayAccess::SqDistance(const Coordinates &low, const Coordinates &high,
-		size_t int_dim, AttributeID attr,
-		const DoubleVector &query_seq, double &res) const {
+		AttributeID attr, const DoubleVector &query_seq, double &res) const {
 	// Interval coordinates
-	const Coordinate low_int = low[int_dim];
-	const Coordinate high_int = high[int_dim];
+	const Coordinate low_int = low.back();
+	const Coordinate high_int = high.back();
 	if (low_int > high_int || (high_int - low_int + 1) != query_seq.size()) {
 		return false;
 	}
@@ -215,7 +214,7 @@ bool ArrayAccess::SqDistance(const Coordinates &low, const Coordinates &high,
     res = 0;
     Coordinates pos{low};
     for (Coordinate i = low_int; i <= high_int; ++i) {
-    	pos[int_dim] = i;
+    	pos.back() = i;
     	if (!iter->setPosition(pos)) {
     		// Empty element
     		return false;

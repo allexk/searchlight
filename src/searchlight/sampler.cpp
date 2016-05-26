@@ -520,70 +520,134 @@ SeqSynopsis::SeqSynopsis(const ArrayDesc &data_desc,
 IntervalValue SeqSynopsis::SqDist(const Coordinates &low,
         const Coordinates &high, const TransformedSequenceInfo &seq_info) {
     // Corrected coordinates
-//    Coordinates lowc{low}, highc{high};
-//    CheckAndCorrectBounds(lowc, highc);
-//    // Proper transformed sequence
-//    assert(seq_info.sequence_.count(subseq_size_));
-//    const auto &seq = seq_info.sequence_.find(subseq_size_)->second;
-//	assert(seq.size() % features_num_ == 0);
-//
-//	// The sequence must fit
-//	if (highc - lowc + 1 < seq_info.original_length_) {
-//		// Query sequence doesn't fit -- return NULL
-//		return IntervalValue();
-//	}
-//	/*
-//	 * Low/high should conform to the possible starting points.
-//	 */
-//	const size_t query_pieces = seq.size() / features_num_;
-//	highc -= seq_info.original_length_ - query_pieces * subseq_size_;
-//
-//	/*
-//	 * High actually defines the end of the search interval. Should adjust
-//	 * for the last subsequence, since we want low/high to be first and last
-//	 * trace points.
-//	 */
-//	high -= subseq_size_ - 1;
-//
-//	// Determine start/end MBRs (synopsis cells)
-//	AccessContext ctx;
-//	IntervalValue res; // NUL; min_ = 0
-//	/*
-//	 * If we have several subsequences of the original query sequence, we
-//	 * can adjust low/high a little bit (e.g., second subsequence cannot
-//	 * start at the original low). So, we recompute them at every step.
-//	 */
-//	Coordinate subseq_low = low;
-//	Coordinate subseq_high = high - (query_subseq_num - 1) * subseq_size_;
-//	res.max_ = std::numeric_limits<double>::max();
-//	for (size_t pos = 0; pos < points.size(); pos += dft_num_) {
-//		const size_t start_cell = (subseq_low - synopsis_origin_) / cell_size_;
-//		subseq_low += subseq_size_;
-//		const size_t end_cell = (subseq_high - synopsis_origin_) / cell_size_;
-//		subseq_high += subseq_size_;
-//		IntervalValue point_res;
-//		point_res.min_ = std::numeric_limits<double>::max();
-//		for (size_t cell_id = start_cell; cell_id <= end_cell; ++cell_id) {
-//			const DFTCell &cell = GetCell(cell_id, ctx);
-//			// Check for empty MBR
-//			if (!cell.mbr_.low_.empty()) {
-//				point_res.state_ = IntervalValue::NON_NULL;
-//				const double min_mbr_dist = cell.mbr_.MinSqDist(
-//						points.data() + pos);
-//				if (min_mbr_dist < point_res.min_) {
-//					point_res.min_ = min_mbr_dist;
-//				}
-//			}
-//		}
-//		if (point_res.state_ != IntervalValue::NUL) {
-//			res.state_ = IntervalValue::NON_NULL;
-//			res.min_ += point_res.min_;
-//		} else {
-//			break;
-//		}
-//	}
-//	return res;
-    return {};
+    Coordinates lowc{low}, highc{high};
+    CheckAndCorrectBounds(lowc, highc);
+    IntervalValue res; // NUL
+    res.min_ = res.max_ = std::numeric_limits<double>::max();
+
+    // Proper transformed sequence
+    assert(seq_info.sequence_.count(subseq_size_));
+    const auto &seq = seq_info.sequence_.find(subseq_size_)->second;
+	assert(seq.size() % features_num_ == 0);
+
+	// The sequence must fit
+	if (highc.back() - lowc.back() + 1 < seq_info.original_length_) {
+		// Query sequence doesn't fit -- return NULL
+		return res;
+	}
+	/*
+	 * Low/high should conform to the possible starting points.
+	 */
+	const size_t query_pieces = seq.size() / features_num_;
+	highc.back() -= seq_info.original_length_ - query_pieces * subseq_size_;
+
+	/*
+	 * High actually defines the end of the search interval. Should adjust
+	 * for the last subsequence, since we want low-high interval to determine
+	 * possible starting positions.
+	 */
+	highc.back() -= subseq_size_ - 1;
+
+	/*
+	 * What we're going to do here is to go through all possible waveform
+	 * combinations (assuming the last coordinates define the waveform
+	 * interval, and the others determine possible different waveforms). For
+	 * each waveform we measure the minimum sq. distance for each
+	 * subsequence of the query sequence. Then, we sum them up and possibly
+	 * apply the coefficient (e.g., in case of PAA). Note, since the
+	 * individual distances are squared it is legal to sum them).
+	 */
+	struct SubSeqInfo {
+	    RegionIterator iter_;
+	    Coordinates low_, high_;
+	    double min_sq_ = std::numeric_limits<double>::max();
+
+	    SubSeqInfo(SeqSynopsis &syn, const Coordinates &low,
+	            const Coordinates &high) :
+	        iter_{syn, low, high}, low_{low}, high_{high} {}
+
+	    // Reset based on the new _component_ coordinates (see the assert()).
+        void Reset(const Coordinates &new_comp) {
+	        assert(new_comp.size() + 1 == low_.size());
+	        min_sq_ = std::numeric_limits<double>::max();
+	        memcpy(low_.data(), new_comp.data(),
+	            sizeof(Coordinate) * new_comp.size());
+            memcpy(high_.data(), new_comp.data(),
+                sizeof(Coordinate) * new_comp.size());
+	        iter_.Reset(low_, high_);
+	    }
+	};
+	std::vector<SubSeqInfo> subseqs;
+	subseqs.reserve(query_pieces);
+
+	// Iterator to go over components
+	RowMajorIterator comp_it{Coordinates(lowc.begin(), lowc.end() - 1),
+	    Coordinates(highc.begin(), highc.end() - 1)};
+	// Init subsequence iterators
+	Coordinates subseq_low{lowc}, subseq_high{lowc}; // the same component
+	for (size_t i = 0; i < query_pieces; ++i) {
+	    /*
+	     *  Small optimization a certain subsequence might not start from
+	     *  the beginning or go to the very end.
+	     */
+	    subseq_low.back() = lowc.back() + i * subseq_size_;
+	    subseq_high.back() = highc.back() -
+	            (query_pieces - i - 1) * subseq_size_;
+	    subseqs.emplace_back(*this, subseq_low, subseq_high);
+	}
+
+	// Compute the result
+    while (!comp_it.end()) {
+        // Compute minsq for every subsequence
+        bool comp_null = false;
+        for (size_t i = 0; i < query_pieces; ++i) {
+            auto &ss_info = subseqs[i];
+            auto &it = ss_info.iter_;
+            bool valid_cell = false;
+            while (!it.end()) {
+                const SeqCell &cell = it.GetCell();
+                if (!cell.mbr_.low_.empty()) {
+                    const double min_mbr_dist = cell.mbr_.MinSqDist(
+                            seq.data() + i * features_num_);
+                    if (min_mbr_dist < ss_info.min_sq_) {
+                        ss_info.min_sq_ = min_mbr_dist;
+                        valid_cell = true;
+                    }
+                }
+            }
+            if (!valid_cell) {
+                // Only empty cells for the subsequence or NaN
+                comp_null = true;
+                break;
+            }
+        }
+        // Here, we have computed every subsequence
+        if (!comp_null) {
+            res.state_ = IntervalValue::NON_NULL;
+            double comp_sum = 0.0;
+            for (size_t i = 0; i < query_pieces; ++i) {
+                assert(subseqs[i].min_sq_ !=
+                        std::numeric_limits<double>::max());
+                comp_sum += subseqs[i].min_sq_;
+            }
+            if (comp_sum < res.min_) {
+                res.min_ = comp_sum;
+            }
+        }
+        // Move to the next component
+        ++comp_it;
+        if (!comp_it.end()) {
+            // Reset point iterators
+            for (auto &ss: subseqs) {
+                ss.Reset(*comp_it);
+            }
+        }
+    }
+    if (res.state_ != IntervalValue::NUL && type_ == Type::PAA) {
+        // PAA uses a little bit different lower-bound function
+        res.min_ *= double(subseq_size_) / features_num_;
+    }
+	return res;
 }
 
 AggSynopsis::AggSynopsis(const ArrayDesc &data_desc,
@@ -935,7 +999,7 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
     // Choose synopsis
     AggSynopsis *syn = nullptr;
     if (exact) {
-        for (const auto &s: synopses_[s_attr]) {
+        for (const auto &s: synopses_[s_attr].agg_synopses_) {
             if (s->RegionValidForSample(low, high)) {
                 syn = s.get();
                 break;
@@ -969,7 +1033,7 @@ IntervalValueVector Sampler::ComputeAggregate(const Coordinates &low,
 
             // Check the MBR threshold
             if (mbr_thr_ > 0.0) {
-                Region syn_mbr{orig_region};
+                Region syn_mbr(orig_region);
                 syns[i]->GetSynopsisMBR(syn_mbr.low_, syn_mbr.high_);
                 if (orig_region.AreaRatio(syn_mbr) >= mbr_thr_) {
                     have_better_synopses = false;
@@ -1038,7 +1102,7 @@ void Sampler::ComputeDFTs(const DoubleVector &seq, size_t ss_size,
 void Sampler::RegisterQuerySequence(AttributeID attr, size_t seq_id,
 		const DoubleVector &seq) {
     const auto ins = seq_cache_.emplace(seq_id,
-            TransformedSequenceInfo{seq.size(), attr, {}});
+            TransformedSequenceInfo{seq.size(), attr});
     assert(ins.second);
     auto &seq_info = ins.first->second;
 	for (const auto &seq_syn: synopses_[attr].seq_synopses_) {

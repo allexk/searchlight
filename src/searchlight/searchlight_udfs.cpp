@@ -139,13 +139,7 @@ public:
         dims_(coords.size()),
 		seq_id_(size_t(params[1])),
 		seq_len_(size_t(params[2])),
-		seq_dim_(size_t(params[3])),
 		state_(dims_) {}
-
-    /**
-     * Destructor.
-     */
-    virtual ~SqDistFuncExpr() {}
 
     /**
      * Returns a string representation for debug printing.
@@ -178,10 +172,8 @@ public:
         // Variables
         VisitOriginalExprs(visitor);
         // Params
-        std::vector<int64> params{int64(attr_), int64(seq_id_),
-        	int64(seq_len_), int64(seq_dim_)};
-        visitor->VisitIntegerArrayArgument(ModelVisitor::kValuesArgument,
-                params);
+        std::vector<int64> prms{int64(attr_), int64(seq_id_), int64(seq_len_)};
+        visitor->VisitIntegerArrayArgument(ModelVisitor::kValuesArgument, prms);
         // Function end
         visitor->EndVisitIntegerExpression(tag, this);
     }
@@ -236,8 +228,7 @@ private:
     /*
      *  Computes the aggregate for the given fixed coordinates.
      */
-    IntervalValue ComputeFunc(const Coordinates &low,
-    		const Coordinates &high) const;
+    IntervalValue ComputeFunc(Coordinates &low, Coordinates &high) const;
 
     // Check if the support for min/max is valid.
     bool CheckSupport(const std::vector<ParameterVar> &vars) const;
@@ -251,9 +242,6 @@ private:
     const size_t seq_id_; // Sequence ID
     const size_t seq_len_; // Sequence length
 
-    // Dimension of the sequence variable
-    const size_t seq_dim_;
-
     // Min/max aggregate values and caches for support
     struct SqDistState : public SearchlightUDF::State {
         // Support for minimum: min, max values for vars
@@ -262,17 +250,20 @@ private:
         SqDistState(size_t dims) :
             min_support_low_(dims),
             min_support_high_(dims) {
-
-            // Re-init max to a different value
+            // Set max to a different value (its always max for this function)
             max_ = std::numeric_limits<int64>::max();
         }
     };
     mutable SqDistState state_;
 };
 
-IntervalValue SqDistFuncExpr::ComputeFunc(const Coordinates &low,
-        const Coordinates &high) const {
-    return adapter_->SqDist(low, high, seq_dim_, attr_, seq_id_);
+IntervalValue SqDistFuncExpr::ComputeFunc(Coordinates &low,
+        Coordinates &high) const {
+    // SqDist requires high to determine the high point of the interval
+    high.back() += seq_len_ - 1;
+    const auto res = adapter_->SqDist(low, high, attr_, seq_id_);
+    high.back() -= seq_len_ - 1;
+    return res;
 }
 
 bool SqDistFuncExpr::CheckSupport(const std::vector<ParameterVar> &vars) const {
@@ -291,8 +282,7 @@ bool SqDistFuncExpr::CheckSupport(const std::vector<ParameterVar> &vars) const {
      */
     for (size_t i = 0; i < dims_; i++) {
     	if (Coordinate(vars[i].Min()) != state_.min_support_low_[i] ||
-    			Coordinate(vars[i].Max()) + seq_len_ - 1 !=
-    			        state_.min_support_high_[i]) {
+    			Coordinate(vars[i].Max()) != state_.min_support_high_[i]) {
     		return false;
     	}
     }
@@ -312,7 +302,6 @@ bool SqDistFuncExpr::ComputeMinMax() const {
             break;
         }
     }
-
     if (vars_bound) {
         if (CheckSupport(vars)) {
             return true;
@@ -321,8 +310,7 @@ bool SqDistFuncExpr::ComputeMinMax() const {
         for (size_t i = 0; i < dims_; i++) {
             high[i] = low[i] = vars[i].Value();
         }
-        high[seq_dim_] += seq_len_ - 1;
-
+        // Compute the function
         new_min = ComputeFunc(low, high);
         new_min_support_low = low;
         new_min_support_high = high;
@@ -337,15 +325,14 @@ bool SqDistFuncExpr::ComputeMinMax() const {
 		 * number of dimensions...
 		 */
 		Coordinates low(dims_), high(dims_);
-		for (size_t i = 0; i < dims_; i++) {
-			if (i != seq_dim_) {
-			    auto iter = vars[i].Iterator();
-			    iter->Init();
-				high[i] = low[i] = iter->Value();
-			}
+		for (size_t i = 0; i < dims_ - 1; i++) {
+            auto iter = vars[i].Iterator();
+            iter->Init();
+            high[i] = low[i] = iter->Value();
 		}
-		low[seq_dim_] = vars[seq_dim_].Min();
-		high[seq_dim_] = vars[seq_dim_].Max() + seq_len_ - 1;
+		// For the sequence dimension keep it fixed at min-max
+		low.back() = vars.back().Min();
+		high.back() = vars.back().Max();
 
 		while (true) {
 			const IntervalValue val = ComputeFunc(low, high);
@@ -367,12 +354,7 @@ bool SqDistFuncExpr::ComputeMinMax() const {
 			 *  the next one and so on... The sequence dimension is fixed.
 			 */
 			size_t i = 0;
-			while (i < dims_) {
-				if (i == seq_dim_) {
-					// Skip the sequence dimension
-					++i;
-					continue;
-				}
+			while (i < dims_ - 1) {
 				// Try to move to the next value
 				IntVarIterator *it = vars[i].Iterator();
 				const size_t k = i;
@@ -388,7 +370,7 @@ bool SqDistFuncExpr::ComputeMinMax() const {
 				}
 			}
 			// more regions? not if we have exhausted all iterators
-			if (i == dims_) {
+			if (i == dims_ - 1) {
 				break;
 			}
 		}

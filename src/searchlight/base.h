@@ -225,18 +225,7 @@ typedef std::vector<IntervalValue> IntervalValueVector;
  * @param seps separator characters
  * @return resulting tokens
  */
-StringVector TokenizeString(const std::string &str,
-                            const char *seps) {
-    StringVector res;
-    using TokenSeparator = boost::char_separator<char>;
-    using Tokenizer = boost::tokenizer<TokenSeparator>;
-    TokenSeparator sep{seps}; // parts are separated by '_'
-    Tokenizer tokenizer{str, sep};
+StringVector TokenizeString(const std::string &str, const char *seps);
 
-    for (auto cit = tokenizer.begin(); cit != tokenizer.end(); ++cit) {
-        res.push_back(*cit);
-    }
-    return res;
-}
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_BASE_H_ */

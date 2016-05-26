@@ -237,7 +237,6 @@ IntervalValue Adapter::GetElement(const Coordinates &point,
 }
 
 IntervalValue Adapter::SqDist(const Coordinates &low, const Coordinates &high,
-		size_t int_dim,
 		AttributeID attr, size_t seq_id) const {
 	// Tracing
     if (logger->isTraceEnabled()) {
@@ -269,7 +268,7 @@ IntervalValue Adapter::SqDist(const Coordinates &low, const Coordinates &high,
         const ArrayAccess &array = array_desc_.GetAccessor();
         double dist;
         const DoubleVector &query_seq = array_desc_.GetQuerySequence(seq_id);
-        const bool success = array.SqDistance(low, high, int_dim, real_attr_id,
+        const bool success = array.SqDistance(low, high, real_attr_id,
         		query_seq, dist);
         if (success) {
         	res.state_ = IntervalValue::NON_NULL;
@@ -277,7 +276,7 @@ IntervalValue Adapter::SqDist(const Coordinates &low, const Coordinates &high,
         }
     } else if (mode_ == APPROX || mode_ == INTERVAL) {
         const Sampler &sampler = array_desc_.GetSampler();
-        res = sampler.SqDist(attr, low[int_dim], high[int_dim], seq_id);
+        res = sampler.SqDist(low, high, seq_id);
         if (mode_ == APPROX) {
             res.val_ = res.max_ = res.min_;
             if (res.state_ == IntervalValue::MAY_NULL) {

@@ -243,16 +243,6 @@ using SeqSynopsisSharedPtr = std::shared_ptr<SeqSynopsis>;
  * TODO: We assume even regions covering the whole array without holes.
  */
 class Sampler {
-private:
-    /**
-     * Type of caching for the synopsis.
-     */
-    enum class CachingType {
-        EAGER, /** All cells are in a linear array, high footprint. */
-        LAZY,  /** All _requested_ chunks are in a set of arrays. */
-        NONE   /** No caching. Each cell is read via array iterators.*/
-    };
-
 public:
     /**
      * Creates a sampler and a catalog of all synopses available.

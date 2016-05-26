@@ -127,23 +127,20 @@ public:
      * Compute square Euclidean distance from the query to the array sequence.
      *
      * The user gives the query sequence and the interval to check in the array.
-     * Note, the interval is assumed to be 1-dimensional, but array might
-     * have multiple dimensions. The user specifies which dimension to treat as
-     * the interval one.
+     * It is assumed that the last coordinate is the interval one.
      *
      * If functions sees empty or NULL elements, it assumes NULL result.
      *
      * @param low low array coordinates
      * @param high high array coordinates
-     * @param int_dim dimension to treat as interval
      * @param attr attribute to compute the values for
      * @param query_seq query sequence
      * @param res result destination
      * @return true, if computation is successful; false, otherwise
      */
     bool SqDistance(const Coordinates &low, const Coordinates &high,
-    		size_t int_dim, AttributeID attr,
-			const DoubleVector &query_seq, double &res) const;
+    		AttributeID attr, const DoubleVector &query_seq,
+    		double &res) const;
 
 private:
     /*
