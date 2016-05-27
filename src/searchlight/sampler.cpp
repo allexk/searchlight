@@ -851,7 +851,7 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
     if (!attribute_synopses.agg_synopses_.empty()) {
 		const size_t memory_limit_mb =
 				sl_config_.get("searchlight.sampler.memory_per_attr", 1024);
-    	PrepareSynopses(attribute_synopses.seq_synopses_, cache_type,
+    	PrepareSynopses(attribute_synopses.agg_synopses_, cache_type,
     	        preload_syns, memory_limit_mb, attr_name, attr_search_id);
     }
 
