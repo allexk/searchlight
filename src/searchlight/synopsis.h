@@ -32,6 +32,10 @@
 #define SEARCHLIGHT_SYNOPSIS_H_
 
 #include "scidb_inc.h"
+#include "base.h"
+
+#include <mutex>
+#include <boost/tokenizer.hpp>
 
 namespace searchlight {
 

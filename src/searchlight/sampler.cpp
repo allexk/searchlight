@@ -31,7 +31,6 @@
 #include "sampler.h"
 #include "array_desc.h"
 
-#include <boost/tokenizer.hpp>
 #include <fftw3.h>
 
 namespace searchlight {

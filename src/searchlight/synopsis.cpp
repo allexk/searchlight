@@ -43,16 +43,16 @@ void AggCellItemReader::InitIterators() {
      * penalty. Another solution is to use array iterators and create
      * chunk iterators when fetching a synopsis cell.
      */
-    min_it_   = array_->getItemIterator(attributes_["min"]);
-    max_it_   = array_->getItemIterator(attributes_["max"]);
-    sum_it_   = array_->getItemIterator(attributes_["sum"]);
-    count_it_ = array_->getItemIterator(attributes_["count"]);
+    min_it_   = array_->getItemIterator(attributes_.find("min")->second);
+    max_it_   = array_->getItemIterator(attributes_.find("max")->second);
+    sum_it_   = array_->getItemIterator(attributes_.find("sum")->second);
+    count_it_ = array_->getItemIterator(attributes_.find("count")->second);
 }
 
 void AggCellItemReader::Read(const Coordinates &pos, AggCell &cell) {
     // Init iterators (first time only)
     if (!count_it_) {
-        InitIterators(iters);
+        InitIterators();
     }
     if (!count_it_->setPosition(pos) || count_it_->isEmpty()) {
         // No chunk in the array -- assume the cell is empty
@@ -100,8 +100,8 @@ void SeqCellItemReader::InitIterators() {
      * penalty. Another solution is to use array iterators and create
      * chunk iterators when fetching a synopsis cell.
      */
-    low_it_  = array_->getItemIterator(attributes_["low"]);
-    high_it_ = array_->getItemIterator(attributes_["high"]);
+    low_it_  = array_->getItemIterator(attributes_.find("low")->second);
+    high_it_ = array_->getItemIterator(attributes_.find("high")->second);
     /*
      * The number of DFT components depends on the last dimension size, which
      * is used to store them.
@@ -114,7 +114,7 @@ void SeqCellItemReader::InitIterators() {
 void SeqCellItemReader::Read(const Coordinates &pos, SeqCell &cell) {
     // Init iterators (first time only)
     if (!low_it_) {
-        InitIterators(iters);
+        InitIterators();
     }
     // A small check that the number of dimensions is right
     assert(array_->getArrayDesc().getDimensions().size() == pos.size() + 1 &&
