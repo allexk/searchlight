@@ -267,7 +267,7 @@ public:
                 // Simulation finished: we need to decide if we want to forward
                 assert(action_succeeded_);
                 adapter_->StopCollectingStats();
-                const CandidateAssignment &last_cas = asgns_.back();
+                CandidateAssignment &last_cas = asgns_.back();
                 const bool forwarded =
                         validator_.CheckForward(
                                 adapter_->GetCurrentStats().chunks_pos_,
@@ -279,12 +279,8 @@ public:
                                 last_cas);
                     } else {
                         // one zone, check here
-                        last_action_.type_ = Action::Type::LOCAL_CHECK;
-                        adapter_->SetAdapterMode(Adapter::EXACT);
-                        return solver->RevAlloc(
-                                new RestoreAssignment{last_asgn_.get(),
-                                    last_cas.relaxed_constrs_,
-                                    constrs_});
+                        last_cas.forw_id_ = -2; // switch to local check
+                        asgns_.emplace_back(); // dummy (see pop_back() below)
                     }
                 }
             }
@@ -350,7 +346,6 @@ public:
          *
          * Note, this might modify the candidate's VC.
          */
-        validator_.GetMaximumRelaxationVC(ca.relaxed_constrs_);
         const int64_t forw_id = ca.forw_id_;
         LiteToFullAssignment(*last_asgn_, ca.var_asgn_);
 
@@ -363,6 +358,12 @@ public:
             last_action_.type_ =
                     validator_.forw_type_ != Validator::Forwarding::NONE ?
                     Action::Type::SIM : Action::Type::LOCAL_CHECK;
+        }
+        /*
+         * If we're relaxing, compute maximum VC only when not simulating.
+         */
+        if (last_action_.type_ != Action::Type::SIM) {
+            validator_.GetMaximumRelaxationVC(ca.relaxed_constrs_);
         }
 
         /*
