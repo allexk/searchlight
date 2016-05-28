@@ -382,9 +382,9 @@ private:
     void PushToLocalZone(const CoordinateSet &chunks,
                          const CandidateAssignment &asgn);
 
-    // Determine the local zone to use
+    // Determine the local zone to use for the specified validator
     template <typename CoordinatesSequence>
-    int DetermineLocalZone(const CoordinatesSequence &chunks) const;
+    int DetermineLocalZone(const CoordinatesSequence &chunks, size_t val) const;
 
     // Pushes candidate to to_validate_
     void PushCandidate(CandidateAssignment &&asgn, size_t zone);
@@ -538,8 +538,12 @@ private:
     // Do we use dynamic helper scheduling?
     bool dynamic_helper_scheduling_;
 
-    // Chunk zones to determine forwards and local candidate batches
-    SearchArrayDesc::ChunkZones chunk_zones_;
+    /*
+     * Chunk zones to determine forwards and local candidate batches.
+     * For proper forwarding all validators need to know local zones of each
+     * other, hence one record per each active valdiator.
+     */
+    std::vector<SearchArrayDesc::ChunkZones> chunk_zones_;
 };
 
 

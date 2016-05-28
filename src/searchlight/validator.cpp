@@ -598,26 +598,26 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
                 inst_count / tmp_size) + 1;
     }
 
-    // Init structures
-    to_validate_.resize(zones_num + 1); // one "zone" for non-simulated cands
+    /*
+     *  Init structures.
+     *
+     *  FIXME: We do it even for inactive validators despite the fact they
+     *  don't have zones. We do it to make some functions work, like
+     *  LocalZonesNumber(). Shoul revisit this.
+     */
+    to_validate_.resize(zones_num + 1); // one "zone" for non-simulated
     zones_mru_.resize(zones_num);
     for (size_t i = 0; i < zones_num; ++i) {
         zones_mru_[i] = i; // All zones are equal at the beginning, MRU-wise
     }
     LOG4CXX_INFO(logger, "Creating " << zones_num
             << " zones for the validator...");
-
-    if (my_logical_id_ != -1) {
-        chunk_zones_ = search_array_desc.CreateChunkZones(
+    // Need to know the zones for each validator
+    for (size_t val_id = 0; val_id < active_validators.size(); ++val_id) {
+        chunk_zones_.emplace_back(search_array_desc.CreateChunkZones(
                 {active_validators.size(), zones_num},
-                {size_t(my_logical_id_)});
-    } else {
-        // This validator isn't active -- no local zones
-        chunk_zones_ = search_array_desc.CreateChunkZones(
-                {active_validators.size()},
-                {});
+                {val_id}));
     }
-
     validators_cands_info_.resize(active_validators.size());
 }
 
@@ -742,14 +742,16 @@ void Validator::SendForwardResult(int64_t forw_id, bool result,
 }
 
 template <typename CoordinatesSequence>
-int Validator::DetermineLocalZone(const CoordinatesSequence &chunks) const {
+int Validator::DetermineLocalZone(const CoordinatesSequence &chunks,
+        size_t val) const {
     if (LocalZonesNumber() == 1) {
         return 0;
     }
     std::vector<int> zone_counts(LocalZonesNumber()); // zones number
     size_t max_zone = 0;
+    // zones[1] contains local zones; zones[0] -- global ones
     adapter_->GetSearchArrayDesc().GetStripesChunkDistribution(
-            chunks, zone_counts, max_zone, chunk_zones_.zones_[1]);
+            chunks, zone_counts, max_zone, chunk_zones_[val].zones_[1]);
 
     // Narrowing cast here, since zone number are ints.
     return static_cast<int>(max_zone);
@@ -758,7 +760,8 @@ int Validator::DetermineLocalZone(const CoordinatesSequence &chunks) const {
 void Validator::PushToLocalZone(const CoordinateSet &chunks,
                                 const CandidateAssignment &asgn) {
     // Determine zone
-    const size_t zone = DetermineLocalZone(chunks);
+    assert(my_logical_id_ != -1);
+    const size_t zone = DetermineLocalZone(chunks, my_logical_id_);
     CandidateAssignment new_asgn(asgn);
     new_asgn.forw_id_ = -2;
     std::lock_guard<std::mutex> lock{to_validate_mtx_};
@@ -774,8 +777,10 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
     size_t max_inst = 0;
     switch (forw_type_) {
         case Forwarding::STRIPES:
+            // zones_[0] contains global validator zones
+            // doesn't matter which spec to use: global ones are the same
             adapter_->GetSearchArrayDesc().GetStripesChunkDistribution(
-                    chunks, inst_counts, max_inst, chunk_zones_.zones_[0]);
+                    chunks, inst_counts, max_inst, chunk_zones_[0].zones_[0]);
             break;
         case Forwarding::DYNAMIC: {
             std::vector<int> inst_counts_all(sl_task_.GetQueryInstanceCount());
@@ -840,7 +845,7 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
          * Compute the candidate's zone. Use int64 to conform
          * to the message's format.
          */
-        const Int64Vector zones{DetermineLocalZone(chunks)};
+        const Int64Vector zones{DetermineLocalZone(chunks, max_inst)};
 
         // Prepare coordinates
         // FIXME: I'm leaving this code for now for future reference (AK)
