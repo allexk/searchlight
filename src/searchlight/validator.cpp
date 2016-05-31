@@ -238,6 +238,8 @@ public:
                     } else {
                         validator_.stats_.relax_post_filtered_.fetch_add(
                                 1, std::memory_order_relaxed);
+                        LOG4CXX_TRACE(logger, "Validator post-filtered: " <<
+                                      asgns_.back());
                     }
                 }
             } else if (last_action_.type_ == Action::Type::REMOTE_CHECK) {
@@ -253,6 +255,8 @@ public:
                         validator_.stats_.relax_post_filtered_.fetch_add(
                                 1, std::memory_order_relaxed);
                         action_succeeded_ = false;
+                        LOG4CXX_TRACE(logger, "Validator post-filtered: " <<
+                                      asgns_.back());
                     }
                     lite_asgn.clear();
                 	FullAssignmentToLite(track_vars_asgn_, lite_asgn);
@@ -332,6 +336,7 @@ public:
                 if (ca.forw_id_ >= 0) {
                     validator_.SendForwardResult(ca.forw_id_, false, {});
                 }
+                LOG4CXX_TRACE(logger, "Validator pre-filtered: " << ca);
                 asgns_.pop_back();
             }
         }
@@ -375,7 +380,7 @@ public:
         } else {
             adapter_->SetAdapterMode(Adapter::EXACT);
         }
-
+        LOG4CXX_TRACE(logger, "Validator validating: " << ca);
         return solver->RevAlloc(new RestoreAssignment{last_asgn_.get(),
             ca.relaxed_constrs_, constrs_});
     }

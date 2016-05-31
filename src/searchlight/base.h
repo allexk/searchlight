@@ -124,6 +124,7 @@ struct LiteVarAssignment {
         maxs_.push_back(val_max);
     }
 };
+std::ostream &operator<<(std::ostream &os, const LiteVarAssignment &lva);
 
 /**
  *  A vector of lite assignments.
@@ -156,6 +157,7 @@ struct CandidateAssignment {
      */
     double best_rd_;
 };
+std::ostream &operator<<(std::ostream &os, const CandidateAssignment &ca);
 
 /**
  * Vector of candidate assignments.

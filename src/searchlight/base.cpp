@@ -46,6 +46,29 @@ std::ostream &operator<<(std::ostream &os, const IntervalValue &iv) {
     return os;
 }
 
+std::ostream &operator<<(std::ostream &os, const LiteVarAssignment &lva) {
+    os << "Mins: (";
+    std::copy(lva.mins_.begin(), lva.mins_.end(),
+              std::ostream_iterator<int64_t>(os, ","));
+    os << "), Maxs:(";
+    std::copy(lva.maxs_.begin(), lva.maxs_.end(),
+              std::ostream_iterator<int64_t>(os, ","));
+    os << ")";
+    return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const CandidateAssignment &ca) {
+    os << ca.var_asgn_;
+    if (!ca.relaxed_constrs_.empty()) {
+        os << ", RC:(";
+        std::copy(ca.relaxed_constrs_.begin(), ca.relaxed_constrs_.end(),
+                  std::ostream_iterator<int64_t>(os, ","));
+        os << ")";
+    }
+    os << "FW=" << ca.forw_id_ << ", RD=" << ca.best_rd_;
+    return os;
+}
+
 StringVector TokenizeString(const std::string &str, const char *seps) {
     StringVector res;
     using TokenSeparator = boost::char_separator<char>;
