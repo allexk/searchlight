@@ -80,7 +80,6 @@ public:
      * @param s the solver
      */
     virtual void Apply(Solver* const s) override {
-        LOG4CXX_TRACE(logger, "Validating: " << asgn_->DebugString());
         // Set relaxation constraints
         for (size_t i = 0; i < relaxed_constrs_.size(); i += 3) {
             const int64_t cid = relaxed_constrs_[i];
@@ -637,6 +636,7 @@ void Validator::AddSolution(CandidateAssignment &&cas) {
     std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
     stats_.total_local_cands_.fetch_add(1, std::memory_order_relaxed);
     cas.forw_id_ = -1;
+    LOG4CXX_TRACE(logger, "Added local candidate: " << cas);
     PushCandidate(std::move(cas), to_validate_.size() - 1);
 
     // We might have to wait -- flood control
@@ -699,6 +699,7 @@ void Validator::AddRemoteCandidates(CandidateVector &cands,
     for (size_t i = 0; i < cands.size(); i++) {
         const int64_t cand_id = remote_cand_id_++;
         cands[i].forw_id_ = cand_id;
+        LOG4CXX_TRACE(logger, "Added remote candidate: " << cands[i]);
         PushCandidate(std::move(cands[i]), zones[i]);
         remote_candidates_.emplace(cand_id, std::make_pair(src, forw_id++));
     }
