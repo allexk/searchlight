@@ -140,7 +140,9 @@ void Searchlight::ReportIdleSolver(const SearchlightSolver &solver) {
         assert(!spec_exec_.relax_);
         std::lock_guard<std::mutex> lock{spec_exec_.mtx_};
         spec_exec_.active_.erase(solver_id);
+        LOG4CXX_INFO(logger, "Releasing speculative solver: id=" << solver_id);
         if (spec_exec_.active_.empty()) {
+            LOG4CXX_INFO(logger, "All speculative solvers have been released");
             spec_exec_.main_wait_.notify_all();
         }
     }
@@ -151,6 +153,9 @@ bool Searchlight::CanRelaxSpec() const {
     while (spec_exec_.relax_ &&
             (!validator_->Idle() || !ReplaysAvailable())) {
         spec_exec_.spec_wait_.wait(lock);
+    }
+    if (!spec_exec_.relax_) {
+        LOG4CXX_INFO(logger, "Speculative relaxation turned off...");
     }
     return spec_exec_.relax_;
 }
@@ -635,7 +640,6 @@ void SearchlightSolver::Solve() {
                 }
                 // If a main solver started replays, disable speculative
                 if (solver_type_ == SolverType::MAIN) {
-                    LOG4CXX_INFO(logger, "Turning off speculative relaxation");
                     sl_.spec_exec_.TurnOffRelax();
                 } else {
                     assert(solver_type_ == SolverType::SPEC_RELAX);
@@ -649,9 +653,7 @@ void SearchlightSolver::Solve() {
                  * 2) Speculative solver has to wait for a new work
                  */
                 if (solver_type_ == SolverType::MAIN) {
-                    LOG4CXX_INFO(logger, "Turning off speculative relaxation");
                     sl_.spec_exec_.TurnOffRelax();
-                    LOG4CXX_INFO(logger, "Waiting for speculative relaxation");
                     sl_.spec_exec_.WaitForSpec();
                 }
                 solver_has_work = SolverHasWork();
