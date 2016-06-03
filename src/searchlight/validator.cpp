@@ -604,17 +604,29 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
     }
 
     /*
+     * Candidate sorting order.
+     */
+    ValidatorQueue::Ordering ca_ordering = ValidatorQueue::Ordering::COST;
+    const std::string cand_sort = sl_config.get("searchlight.validator.sort",
+            "cost");
+    if (cand_sort == "rd") {
+        ca_ordering = ValidatorQueue::Ordering::RD;
+        // FIXME: temporary turn off zones for RD
+        zones_num = 1;
+        LOG4CXX_WARN(logger, "RD sorting forces a single validator zone!");
+    } else if (cand_sort != "cost") {
+        LOG4CXX_WARN(logger, "Unknown candidate ordering. Defaulting to cost.");
+    }
+
+    /*
      *  Init structures.
      *
      *  FIXME: We do it even for inactive validators despite the fact they
      *  don't have zones. We do it to make some functions work, like
      *  LocalZonesNumber(). Shoul revisit this.
      */
-    to_validate_.resize(zones_num + 1); // one "zone" for non-simulated
-    zones_mru_.resize(zones_num);
-    for (size_t i = 0; i < zones_num; ++i) {
-        zones_mru_[i] = i; // All zones are equal at the beginning, MRU-wise
-    }
+    val_queue_.reset(new ValidatorQueue(zones_num, ca_ordering, my_logical_id_,
+            active_validators.size()));
     LOG4CXX_INFO(logger, "Creating " << zones_num
             << " zones for the validator...");
     // Need to know the zones for each validator
@@ -623,7 +635,6 @@ Validator::Validator(Searchlight &sl, SearchlightTask &sl_task,
                 {active_validators.size(), zones_num},
                 {val_id}));
     }
-    validators_cands_info_.resize(active_validators.size());
 }
 
 Validator::~Validator() {
@@ -637,18 +648,16 @@ void Validator::AddSolution(CandidateAssignment &&cas) {
     stats_.total_local_cands_.fetch_add(1, std::memory_order_relaxed);
     cas.forw_id_ = -1;
     LOG4CXX_TRACE(logger, "Added local candidate: " << cas);
-    PushCandidate(std::move(cas), to_validate_.size() - 1);
+    PushCandidate(std::move(cas), 0 /* doesn't matter */);
 
     // We might have to wait -- flood control
-    while (to_validate_total_.load(std::memory_order_relaxed) >
-        max_pending_validations_) {
+    while (val_queue_->TotalCands() > max_pending_validations_) {
         /*
          * It is safe to use the same condition since the validator will be
          * certainly non-blocked.
          */
         LOG4CXX_DEBUG(logger, "Waiting for the validator to catch up"
-                ", queue size=" <<
-                to_validate_total_.load(std::memory_order_relaxed));
+                ", queue size=" << val_queue_->TotalCands());
         validate_cond_.wait(validate_lock);
     }
 
@@ -657,27 +666,16 @@ void Validator::AddSolution(CandidateAssignment &&cas) {
 }
 
 void Validator::PushCandidate(CandidateAssignment &&asgn, size_t zone) {
-    auto &zone_cands = to_validate_[zone];
-    if (zone_cands.empty() || zone_cands.back().size() >= helper_workload_) {
-        zone_cands.emplace_back();
-        zone_cands.back().reserve(helper_workload_);
-    }
-    zone_cands.back().push_back(std::move(asgn));
-    to_validate_total_.fetch_add(1, std::memory_order_relaxed);
-
-    if (my_logical_id_ != -1 && zone < to_validate_.size() - 1) {
-        /*
-         * Count only real candidates for the stats. Non-sims are cheap
-         * and don't matter.
-         */
-        validators_cands_info_[my_logical_id_]++;
+    const bool non_sim_cand = asgn.forw_id_ == -1;
+    val_queue_->PushCandidate(std::move(asgn), zone);
+    if (my_logical_id_ != -1 && !non_sim_cand) {
         BroadcastCandidatesCount();
     }
 }
 
 void Validator::BroadcastCandidatesCount() {
     if (my_logical_id_ != -1 && send_info_period_ > 0) {
-        const size_t local_cands = validators_cands_info_[my_logical_id_];
+        const size_t local_cands = val_queue_->ReadyCandsNum();
         // Active validator: check if we want to send the info update
         const size_t cands_diff = std::abs(int64_t(local_cands) -
                 int64_t(last_sent_cands_num_));
@@ -828,8 +826,9 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
         tie_inst = 1;
     }
 
-    if (validators_cands_info_[max_inst + tie_inst] <
-            validators_cands_info_[max_inst]) {
+    const auto &val_cands_info = val_queue_->ValidatorsCandsInfo();
+    // FIXME: dangerous code, since val_cands_info is non-atomic!!!
+    if (val_cands_info[max_inst + tie_inst] < val_cands_info[max_inst]) {
         // Tie-break in favor of the instance with less candidates
         LOG4CXX_TRACE(logger, "Tie-break of inst=" << max_inst <<
                 " in favor of inst=" << max_inst + tie_inst);
@@ -838,7 +837,7 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
 
     if (my_logical_id_ == -1 || max_inst != my_logical_id_) {
         // Update stats locally (global will follow through broadcasts)
-        validators_cands_info_[max_inst]++;
+        UpdateCandsInfo(val_cands_info[max_inst] + 1, max_inst);
 
         // forward
         uint64_t cand_id;
@@ -923,10 +922,12 @@ int Validator::FindValidatorForReforwards() {
     const size_t BUSY_THRESHOLD = 100;
 
     // First, check recent validators
+    // FIXME: dangerous code, since val_cands_info is non-atomic!!!
+    const auto &val_cands_info = val_queue_->ValidatorsCandsInfo();
     for (auto rit = validators_mru_reforw_.rbegin();
             rit != validators_mru_reforw_.rend(); ++rit) {
         const int val_id = *rit;
-        if (validators_cands_info_[val_id] < BUSY_THRESHOLD) {
+        if (val_cands_info[val_id] < BUSY_THRESHOLD) {
             if (rit != validators_mru_reforw_.rbegin()) {
                 validators_mru_reforw_.erase((++rit).base());
                 validators_mru_reforw_.push_back(val_id);
@@ -939,23 +940,23 @@ int Validator::FindValidatorForReforwards() {
     if (my_logical_id_ > 0) {
         // left
         const int val_id = my_logical_id_ - 1;
-        if (validators_cands_info_[val_id] < BUSY_THRESHOLD) {
+        if (val_cands_info[val_id] < BUSY_THRESHOLD) {
             validators_mru_reforw_.push_back(val_id);
             return val_id;
         }
     }
-    if (my_logical_id_ < validators_cands_info_.size() - 1) {
+    if (my_logical_id_ < val_cands_info.size() - 1) {
         // right
         const int val_id = my_logical_id_ + 1;
-        if (validators_cands_info_[val_id] < BUSY_THRESHOLD) {
+        if (val_cands_info[val_id] < BUSY_THRESHOLD) {
             validators_mru_reforw_.push_back(val_id);
             return val_id;
         }
     }
 
     // Then, just try to find anybody...
-    for (int i = 0; i < validators_cands_info_.size(); ++i) {
-        if (i != my_logical_id_ && validators_cands_info_[i] < BUSY_THRESHOLD) {
+    for (int i = 0; i < val_cands_info.size(); ++i) {
+        if (i != my_logical_id_ && val_cands_info[i] < BUSY_THRESHOLD) {
             validators_mru_reforw_.push_back(i);
             return i;
         }
@@ -967,10 +968,9 @@ int Validator::FindValidatorForReforwards() {
 
 void Validator::Synchronize() const {
     std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
-    while (to_validate_total_.load(std::memory_order_relaxed) > 0) {
+    while (!val_queue_->Empty()) {
         LOG4CXX_TRACE(logger, "Synchronizing with the validator"
-                ", queue size=" <<
-                to_validate_total_.load(std::memory_order_relaxed));
+                ", queue size=" << val_queue_->TotalCands());
         validate_cond_.wait(validate_lock);
     }
 }
@@ -1021,7 +1021,7 @@ CandidateVector *Validator::GetNextAssignments() {
         if (sl_status == Searchlight::Status::TERMINATED) {
             LOG4CXX_INFO(logger, "Terminating validator by force");
             // Notify the main solver about catching up, if needed
-            to_validate_.clear();
+            val_queue_->Clear();
             validate_cond_.notify_all();
             return nullptr;
         } else if (sl_status == Searchlight::Status::COMMITTED) {
@@ -1047,25 +1047,21 @@ CandidateVector *Validator::GetNextAssignments() {
                 continue;
             }
         }
-
         // Then check if we have any candidates or forwards
-        if (to_validate_total_.load(std::memory_order_relaxed) > 0) {
+        if (!val_queue_->Empty()) {
             break;
         }
-
         // Nothing new to do -- wait
         validate_cond_.wait(validate_lock);
     }
 
     // This is mine!
-    assert(to_validate_total_.load(std::memory_order_relaxed) > 0);
+    assert(!val_queue_->Empty());
     CandidateVector *res = new CandidateVector;
     *res = GetWorkload();
 
     // Check if we need to rebalance
-    const size_t total_cands =
-            to_validate_total_.load(std::memory_order_relaxed);
-    const size_t cands_ready = total_cands - CountNonSimulatedCandidates();
+    const size_t cands_ready = val_queue_->ReadyCandsNum();
     if (cands_ready > rebal_watermark_) {
         const int val_rebal = FindValidatorForReforwards();
         if (val_rebal >= 0) {
@@ -1082,14 +1078,13 @@ CandidateVector *Validator::GetNextAssignments() {
     }
 
     // Try to off-load the rest to helpers
-    bool should_run_helpers =
-            to_validate_total_.load(std::memory_order_relaxed) > 0;
+    bool should_run_helpers = !val_queue_->Empty();
     while (should_run_helpers) {
         should_run_helpers = false;
         if (sl_task_.ReserveThread()) {
            bool pers_helper;
            should_run_helpers = AddValidatorHelperInt(&pers_helper) &&
-                   to_validate_total_.load(std::memory_order_relaxed) > 0;
+                   !val_queue_->Empty();
         }
     }
 
@@ -1125,10 +1120,16 @@ void Validator::RebalanceAndSend(size_t cands, int validator) {
     const uint64_t start_forw_id = forw_id_;
     const uint64_t start_reforw_id = reforw_id_;
 
-    // Rebalance
-    FillInRebalanceTransfer(cands, reforwards, reforwards_zones,
+    // Rebalance and fill in forward/reforward info
+    val_queue_->FillInRebalanceTransfer(cands, reforwards, reforwards_zones,
             forwards, forwards_zones);
     assert(!reforwards.empty() || !forwards.empty());
+    for (const auto &ca: reforwards) {
+        reforwarded_candidates_.emplace(reforw_id_++, ca.forw_id_);
+    }
+    for (const auto &ca: forwards) {
+        forwarded_candidates_.emplace(forw_id_++, ca.var_asgn_);
+    }
 
     // Send
     LOG4CXX_INFO(logger, "Rebalancing: sending " <<
@@ -1148,102 +1149,116 @@ void Validator::RebalanceAndSend(size_t cands, int validator) {
     }
 }
 
-void Validator::FillInRebalanceTransfer(size_t cands,
-        CandidateVector &reforwards,
-        Int64Vector &reforwards_zones,
-        CandidateVector &forwards,
-        Int64Vector &forwards_zones) {
+void ValidatorQueue::FillInRebalanceTransfer(size_t cands,
+                                             CandidateVector &reforwards,
+                                             Int64Vector &reforwards_zones,
+                                             CandidateVector &forwards,
+                                             Int64Vector &forwards_zones) {
     // Sanity checks
-    assert(cands < CountNonSimulatedCandidates() && my_logical_id_ != -1);
-
+    assert(cands < ReadyCandsNum() && val_logical_id_ != -1);
     // We go through zones in the LRU order (from old to new ones)
     for (auto zone: zones_mru_) {
-        auto &zone_cands = to_validate_[zone];
-        if (!zone_cands.empty()) {
-            assert(!zone_cands.front().empty());
-            while (!zone_cands.empty() && cands > 0) {
-                auto &cands_batch = zone_cands.front();
-                for (auto &cand: cands_batch) {
-                    if (cand.forw_id_ >= 0) {
-                        // Reforward
-                        reforwarded_candidates_.emplace(
-                                reforw_id_++, cand.forw_id_);
-                        reforwards.emplace_back(std::move(cand));
-                        reforwards_zones.push_back(zone);
-                    } else {
-                        // Local
-                        assert(cand.forw_id_ == -2);
-                        forwarded_candidates_.emplace(
-                                forw_id_++, cand.var_asgn_);
-                        forwards.emplace_back(std::move(cand));
-                        forwards_zones.push_back(zone);
-                    }
-                }
-                cands -= std::min(cands_batch.size(), cands);
-                zone_cands.pop_front();
+        auto &zone_cands = zones_[zone];
+        while (cands && !zone_cands.empty()) {
+            CandidateAssignment &ca = const_cast<CandidateAssignment &>(
+                    zone_cands.top());
+            if (ca.forw_id_ >= 0) {
+                // Reforward
+                reforwards.push_back(std::move(ca));
+                reforwards_zones.push_back(zone);
+            } else {
+                // Local
+                assert(ca.forw_id_ == -2);
+                forwards.push_back(std::move(ca));
+                forwards_zones.push_back(zone);
             }
-            if (cands == 0) break;
+            --cands;
         }
+        if (!cands) break;
     }
 
     // Accounting
     const size_t total_rebalanced = reforwards.size() + forwards.size();
     assert(total_rebalanced < to_validate_total_);
     to_validate_total_.fetch_sub(total_rebalanced, std::memory_order_relaxed);
-    assert(total_rebalanced < validators_cands_info_[my_logical_id_]);
-    validators_cands_info_[my_logical_id_] -= total_rebalanced;
+    assert(total_rebalanced < validators_cands_info_[val_logical_id_]);
+    validators_cands_info_[val_logical_id_] -= total_rebalanced;
 }
 
-CandidateVector Validator::GetWorkload() {
+CandidateVector ValidatorQueue::GetCandidates(size_t num) {
     assert(to_validate_total_.load(std::memory_order_relaxed));
-
     CandidateVector res;
-    // First, we need to find a normal zone
-    const size_t non_sim_count = CountNonSimulatedCandidates();
-    if (to_validate_total_.load(std::memory_order_relaxed) > non_sim_count) {
-        for (auto rit = zones_mru_.rbegin(); rit != zones_mru_.rend(); ++rit) {
-            const size_t zone = *rit;
-            if (!to_validate_[zone].empty()) {
-                assert(!to_validate_[zone].front().empty());
-                res.swap(to_validate_[zone].front());
-                to_validate_[zone].pop_front();
-                if (rit != zones_mru_.rbegin()) {
-                    zones_mru_.erase((++rit).base());
-                    zones_mru_.push_back(zone);
+    res.reserve(num);
+    // First try to find some ready candidates
+    if (ReadyCandsNum() > 0) {
+        // Determine the zone
+        size_t zone = 0;
+        if (zones_mru_.size() > 1) {
+            /*
+             * Simple cost-heuristic. Possibly switch to a zone with better
+             * candidates, but still keep in the same zone.
+             *
+             * TODO: revisit later. Something more sophisticated, like taking
+             * candidates from different zones and then batching them together
+             * to avoid thrashing between zones.
+             */
+            auto rit = zones_mru_.rbegin();
+            // Find non-empty zone: note, should have at least one
+            while (zones_[*rit].empty()) {
+                ++rit;
+                assert(rit != zones_mru_.rend());
+            }
+            auto zone_rit = rit;
+            double min_cost = CandidateCost(zones_[*rit].top());
+            while (++rit != zones_mru_.rend()) {
+                const double new_cost = CandidateCost(zones_[*rit].top());
+                if (new_cost < min_cost &&
+                        (min_cost - new_cost) / min_cost > 0.1) {
+                    // Some "significant" change
+                    min_cost = new_cost;
+                    zone_rit = rit;
                 }
-
-                // Update stats
-                assert(my_logical_id_ != -1);
-                validators_cands_info_[my_logical_id_] -= res.size();
-                break;
+            }
+            // zone_rit points to the minimum
+            zone = *zone_rit;
+            if (zone_rit != zones_mru_.rbegin()) {
+                // Put the zone as first in the MRU
+                zones_mru_.erase((++zone_rit).base());
+                zones_mru_.push_back(zone);
             }
         }
-    }
-
-    // Then, check non-simulated local candidates
-    if (!to_validate_.back().empty()) {
-        assert(!to_validate_.back().front().empty());
-        if (res.empty()) {
-            res.swap(to_validate_.back().front());
-        } else {
-            auto &nonsim_cands = to_validate_.back().front();
-            res.insert(res.end(), std::make_move_iterator(nonsim_cands.begin()),
-                    std::make_move_iterator(nonsim_cands.end()));
+        // We have the zone now
+        auto &zone_queue = zones_[zone];
+        while (res.size() < num && !zone_queue.empty()) {
+            // const_cast is okay here for move
+            res.push_back(std::move(
+                    const_cast<CandidateAssignment &>(zone_queue.top())));
+            zone_queue.pop();
         }
-        to_validate_.back().pop_front();
+        // Update cands info
+        assert(val_logical_id_ != -1);
+        validators_cands_info_[val_logical_id_] -= res.size();
     }
-
+    /*
+     *  Now about non-simulated candidates. Take 'num' of them as well.
+     */
+    while (num > 0 && !nonsim_cands_.empty()) {
+        res.push_back(std::move(nonsim_cands_.front()));
+        nonsim_cands_.pop();
+        --num;
+    }
     // Accounting
     assert(!res.empty());
     to_validate_total_.fetch_sub(res.size(), std::memory_order_relaxed);
+    return res;
+}
 
-    if (logger->isDebugEnabled() &&
-            to_validate_total_.load(std::memory_order_relaxed) > 0) {
-        LOG4CXX_DEBUG(logger,
-            "Dispatched a new workload, left=" <<
-            to_validate_total_.load(std::memory_order_relaxed));
+CandidateVector Validator::GetWorkload() {
+    CandidateVector res = val_queue_->GetCandidates(helper_workload_);
+    if (logger->isDebugEnabled() && !val_queue_->Empty()) {
+        LOG4CXX_DEBUG(logger, "Dispatched a new workload, left=" <<
+            val_queue_->TotalCands());
     }
-
     BroadcastCandidatesCount();
     return res;
 }
@@ -1255,7 +1270,7 @@ bool Validator::AddValidatorHelper(bool *persistent) {
 
 bool Validator::AddValidatorHelperInt(bool *persistent) {
     Validator::ValidatorHelper *helper = nullptr;
-    if (to_validate_total_.load(std::memory_order_relaxed) > 0) {
+    if (!val_queue_->Empty()) {
         helper = DispatchValidatorHelper();
     }
     if (!helper) {
@@ -1267,7 +1282,7 @@ bool Validator::AddValidatorHelperInt(bool *persistent) {
     }
 
     LOG4CXX_INFO(logger, "Added another validator helper...");
-    if (to_validate_total_.load(std::memory_order_relaxed) > high_watermark_) {
+    if (val_queue_->TotalCands() > high_watermark_) {
         helper->SetPersistent(true);
         *persistent = true;
         LOG4CXX_INFO(logger, "The helper is made persistent...");
@@ -1378,7 +1393,7 @@ void Validator::ValidatorHelper::operator()() {
         }
         if (parent_.dynamic_helper_scheduling_) {
             const size_t cands_num =
-                    parent_.to_validate_total_.load(std::memory_order_relaxed);
+                    parent_.val_queue_->TotalCands();
             if (persistent_) {
                 /*
                  * If we're persistent, we will notify the task only when we've
@@ -1402,8 +1417,7 @@ void Validator::ValidatorHelper::operator()() {
         }
 
         std::lock_guard<std::mutex> lock{parent_.to_validate_mtx_};
-        if (!should_stop && parent_.to_validate_total_.load(
-                std::memory_order_relaxed) > 0) {
+        if (!should_stop && !parent_.val_queue_->Empty()) {
             SetWorkload(parent_.GetWorkload());
         }
     } while (!workload_.empty());
@@ -1415,7 +1429,7 @@ void Validator::ValidatorHelper::operator()() {
     persistent_ = false;
 
     LOG4CXX_DEBUG(logger, "Helper finished, total assignments=" <<
-            parent_.to_validate_total_);
+            parent_.val_queue_->TotalCands());
     LOG4CXX_INFO(logger, "Validator helper exited solve()");
 }
 

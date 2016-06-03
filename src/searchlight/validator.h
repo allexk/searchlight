@@ -46,6 +46,227 @@ class Searchlight;
 class SearchlightCollector;
 
 /**
+ * Class for storing candidates information.
+ *
+ * Note, this class is NOT thread-safe. Proper locking/synchronization is
+ * expected to happen at the caller's side.
+ */
+class ValidatorQueue {
+public:
+    /**
+     * Ordering of the candidates.
+     */
+    enum class Ordering {
+        RD,  // Sort candidates based on RD
+        COST // Sort candidates based on cost
+    };
+
+    /**
+     * Construct a new queue.
+     *
+     * @param zone_num number of zones
+     * @param ord candidate ordering
+     * @param val_log_id Validator logical id
+     * @param active_vals number of active validators
+     */
+    ValidatorQueue(size_t zone_num, Ordering ord, int val_log_id,
+                   size_t active_vals) :
+            zone_num_(zone_num),
+            validators_cands_info_(active_vals),
+            val_logical_id_(val_log_id),
+            zones_mru_(zone_num),
+            ordering_(ord) {
+        // Init zones
+        const CandidateAssignmentComp comp{ord};
+        zones_.reserve(zone_num);
+        for (size_t i = 0; i < zone_num; ++i) {
+            zones_.emplace_back(comp);
+            zones_mru_[i] = i;
+        }
+    }
+
+    /**
+     * Return total number of candidates in the queue.
+     *
+     * This includes non-simulated ones as well.
+     *
+     * @return total number of candidates in the queue
+     */
+    size_t TotalCands() const {
+        return to_validate_total_.load(std::memory_order_relaxed);
+    }
+
+    /**
+     * Update the number of candidates statistics for the specified validator.
+     *
+     * @param cands the number of candidates
+     * @param val validator ordinal number
+     */
+    void UpdateCandsInfo(size_t cands, size_t val) {
+        assert(val < validators_cands_info_.size());
+        validators_cands_info_[cands] = val;
+    }
+
+    /**
+     * Add local solution to the validator.
+     *
+     * @param ca solution to add
+     */
+    void PushCandidate(CandidateAssignment &&ca, size_t zone) {
+        if (ca.forw_id_ == -1) {
+            // Non-sim candidate
+            nonsim_cands_.push(std::move(ca));
+        } else {
+            assert(zone < zone_num_);
+            zones_[zone].push(std::move(ca));
+            if (val_logical_id_ != -1) {
+                validators_cands_info_[val_logical_id_]++;
+            }
+        }
+        to_validate_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    /**
+     * Get another candidate batch.
+     *
+     * @param num number of candidates to return.
+     * @return new batch of candidates
+     */
+    CandidateVector GetCandidates(size_t num);
+
+    /**
+     * Fill in information for rebalancing transfer.
+     *
+     * @param cands number of candidates
+     * @param reforwards reforwarded candidates (out)
+     * @param reforwards_zones zones for reforwarded candidates (out)
+     * @param forwards forwarded candidates (out)
+     * @param forwards_zones zones for forwarded candidates (out)
+     */
+    void FillInRebalanceTransfer(size_t cands, CandidateVector &reforwards,
+                                 Int64Vector &reforwards_zones,
+                                 CandidateVector &forwards,
+                                 Int64Vector &forwards_zones);
+
+    /**
+     * Return info about number of candidates at all validator.
+     *
+     * @return info about number of candidates at all validator
+     */
+    const SizeVector &ValidatorsCandsInfo() const {
+        return validators_cands_info_;
+    }
+
+    /**
+     * Return number of candidates ready for validation.
+     *
+     * Ready means the candidates that have been simulated.
+     *
+     * @return number of ready candidates
+     */
+    size_t ReadyCandsNum() const {
+        return TotalCands() - nonsim_cands_.size();
+    }
+
+    /**
+     * Return the number of zones.
+     *
+     * @return number of zones
+     */
+    size_t ZonesNumber() const {
+        return zone_num_;
+    }
+
+    /**
+     * Check if empty.
+     *
+     * @return true, if empty; false, otherwise
+     */
+    bool Empty() const {
+        return TotalCands() == 0;
+    }
+
+    /**
+     * Clear the entire queue.
+     */
+    void Clear() {
+        for (auto &z: zones_) {
+            // clear() is not in the pq...
+            CandPQueue(ordering_).swap(z);
+        }
+        decltype(nonsim_cands_)().swap(nonsim_cands_);
+        to_validate_total_ = 0;
+        if (val_logical_id_ != -1) {
+            validators_cands_info_[val_logical_id_] = 0;
+        }
+    }
+
+private:
+    // For sorting candidates
+    struct CandidateAssignmentComp {
+        CandidateAssignmentComp(Ordering ord) : ord_(ord) {}
+
+        bool operator()(const CandidateAssignment &c1,
+                const CandidateAssignment &c2) const {
+            switch (ord_) {
+                case Ordering::RD:
+                    return c1.best_rd_ > c2.best_rd_;
+                    break;
+                case Ordering::COST:
+                    return false;
+                    break;
+                default:
+                    assert(false);
+                    return false;
+            }
+        }
+        Ordering ord_;
+    };
+
+    // Determines candidate cost
+    double CandidateCost(const CandidateAssignment &ca) {
+        switch (ordering_) {
+            case Ordering::RD:
+                return ca.best_rd_;
+                break;
+            case Ordering::COST:
+                return 0.0; // TODO: cost is 0 for now, revisit
+                break;
+            default:
+                assert(false);
+                return 0.0;
+        }
+    }
+
+    // Priority queue type
+    using CandPQueue = std::priority_queue<CandidateAssignment, CandidateVector,
+            CandidateAssignmentComp>;
+
+    // Zone candidates
+    std::vector<CandPQueue> zones_;
+    // Non-simulated candidates
+    std::queue<CandidateAssignment> nonsim_cands_;
+
+    // Total candidates left to validate
+    std::atomic<size_t> to_validate_total_{0};
+
+    // Total number of zones
+    const size_t zone_num_;
+
+    // Info about candidates at all validators
+    SizeVector validators_cands_info_;
+
+    // This validator's logical id
+    int val_logical_id_;
+
+    // Zones in the MRU order
+    std::vector<int> zones_mru_;
+
+    // Ordering
+    const Ordering ordering_;
+};
+
+/**
  * This class allows users to collect solutions (assignments) and check them
  * later for exactness when some criteria are met. The validator uses a
  * separate solver, which is a duplicate of the original, to achieve this.
@@ -161,7 +382,7 @@ public:
      */
     void UpdateCandsInfo(size_t cands, size_t val) {
         // No locking, this is just stats
-        validators_cands_info_[val] = cands;
+        val_queue_->UpdateCandsInfo(cands, val);
     }
 
     /**
@@ -172,7 +393,7 @@ public:
      * @return true, if the validator is havinglow load
      */
     bool Idle() const {
-        return to_validate_total_.load(std::memory_order_relaxed) == 0;
+        return val_queue_->TotalCands() == 0;
     }
 
 private:
@@ -351,7 +572,7 @@ private:
          *  No mutex here since it's called from the main validator loop,
          *  which takes care of that.
          */
-        return to_validate_total_.load(std::memory_order_relaxed) == 0 &&
+        return val_queue_->TotalCands() == 0 &&
                forwarded_candidates_.empty() &&
                reforwarded_candidates_.empty() &&
                free_validator_helpers_.size() == validator_helpers_.size();
@@ -398,7 +619,7 @@ private:
     // Return the number of local zones
     size_t LocalZonesNumber() const {
         // one "zone" for new, non-simulated, candidates
-        return to_validate_.size() - 1;
+        return val_queue_->ZonesNumber();
     }
 
     // Checks if the id corresponds to reforwarding
@@ -408,20 +629,6 @@ private:
 
     // Determine a validator for reforwarding or -1, if everybody is busy
     int FindValidatorForReforwards();
-
-    // Count the number of non-simulated candidates
-    size_t CountNonSimulatedCandidates() const {
-        return to_validate_.back().empty() ? 0 :
-                (to_validate_.back().size() - 1) * helper_workload_ +
-                to_validate_.back().back().size();
-    }
-
-    // Fills is candidates lists to send to another validator for rebalancing
-    void FillInRebalanceTransfer(size_t cands,
-             CandidateVector &reforwards,
-             Int64Vector &reforwards_zones,
-             CandidateVector &forwards,
-             Int64Vector &forwards_zones);
 
     // Rebalance count candidates to the validator
     void RebalanceAndSend(size_t cands, int validator);
@@ -441,18 +648,12 @@ private:
     // Relaxator pointer (nullptrt, if not relaxing)
     Relaxator * const relaxator_;
 
-    // Pending validations and their count (vector of zones)
-    std::vector<std::deque<CandidateVector>> to_validate_;
-    std::atomic<size_t> to_validate_total_{0};
-    // Zones in the MRU order (we use vector since that might be faster even
-    // for in-the-middle erases than list splicing.
-    // The MRU zone goes last!
-    std::vector<int> zones_mru_;
+    // Queue of candidates
+    std::unique_ptr<ValidatorQueue> val_queue_;
 
     // Periodicity of sending the number of candidates updates and the info
     std::size_t send_info_period_;
     std::size_t last_sent_cands_num_ = 0;
-    std::vector<size_t> validators_cands_info_;
 
     // Contains MRU list of validators to which we reforwarded stuff
     std::vector<int> validators_mru_reforw_;
