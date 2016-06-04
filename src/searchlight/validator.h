@@ -104,7 +104,7 @@ public:
      */
     void UpdateCandsInfo(size_t cands, size_t val) {
         assert(val < validators_cands_info_.size());
-        validators_cands_info_[cands] = val;
+        validators_cands_info_[val] = cands;
     }
 
     /**
