@@ -172,6 +172,13 @@ public:
             bool hard);
 
     /**
+     * Request help for the solver.
+     *
+     * @param solver asking solver
+     */
+    void RequestHelp(uint64_t solver);
+
+    /**
      * Dispatches work to another solver.
      *
      * This function is used by a solver to off-load some of its work to
@@ -437,6 +444,9 @@ private:
         // Currently idle solvers
         std::unordered_set<uint64_t> idle_solvers_;
 
+        // Number of soft rejects from each solver
+        std::unordered_map<uint64_t, int> soft_rejects_;
+
         // Solvers needing help
         struct {
             // LRU queue of solvers that need help
@@ -533,6 +543,9 @@ private:
 
     // Handles accept help message
     void HandleAcceptHelper(uint64_t helper);
+
+    // Handle request for help
+    void HandleRequestHelp(uint64_t solver);
 
     // Handles a new helper (note: it will be rejected/accepted later)
     void HandleHelper(uint64_t helper, uint64_t helpee);

@@ -659,7 +659,12 @@ void SearchlightSolver::Solve() {
                 solver_has_work = SolverHasWork();
                 continue;
             }
-
+            /*
+             * Request help just in case.
+             */
+            if (solver_balancing_enabled_) {
+                sl_.sl_task_.RequestHelp(id_);
+            }
             /*
              * Here we want to create a new search. It is crucial to be able to
              * roll-back all changes when this solver gets a new local or remote
@@ -754,10 +759,8 @@ void SearchlightSolver::Solve() {
         " solver's workload...");
     if (status_ != Status::TERMINATED) {
         status_ = Status::VOID;
-
         // Report idleness
         sl_.ReportIdleSolver(*this);
-
         // Then get rid of remaining helpers
         RejectHelpers(false);
     }

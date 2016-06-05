@@ -309,6 +309,14 @@ public:
             uint64_t inst) const;
 
     /**
+     * Request solver help
+     * @param query query context
+     * @param solver asking solver
+     */
+    void RequestHelp(const boost::shared_ptr<Query> &query,
+                     uint64_t solver) const;
+
+    /**
      * Forwards a candidate solution to another validator.
      *
      * The idea behind the id of the forward is that after the validation

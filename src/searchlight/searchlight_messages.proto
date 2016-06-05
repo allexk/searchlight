@@ -45,6 +45,7 @@ message SearchlightBalance {
         BALANCE_RESULT       = 7; // Result of balancing (e.g., for forwarder candidates)
         VALIDATOR_INFO       = 8; // Info about the validator's load
         LRD                  = 9; // LRD changes
+        REQ_HELP             = 10;// Request help
     }
 
     required Type type          = 1; // Type of the message

@@ -123,6 +123,7 @@ SearchlightTask::SearchlightTask(const std::string &library_name,
             for (int s = 0; s < solv_count; s++, solv_id++) {
                 distr_search_info_->helpees_.Add(solv_id);
                 distr_search_info_->busy_solvers_.insert(solv_id);
+                distr_search_info_->soft_rejects_[solv_id] = 0;
             }
         }
 
@@ -307,6 +308,7 @@ void SearchlightTask::HandleIdleSolver(uint64_t id) {
     distr_search_info_->busy_solvers_.erase(id);
     distr_search_info_->idle_solvers_.insert(id);
     distr_search_info_->helpees_.Erase(id);
+    distr_search_info_->soft_rejects_[id] = 0;
 
     /*
      * Check if the search is completely finished. Validator might be
@@ -390,8 +392,8 @@ void SearchlightTask::HandleHelper(uint64_t helper, uint64_t helpee) {
                     GetInstanceFromSolverID(helpee)) {
                 // The same instance -- no gain, since we don't have threads
                 lock.unlock();
-                RejectHelp({helper}, helpee, false);
-                LOG4CXX_DEBUG(logger, "Got the same instance helper for a"
+                RejectHelp({helper}, helpee, true); // will re-request later
+                LOG4CXX_DEBUG(logger, "Got the same instance helper for a "
                         "pending assignment, reject...");
             } else {
                 CandidateVector load_copy{std::move(iter->second)};
@@ -427,6 +429,17 @@ void SearchlightTask::HandleAcceptHelper(uint64_t helper) {
     if (distr_search_info_->busy_solvers_.find(helper) !=
             distr_search_info_->busy_solvers_.end()) {
         distr_search_info_->helpees_.Add(helper);
+        lock.unlock();
+        CheckForHelpees();
+    }
+}
+
+void SearchlightTask::HandleRequestHelp(uint64_t solver) {
+    std::unique_lock<std::mutex> lock(mtx_);
+    // Add the solver to helpees, if it's busy
+    if (distr_search_info_->busy_solvers_.find(solver) !=
+            distr_search_info_->busy_solvers_.end()) {
+        distr_search_info_->helpees_.Add(solver);
         lock.unlock();
         CheckForHelpees();
     }
@@ -563,6 +576,12 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
                     << std::hex << balance_msg->id(0));
             HandleRemoteLoad(*balance_msg, balance_msg->id(0));
             break;
+        case SearchlightBalance::REQ_HELP:
+            assert(balance_msg->id_size());
+            LOG4CXX_DEBUG(logger, "Help requested from 0x" << std::hex <<
+                          balance_msg->id(0));
+            HandleRequestHelp(balance_msg->id(0));
+            break;
         case SearchlightBalance::REJECT_HELPER_HARD:
         case SearchlightBalance::REJECT_HELPER_SOFT:
         {
@@ -677,12 +696,27 @@ void SearchlightTask::HandleRejectHelp(uint64_t src,
         logger->debug(deb_str.str(), LOG4CXX_LOCATION);
     }
 
+    if (!hard) {
+        // Check if we have too many soft rejects from the solver
+        assert(distr_search_info_->soft_rejects_.count(src));
+        const size_t total_solvers = distr_search_info_->soft_rejects_.size();
+        /*
+         * Simple heuristuc: if we've got a soft reject total_solvers times,
+         * that probably means that the solver is rejecting everybody right now.
+         * Stop sending help to it until further notice
+         */
+        if (++distr_search_info_->soft_rejects_[src] >= total_solvers) {
+            LOG4CXX_DEBUG(logger, "Too many soft rejects. "
+                    "Disabling help for " << src);
+            hard = true;
+        }
+    }
+
     // If it's a hard reject we need to disable help for src solver
     if (hard) {
         std::lock_guard<std::mutex> lock(mtx_);
         distr_search_info_->helpees_.Erase(src);
     }
-
     // Handle a rejected helper as idle -- there is no difference
     for (auto id: helpers) {
         HandleIdleSolver(id);
@@ -698,6 +732,16 @@ void SearchlightTask::RejectHelp(const std::vector<uint64_t> &helpers,
         // We are at a common instance -- send helpers back to the coordinator
         SearchlightMessenger::getInstance()->RejectHelp(query, helpers,
                 solver_id, hard);
+    }
+}
+
+void SearchlightTask::RequestHelp(uint64_t solver) {
+    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+    if (query->isCoordinator()) {
+        HandleRequestHelp(solver);
+    } else {
+        // We are at a common instance -- request from the coordinator
+        SearchlightMessenger::getInstance()->RequestHelp(query, solver);
     }
 }
 
