@@ -393,7 +393,8 @@ public:
      * @return true, if the validator is havinglow load
      */
     bool Idle() const {
-        return val_queue_->TotalCands() == 0;
+        std::lock_guard<std::mutex> lock(to_validate_mtx_);
+        return Idle_NL();
     }
 
 private:
@@ -576,6 +577,18 @@ private:
                forwarded_candidates_.empty() &&
                reforwarded_candidates_.empty() &&
                free_validator_helpers_.size() == validator_helpers_.size();
+    }
+
+    // Check for idleness without locking
+    bool Idle_NL() const {
+        /*
+         * Assume the validator is idle if it:
+         *   1) Isn't crunching too many candidates
+         *   2) Hasn't forwarded much. This measures the remote load coming
+         *          from this node (somewhat, not precise).
+         */
+        return val_queue_->TotalCands() + forwarded_candidates_.size() <
+                low_watermark_ / 2;
     }
 
     /*

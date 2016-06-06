@@ -1089,7 +1089,7 @@ CandidateVector *Validator::GetNextAssignments() {
     }
 
     // Check if we went idle
-    if (Idle()) {
+    if (Idle_NL()) {
         sl_.EventNotify(SearchlightEvent::VALIDATOR_IDLE);
     }
 
