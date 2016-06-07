@@ -236,15 +236,16 @@ public:
     /**
      * Found UDF function pointers.
      *
-     * We need a set to avoid dups here, since in a model the same entity
-     * might be visited many times.
+     * We need an additional set to avoid dups here, since in a model
+     * the same entity might be visited many times (see dedups_ member).
      *
-     * We rely on deterministic behavior (i.e., non-random inserts) here, since
-     * the ordering of UDFs among all Searchlight solvers might be the same.
-     * Why? A message saved at one solver might be restored on another solver
-     * during replays.
+     * Note, the order of discovered UDFs between the solvers must be the same.
+     * If we used a single set, the ordering might be different due to hash
+     * being applied to pointers and the sequential ordering in the set
+     * different. Thus, we use a set only to get rid of duplicates.
+     *
      */
-    using UDFFunctions = std::unordered_set<SearchlightUDF *>;
+    using UDFFunctions = std::vector<SearchlightUDF *>;
 
     /**
      * Callback for Visited integer expressions in the model.
@@ -258,7 +259,11 @@ public:
         if (!strncmp(type_name.c_str(), UDF_PREFIX, strlen(UDF_PREFIX))) {
             if (SearchlightUDF *udf = dynamic_cast<SearchlightUDF *>(
                     const_cast<IntExpr *>(expr))) {
-                udfs_.insert(udf);
+                const auto it = dedup_.insert(udf);
+                if (it.second) {
+                    // Not in the set -- a new UDF found
+                    udfs_.push_back(udf);
+                }
             }
         }
     }
@@ -278,6 +283,9 @@ private:
 
     // UDFs found
     UDFFunctions udfs_;
+
+    // For de-duplication
+    std::unordered_set<SearchlightUDF *> dedup_;
 };
 
 /**

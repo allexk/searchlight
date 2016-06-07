@@ -309,10 +309,7 @@ void SearchlightSolver::Prepare(Validator &validator) {
                 // Need to find UDFs to save state for replays
                 UDFFinder udf_finder;
                 solver_.Accept(&udf_finder);
-                const auto &found_udfs = udf_finder.GetUDFs();
-                model_udfs_.reserve(found_udfs.size());
-                std::copy(found_udfs.begin(), found_udfs.end(),
-                    std::back_inserter(model_udfs_));
+                model_udfs_ = udf_finder.GetUDFs();
                 LOG4CXX_INFO(logger, "Found " << model_udfs_.size() <<
                     " UDFs in the model");
             }
