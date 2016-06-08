@@ -632,17 +632,17 @@ void SearchlightSolver::Solve() {
                 // Try a fail replay
                 fail_replay = relaxator->GetFailReplay(GetLocalID(),
                         domain_info, current_vc_spec_, udf_states);
+                // If a main solver started replays, disable speculative
+                if (solver_type_ == SolverType::MAIN) {
+                    sl_.spec_exec_.TurnOffRelax();
+                } else if (fail_replay) {
+                    assert(solver_type_ == SolverType::SPEC_RELAX);
+                    LOG4CXX_DEBUG(logger, "Speculative solver got a replay");
+                }
                 // Might be false if somebody just went ahead of us
                 if (!fail_replay) {
                     solver_has_work = SolverHasWork();
                     continue;
-                }
-                // If a main solver started replays, disable speculative
-                if (solver_type_ == SolverType::MAIN) {
-                    sl_.spec_exec_.TurnOffRelax();
-                } else {
-                    assert(solver_type_ == SolverType::SPEC_RELAX);
-                    LOG4CXX_DEBUG(logger, "Speculative solver got a replay");
                 }
             } else {
                 /*
