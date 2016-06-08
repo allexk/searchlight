@@ -729,6 +729,10 @@ void Validator::HandleForwardResult(uint64_t id, bool result,
         }
         forwarded_candidates_.erase(id);
         if (forwarded_candidates_.empty()) {
+            // Check if we went idle
+            if (Idle_NL()) {
+                sl_.EventNotify(SearchlightEvent::VALIDATOR_IDLE);
+            }
             validate_cond_.notify_all();
         }
     }

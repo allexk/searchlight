@@ -386,15 +386,23 @@ public:
     }
 
     /**
-     * Check if the validator is having low load.
+     * Check if the validator is idle.
      *
-     * For now the low load is defined to be below low watermark.
-     *
-     * @return true, if the validator is havinglow load
+     * @return true, if the validator is idle
      */
     bool Idle() const {
         std::lock_guard<std::mutex> lock(to_validate_mtx_);
         return Idle_NL();
+    }
+
+    /**
+     * Check if the validator is having low load.
+     *
+     * @return true, if the validator is having low load
+     */
+    bool LowLoad() const {
+        std::lock_guard<std::mutex> lock(to_validate_mtx_);
+        return LowLoad_NL();
     }
 
 private:
@@ -579,16 +587,25 @@ private:
                free_validator_helpers_.size() == validator_helpers_.size();
     }
 
-    // Check for idleness without locking
-    bool Idle_NL() const {
+    // Check for low load without locking
+    bool LowLoad_NL() const {
         /*
-         * Assume the validator is idle if it:
+         * Assume the validator's load is low if it:
          *   1) Isn't crunching too many candidates
          *   2) Hasn't forwarded much. This measures the remote load coming
          *          from this node (somewhat, not precise).
          */
         return val_queue_->TotalCands() + forwarded_candidates_.size() <
                 low_watermark_ / 2;
+    }
+
+    // Check for idleness without locking
+    bool Idle_NL() const {
+        /*
+         * Assume the validator is idle if it doesn't have any outstanding
+         * stuff, local or remote.
+         */
+        return val_queue_->TotalCands() + forwarded_candidates_.size() == 0;
     }
 
     /*
