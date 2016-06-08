@@ -74,7 +74,7 @@ Relaxator::Relaxator(Searchlight &sl, size_t solvers,
         register_heur_ = RegisterHeuristic::GUESS;
     } else if (heur == "guess-all") {
         register_heur_ = RegisterHeuristic::GUESS_ALL;
-    } else {
+    } else if (heur != "all"){
         LOG4CXX_ERROR(logger,
                 "Unknown register heuristic, defaulting to ALL...");
     }
@@ -91,7 +91,7 @@ Relaxator::Relaxator(Searchlight &sl, size_t solvers,
         sort_method_ = ReplaySortMethod::PROD;
     } else if (rep_sort == "time") {
         sort_method_ = ReplaySortMethod::TIME;
-    } else {
+    } else if (rep_sort != "best"){
         LOG4CXX_ERROR(logger,
                 "Unknown replay sorting method, defaulting to BEST...");
     }
@@ -361,7 +361,7 @@ void Relaxator::RegisterFail(size_t solver_id, RegisterHeuristic rh) {
             rel_stats.total_fails_caught_.fetch_sub(1, std::memory_order_relaxed);
             rel_stats.total_fails_heur_retried_.fetch_add(1,
                     std::memory_order_relaxed);
-            LOG4CXX_DEBUG(logger, "Retrying the fail with the ALL heuristic");
+            LOG4CXX_TRACE(logger, "Retrying the fail with the ALL heuristic");
             RegisterFail(solver_id, RegisterHeuristic::ALL);
         }
 	    return;

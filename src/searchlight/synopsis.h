@@ -756,7 +756,7 @@ private:
                 std::lock_guard<std::mutex> lock{mtx_};
                 valid = chunk.valid_.load(std::memory_order_relaxed);
                 if (!valid) {
-                    LOG4CXX_DEBUG(logger_, "Lazy-loading chunk " <<
+                    LOG4CXX_TRACE(logger_, "Lazy-loading chunk " <<
                                   pos.chunk_linear_);
                     FillCellsFromChunk(pos, reader);
                     chunk.valid_.store(true, std::memory_order_release);

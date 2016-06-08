@@ -197,7 +197,7 @@ void SearchlightMessenger::RegisterQuery(
                 boost::bind(&SearchlightMessenger::deactivate, this, _1);
         query->pushFinalizer(f);
 
-        LOG4CXX_DEBUG(logger, "Registered query, id=" << query_id);
+        LOG4CXX_INFO(logger, "Registered query, id=" << query_id);
     }
 }
 
@@ -225,7 +225,7 @@ void SearchlightMessenger::deactivate(const boost::shared_ptr<Query> &query) {
 
     // Get rid of the context
     served_queries_.erase(iter);
-    LOG4CXX_DEBUG(logger, "Removed query, id=" << query_id);
+    LOG4CXX_INFO(logger, "Removed query, id=" << query_id);
 
     /*
      * We do not remove message handlers here. First of all, SciDb does not
@@ -262,7 +262,7 @@ void SearchlightMessenger::RegisterArray(const boost::shared_ptr<Query> &query,
     const std::string &array_name = array->getName();
     query_ctx->reg_arrays_.emplace(array_name,
             std::make_shared<QueryContext::ServedArray>(array));
-    LOG4CXX_DEBUG(logger, "Registered array, qid=" << query->getQueryID()
+    LOG4CXX_INFO(logger, "Registered array, qid=" << query->getQueryID()
             << ", array=" << array_name);
 }
 
@@ -765,7 +765,7 @@ void SearchlightMessenger::ReportIdleSolver(
     record->add_id(solver_id);
 
     // log
-    LOG4CXX_DEBUG(logger, "Reporting idle search: qid=" << query->getQueryID());
+    LOG4CXX_TRACE(logger, "Reporting idle search: qid=" << query->getQueryID());
 
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
@@ -798,7 +798,7 @@ void SearchlightMessenger::ReportFinValidator(
     record->set_type(SearchlightControl::VALIDATOR_LOCAL_FIN);
 
     // log
-    LOG4CXX_DEBUG(logger, "Reporting locally finished validator: qid=" <<
+    LOG4CXX_TRACE(logger, "Reporting locally finished validator: qid=" <<
             query->getQueryID());
 
     // send
@@ -825,8 +825,8 @@ void SearchlightMessenger::DispatchHelper(const boost::shared_ptr<Query> &query,
     record->add_id(helper);
 
     // log
-    LOG4CXX_DEBUG(logger, "Sending a helper: id=" <<
-            helper << ", dest=" << dest);
+    LOG4CXX_TRACE(logger, "Sending a helper: id=" << helper <<
+                  ", dest=" << dest);
 
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
@@ -857,7 +857,7 @@ void SearchlightMessenger::RejectHelp(const boost::shared_ptr<Query> &query,
     }
 
     // Log
-    LOG4CXX_DEBUG(logger, "Rejecting help: hard=" << (hard ? "true" : "false"));
+    LOG4CXX_TRACE(logger, "Rejecting help: hard=" << (hard ? "true" : "false"));
 
     // Send
     NetworkManager *network_manager = NetworkManager::getInstance();
@@ -879,7 +879,7 @@ void SearchlightMessenger::DispatchWork(const boost::shared_ptr<Query> &query,
     record->add_id(solver);
 
     // log
-    LOG4CXX_DEBUG(logger, "Sending additional load to helper: qid=" <<
+    LOG4CXX_TRACE(logger, "Sending additional load to helper: qid=" <<
             query->getQueryID() << ", helper=" << solver);
 
     // send
@@ -905,7 +905,7 @@ void SearchlightMessenger::RequestHelp(const boost::shared_ptr<Query> &query,
     record->set_type(SearchlightBalance::REQ_HELP);
     record->add_id(solver);
     // log
-    LOG4CXX_DEBUG(logger, "Sending request for help: " << solver);
+    LOG4CXX_TRACE(logger, "Sending request for help: " << solver);
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
     network_manager->send(coord_id, msg);
@@ -931,7 +931,7 @@ void SearchlightMessenger::AcceptHelp(const boost::shared_ptr<Query> &query,
     record->add_id(inst);
 
     // log
-    LOG4CXX_DEBUG(logger, "Sending help accept: helper=" << inst);
+    LOG4CXX_TRACE(logger, "Sending help accept: helper=" << inst);
 
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
@@ -991,7 +991,7 @@ void SearchlightMessenger::BroadcastDistrUpdate(
     }
 
     // log
-    LOG4CXX_DEBUG(logger, "Broadcasting distribution update...");
+    LOG4CXX_TRACE(logger, "Broadcasting distribution update...");
 
     // send
     NetworkManager *network_manager = NetworkManager::getInstance();
@@ -1040,7 +1040,7 @@ void SearchlightMessenger::BroadcastFinishSearch(
     record->set_type(SearchlightControl::END_SEARCH);
 
     // log
-    LOG4CXX_DEBUG(logger, "Broadcasting end-of-search: qid=" <<
+    LOG4CXX_TRACE(logger, "Broadcasting end-of-search: qid=" <<
             query->getQueryID());
 
     // send
@@ -1107,7 +1107,7 @@ void SearchlightMessenger::BroadcastCommit(
     record->set_type(SearchlightControl::COMMIT);
 
     // log
-    LOG4CXX_DEBUG(logger, "Broadcasting search commit: qid=" <<
+    LOG4CXX_TRACE(logger, "Broadcasting search commit: qid=" <<
             query->getQueryID());
 
     // send

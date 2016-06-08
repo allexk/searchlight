@@ -838,7 +838,7 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
         cache_type = CachingType::EAGER;
     } else if (cache_type_string == "lazy") {
         cache_type = CachingType::LAZY;
-    } else {
+    } else if (cache_type_string != "none") {
         LOG4CXX_WARN(logger, "Unknown cache type: " << cache_type_string);
     }
 

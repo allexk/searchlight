@@ -294,7 +294,7 @@ public:
         // check for searchlight termination
         if (validator_.CheckTerminate()) {
             // this will stop the search by failing the right branch
-            LOG4CXX_INFO(logger, "Terminating the validator by force");
+            LOG4CXX_ERROR(logger, "Terminating the validator by force");
             return solver->MakeFailDecision();
         }
 
@@ -315,7 +315,7 @@ public:
                             << " new assignments to check");
                     delete new_asgns;
                 } else {
-                    LOG4CXX_INFO(logger, "Helper validator finished workload...");
+                    LOG4CXX_INFO(logger, "Helper validator finished workload");
                     return solver->MakeFailDecision();
                 }
             }
@@ -973,7 +973,7 @@ int Validator::FindValidatorForReforwards() {
 void Validator::Synchronize() const {
     std::unique_lock<std::mutex> validate_lock(to_validate_mtx_);
     while (!val_queue_->Empty()) {
-        LOG4CXX_TRACE(logger, "Synchronizing with the validator"
+        LOG4CXX_DEBUG(logger, "Synchronizing with the validator"
                 ", queue size=" << val_queue_->TotalCands());
         validate_cond_.wait(validate_lock);
     }
@@ -991,7 +991,7 @@ void Validator::operator()() {
         solver_status_ = solver_.Solve(db);
     } catch (const scidb::Exception &ex) {
         // Might catch an exception from SearchlightTask
-        LOG4CXX_INFO(logger, "Validator caught an exception");
+        LOG4CXX_ERROR(logger, "Validator caught an exception");
         sl_task_.HandleSearchlightError(ex.copy());
     }
 
@@ -1023,7 +1023,7 @@ CandidateVector *Validator::GetNextAssignments() {
         // Check interesting statuses first
         const Searchlight::Status sl_status = sl_.GetStatus();
         if (sl_status == Searchlight::Status::TERMINATED) {
-            LOG4CXX_INFO(logger, "Terminating validator by force");
+            LOG4CXX_ERROR(logger, "Terminating validator by force");
             // Notify the main solver about catching up, if needed
             val_queue_->Clear();
             validate_cond_.notify_all();
@@ -1383,7 +1383,7 @@ void Validator::ValidatorHelper::operator()() {
         } catch (const scidb::Exception &ex) {
             // Might catch an exception from SearchlightTask
             parent_.sl_task_.HandleSearchlightError(ex.copy());
-            LOG4CXX_INFO(logger, "Helper caught an exception");
+            LOG4CXX_ERROR(logger, "Helper caught an exception");
             break;
         }
         workload_.clear();
@@ -1392,7 +1392,7 @@ void Validator::ValidatorHelper::operator()() {
         // Need to determine if we want to continue
         bool should_stop = false;
         if (parent_.CheckTerminate()) {
-            LOG4CXX_INFO(logger, "Terminating validator helper by force!");
+            LOG4CXX_ERROR(logger, "Terminating validator helper by force!");
             break;
         }
         if (parent_.dynamic_helper_scheduling_) {

@@ -173,7 +173,7 @@ public:
             const double ratio = double(leaves_) / fails_;
             if (ratio <= finish_threshold_) {
                 FinishCurrentSearch();
-                LOG4CXX_TRACE(logger, "Finishing the search because "
+                LOG4CXX_DEBUG(logger, "Finishing the search because "
                         "of a large fail ratio: " << ratio);
             }
 
@@ -232,7 +232,7 @@ public:
      * @param s the solver
      */
     virtual void Apply(Solver* const s) override {
-        LOG4CXX_DEBUG(logger, "Setting interval for  " <<
+        LOG4CXX_TRACE(logger, "Setting interval for  " <<
                 var_->DebugString() << " to: [" << min_ << ", " << max_ << "]");
         /*
          * A bit of a hack here. There are situations when setting the range
@@ -246,7 +246,7 @@ public:
         var_->SetRange(min_, max_);
         sl_search_.sl_solver_.CancelCustomFail();
         var_->UnfreezeQueue();
-        LOG4CXX_DEBUG(logger, "Interval set");
+        LOG4CXX_TRACE(logger, "Interval set");
     }
 
     /**
@@ -362,7 +362,8 @@ public:
         // Nested search
         int luby_scale = sl_search_.search_config_.luby_scale_;
         if (luby_scale != 0) {
-            LOG4CXX_TRACE(logger, "Setting Luby restarts for impact estimator");
+            LOG4CXX_TRACE(logger, "Setting Luby restarts for impact estimator, "
+                    "scale=" << luby_scale);
             monitors_.push_back(s->MakeLubyRestart(luby_scale));
         }
         s->Solve(random_db, monitors_);

@@ -293,7 +293,8 @@ void SearchlightSolver::SetTask(const IntVarVector &primary_vars,
 
 void SearchlightSolver::Prepare(Validator &validator) {
     if (sl_.sl_task_.SolverActive(sl_.sl_task_.GetInstanceID())) {
-        LOG4CXX_INFO(logger, "Solver is active at this instance...");
+        LOG4CXX_INFO(logger, "Solver is active at this instance..." <<
+                std::hex << id_);
         // Establish monitors: validator (to transfer leaves) and terminator
         SearchLimit *terminator = solver_.MakeCustomLimit(
                 NewPermanentCallback(this, &SearchlightSolver::CheckTerminate));
@@ -341,7 +342,8 @@ void SearchlightSolver::Prepare(Validator &validator) {
                 "balance.solver_balance", 1);
         status_ = Status::PREPARED;
     } else {
-        LOG4CXX_INFO(logger, "Solver is not configured at this instance...");
+        LOG4CXX_INFO(logger, "Solver is not configured at this instance..." <<
+                std::hex << id_);
         status_ = Status::FINISHED;
     }
 }
@@ -380,7 +382,7 @@ void SearchlightSolver::operator()() {
                 case Status::PREPARED:
                     Solve();
                     if (status_ == Status::TERMINATED) {
-                        LOG4CXX_DEBUG(logger, "Solver was terminated!");
+                        LOG4CXX_ERROR(logger, "Solver was terminated!");
                         work_expected = false;
                     }
                     break;
@@ -674,7 +676,7 @@ void SearchlightSolver::Solve() {
             assert(search_monitors_.validator_monitor_);
             vars_leaf_.FreezeQueue();
             if (!fail_replay) {
-                LOG4CXX_INFO(logger, "Setting up solver assignment: "
+                LOG4CXX_DEBUG(logger, "Setting up solver assignment: "
                         << vars_leaf_.DebugString());
                 vars_leaf_.Restore();
             } else {
@@ -730,7 +732,7 @@ void SearchlightSolver::Solve() {
          * Also, some heuristics, like SLRandom, find candidates via
          * nested search, which is not going to show up here anyway.
          */
-        LOG4CXX_INFO(logger, "Starting the main search");
+        LOG4CXX_DEBUG(logger, "Starting the main search");
         while (solver_.NextSolution());
         solver_.EndSearch();
 
@@ -752,7 +754,7 @@ void SearchlightSolver::Solve() {
 
     const std::string solver_type_str(solver_type_ == SolverType::SPEC_RELAX ?
             "speculative" : "main");
-    LOG4CXX_INFO(logger, "Finished " << solver_type_str <<
+    LOG4CXX_DEBUG(logger, "Finished " << solver_type_str <<
         " solver's workload...");
     if (status_ != Status::TERMINATED) {
         status_ = Status::VOID;

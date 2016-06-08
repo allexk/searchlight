@@ -209,11 +209,11 @@ void SearchlightTask::ReadConfig(const std::string &file_name) {
                 << e.what();
     }
 
-    if (logger->isDebugEnabled()) {
+    if (logger->isInfoEnabled()) {
         std::ostringstream deb;
         deb << "Config for the task follows:\n";
         boost::property_tree::write_json(deb, config_, true);
-        logger->debug(deb.str(), LOG4CXX_LOCATION);
+        logger->info(deb.str(), LOG4CXX_LOCATION);
     }
 
     // Active solvers
@@ -544,15 +544,15 @@ void SearchlightTask::HandleControlMessage(InstanceID inst,
             HandleIdleSolver(control_msg->id(0));
             break;
         case SearchlightControl::VALIDATOR_LOCAL_FIN:
-            LOG4CXX_DEBUG(logger, "Validator finished: id=" << inst);
+            LOG4CXX_INFO(logger, "Validator finished: id=" << inst);
             HandleFinValidator(inst);
             break;
         case SearchlightControl::END_SEARCH:
-            LOG4CXX_DEBUG(logger, "End-of-search request");
+            LOG4CXX_INFO(logger, "End-of-search request");
             HandleEndOfSearch();
             break;
         case SearchlightControl::COMMIT:
-            LOG4CXX_DEBUG(logger, "Commit request");
+            LOG4CXX_INFO(logger, "Commit request");
             HandleCommit();
             break;
     }
@@ -578,7 +578,7 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
             break;
         case SearchlightBalance::REQ_HELP:
             assert(balance_msg->id_size());
-            LOG4CXX_DEBUG(logger, "Help requested from 0x" << std::hex <<
+            LOG4CXX_TRACE(logger, "Help requested from 0x" << std::hex <<
                           balance_msg->id(0));
             HandleRequestHelp(balance_msg->id(0));
             break;
@@ -777,7 +777,7 @@ std::string SearchlightTask::GetNextSolution() {
 
     // Terminated on error? Throw it in the main thread.
     if (sl_error_) {
-        LOG4CXX_INFO(logger, "SearchlightTask terminated on error!");
+        LOG4CXX_ERROR(logger, "SearchlightTask terminated on error!");
         sl_error_->raise();
     }
 
@@ -827,7 +827,7 @@ void SearchlightTask::FreeThread() {
 
             searchlight_.PrepareHelper(load_copy,
                     GetLocalIDFromSolverID(helper));
-            LOG4CXX_INFO(logger, "Dispatched a pending assignment...");
+            LOG4CXX_DEBUG(logger, "Dispatched a pending assignment...");
         } else {
             ++threads_available_;
         }
@@ -867,7 +867,7 @@ void SearchlightTask::DispatchOrStoreLoad(CandidateVector &load,
             // No threads -- have to save the load for later
             assert(pending_assgns_.count(dest_solver) == 0);
             pending_assgns_.emplace(dest_solver, std::move(load));
-            LOG4CXX_INFO(logger,
+            LOG4CXX_DEBUG(logger,
                     "No threads available: saving the remote load...");
             return;
         }
@@ -921,11 +921,11 @@ void SearchlightTask::HandleSearchlightError(
                         *sl_error_, query->getQueryID());
                 NetworkManager::getInstance()->sendPhysical(
                         query->getPhysicalCoordinatorID(), error_msg);
-                LOG4CXX_INFO(logger, "Notified coordinator about the error");
+                LOG4CXX_ERROR(logger, "Notified coordinator about the error");
             }
         } catch (const scidb::Exception &) {
             // Query might have already been deallocated
-            LOG4CXX_INFO(logger, "Reported error, but query is already "
+            LOG4CXX_ERROR(logger, "Reported error, but query is already "
                     "deallocating...");
         }
         queue_cond_.notify_one();
