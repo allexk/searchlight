@@ -572,14 +572,15 @@ public:
 	 * Otherwise, just ignore it.
 	 *
 	 * @param solver_id SearchlightSolver id
+     * @param imm_fail true, if the fail is immediate (no new decisions)
 	 */
-	void RegisterFail(size_t solver_id) {
+	void RegisterFail(size_t solver_id, bool imm_fail) {
 	    RegisterHeuristic h = register_heur_;
 	    if (h == RegisterHeuristic::GUESS_ALL) {
 	        h = solver_info_[solver_id].in_replay_ ? RegisterHeuristic::ALL :
 	                RegisterHeuristic::GUESS;
 	    }
-	    RegisterFail(solver_id, h);
+	    RegisterFail(solver_id, h, imm_fail);
 	}
 
 	/**
@@ -651,7 +652,7 @@ public:
 	 */
 	bool HasReplays() const {
 	    std::lock_guard<std::mutex> lock{mtx_};
-	    return !fail_replays_.empty();
+	    return !fail_replays_.empty() || !forced_replays_queue_.empty();
 	}
 
 	/**
@@ -861,6 +862,9 @@ private:
 
 	// Saved fail for later replay
 	struct FailReplay {
+	    // Pointer
+	    using Ptr = std::unique_ptr<FailReplay>;
+	    // Info about a failed constraint
 		struct FailedConstraint {
 			// Constraint id
 			size_t const_id_;
@@ -970,7 +974,7 @@ private:
 	Int64Vector ViolConstSpec(const FailReplay &replay) const;
 
 	// Internal register fail function
-	void RegisterFail(size_t solver_id, RegisterHeuristic rh);
+	void RegisterFail(size_t solver_id, RegisterHeuristic rh, bool imm_fail);
 
 	// Fill in new relaxation interval; return true if possible to relax
 	bool ComputeNewReplayInterval(FailReplay &replay,
@@ -991,6 +995,9 @@ private:
     // Queue of replays ranked by relaxation degree (lowest first)
     std::priority_queue<FailReplay,
         std::vector<FailReplay>, ReplaySort> fail_replays_;
+
+    // Forced fail replays (have priotorty over fail_replays_)
+    std::queue<FailReplay> forced_replays_queue_;
 
 	// Total number of solvers
 	const size_t solvers_num_;
@@ -1021,6 +1028,9 @@ private:
 
 	// Do we save UDFs for replays?
 	bool save_udfs_for_replay_;
+
+	// Do we force some replays before others?
+	bool force_replays_;
 
     // Max heap to count result relaxation degrees
     std::priority_queue<double> top_results_;
@@ -1066,6 +1076,20 @@ public:
      */
 	virtual void BeginFail() override;
 
+    /**
+     * Called before the initial propagation.
+     */
+    virtual void BeginInitialPropagation() override {
+        init_propagation_finished_ = false;
+    }
+
+    /**
+     *  Called after the initial propagation.
+     */
+    virtual void EndInitialPropagation() override {
+        init_propagation_finished_ = true;
+    }
+
 private:
 	// Query relaxator
 	Relaxator &relaxator_;
@@ -1075,6 +1099,9 @@ private:
 
 	// Searchlight solver id
 	const size_t solver_id_;
+
+	// True, if the search went beyond initial propagation
+	bool init_propagation_finished_ = false;
 };
 } /* namespace searchlight */
 #endif /* SEARCHLIGHT_RELAX_H_ */

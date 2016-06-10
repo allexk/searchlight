@@ -100,6 +100,9 @@ Relaxator::Relaxator(Searchlight &sl, size_t solvers,
     // Do we save UDFS?
     save_udfs_for_replay_ = sl.GetConfig().get("relax.save_udfs", false);
 
+    // Do we force replays?
+    force_replays_ = sl.GetConfig().get("relax.force_replays", true);
+
     // Replay relaxation degree
     replay_rd_ = sl.GetConfig().get("relax.replay_rd", 1.0);
     if (replay_rd_ > 1.0) {
@@ -127,9 +130,12 @@ bool Relaxator::GetFailReplay(size_t solver_id,
         UDFStates &udfs) {
     std::lock_guard<std::mutex> lock{mtx_};
     const double lrd = lrd_.load(std::memory_order_relaxed);
-    while (!fail_replays_.empty()) {
+    SolverReplayInfo &solver_info = solver_info_[solver_id];
+    while (!forced_replays_queue_.empty() || !fail_replays_.empty()) {
+        const bool force_replay = !forced_replays_queue_.empty();
         // Const cast is okay here; we get rid of the top object right away
-        FailReplay &fr = const_cast<FailReplay &>(fail_replays_.top());
+        FailReplay &fr = force_replay ? forced_replays_queue_.front() :
+                const_cast<FailReplay &>(fail_replays_.top());
         if (fr.best_relax_degree_ <= lrd) {
             if (fr.worst_relax_degree_ > lrd) {
                 // Tighten the relaxation if possible
@@ -140,7 +146,6 @@ bool Relaxator::GetFailReplay(size_t solver_id,
             dom_info = std::move(fr.saved_vars_);
             udfs = std::move(fr.saved_udfs_);
             // For the last replay we need only info about failed constraints
-            SolverReplayInfo &solver_info = solver_info_[solver_id];
             if (register_heur_ == RegisterHeuristic::GUESS) {
                 for (auto &fc: fr.failed_const_) {
                     solver_info.replay_.failed_consts_.emplace(fc.const_id_,
@@ -149,14 +154,22 @@ bool Relaxator::GetFailReplay(size_t solver_id,
             }
             stats_[1].total_fails_replayed_++;
             solver_info.in_replay_ = true;
-            fail_replays_.pop();
+            if (force_replay) {
+                forced_replays_queue_.pop();
+            } else {
+                fail_replays_.pop();
+            }
             return true;
         } else {
             // Cannot replay due to LRD, ignore...
-            fail_replays_.pop();
-            if (sort_method_ == ReplaySortMethod::BEST) {
-                // Actually can clear the queue, since all others > lrd
-                fail_replays_ = decltype(fail_replays_)();
+            if (force_replay) {
+                forced_replays_queue_.pop();
+            } else {
+                fail_replays_.pop();
+                if (sort_method_ == ReplaySortMethod::BEST) {
+                    // Actually can clear the queue, since all others > lrd
+                    fail_replays_ = decltype(fail_replays_)();
+                }
             }
         }
     }
@@ -303,7 +316,8 @@ bool Relaxator::ComputeCurrentVCAndRD(size_t sid, double &rd,
     return vc.empty() || rd <= lrd_.load(std::memory_order_relaxed);
 }
 
-void Relaxator::RegisterFail(size_t solver_id, RegisterHeuristic rh) {
+void Relaxator::RegisterFail(size_t solver_id, RegisterHeuristic rh,
+                             bool imm_fail) {
 	// Compute relaxation degree: first pass, determine violated constraints
     const SolverReplayInfo &solver_info = solver_info_[solver_id];
     RelaxatorStats &rel_stats = stats_[solver_info.GetStatsFrame()];
@@ -362,7 +376,7 @@ void Relaxator::RegisterFail(size_t solver_id, RegisterHeuristic rh) {
             rel_stats.total_fails_heur_retried_.fetch_add(1,
                     std::memory_order_relaxed);
             LOG4CXX_TRACE(logger, "Retrying the fail with the ALL heuristic");
-            RegisterFail(solver_id, RegisterHeuristic::ALL);
+            RegisterFail(solver_id, RegisterHeuristic::ALL, imm_fail);
         }
 	    return;
 	}
@@ -374,6 +388,7 @@ void Relaxator::RegisterFail(size_t solver_id, RegisterHeuristic rh) {
 	}
 	// Normalize relax degrees
     const size_t viol_const_num = replay.failed_const_.size();
+    assert(viol_const_num != 0);
 	replay.best_relax_degree_ = RelaxDistance(replay.best_relax_degree_,
 	        viol_const_num);
     replay.worst_relax_degree_ = RelaxDistance(replay.worst_relax_degree_,
@@ -390,7 +405,13 @@ void Relaxator::RegisterFail(size_t solver_id, RegisterHeuristic rh) {
 	{
 		std::lock_guard<std::mutex> lock{mtx_};
 		replay.timestamp_ = fail_stamp_++;
-		fail_replays_.push(std::move(replay));
+		if (force_replays_ && imm_fail) {
+		    // Immediate fail: force it as the next replay for this solver
+		    LOG4CXX_DEBUG(logger, "Force replay to the force_queue");
+		    forced_replays_queue_.push(std::move(replay));
+		} else {
+		    fail_replays_.push(std::move(replay));
+		}
 		rel_stats.total_fails_registered_++;
         UpdateTimeStats(rel_stats, reg_start_time, true);
 	}
@@ -553,7 +574,7 @@ FailCollectorMonitor::FailCollectorMonitor(Solver &solver,
 
 void FailCollectorMonitor::BeginFail() {
     if (!sl_solver_.LastFailCustom()) {
-        relaxator_.RegisterFail(solver_id_);
+        relaxator_.RegisterFail(solver_id_, !init_propagation_finished_);
     }
 }
 
