@@ -45,6 +45,8 @@ DEFINE_int64(high_tick, 50000000, "High tick for waveform records");
 DEFINE_int32(seq_size, 128, "Sequence size for waveform subsequences");
 DEFINE_int32(coeff, 8, "Number of PAA segments (coefficients)");
 DEFINE_string(mbr, "1000,200,100", "MBR sizes for transformed PAAs");
+DEFINE_string(host, "localhost", "SciDB host to connect");
+DEFINE_int32(port, 1239, "SciDB port to connect");
 
 using DataVector = std::vector<double>;
 
@@ -64,7 +66,7 @@ public:
                 array_(array),
                 attr_(attr) {
         std::cout << "Connecting to scidb...\n";
-        conn_= scidb_.connect();
+        conn_= scidb_.connect(FLAGS_host, FLAGS_port);
     }
 
     /**
@@ -80,6 +82,7 @@ public:
         // Length
         const size_t len = FLAGS_high_tick - FLAGS_low_tick + 1;
         std::cout << "Resizing data for " << len << " elements\n";
+        data.clear(); // Nullify the array
         data.resize(len);
         // Query to run (AFL)
         std::ostringstream query;
@@ -111,7 +114,8 @@ public:
             // Assume (id, tick)
             assert(pos[0] == id && pos[1] >= 0 &&
                    pos[1] - FLAGS_low_tick < data.size());
-            data[pos[1]] = scidb::ValueToDouble(attr_type, iter->getItem());
+            data[pos[1] - FLAGS_low_tick] =
+                    scidb::ValueToDouble(attr_type, iter->getItem());
             ++(*iter);
         }
         std::cout << "Finished reading waveform\n";
@@ -145,7 +149,7 @@ public:
         // Parse MBR params
         using TokenSeparator = boost::char_separator<char>;
         using Tokenizer = boost::tokenizer<TokenSeparator>;
-        TokenSeparator sep(",|"); // size_1xsize_2x...xsize_n
+        TokenSeparator sep(",|");
         Tokenizer tokenizer(FLAGS_mbr, sep);
         for (auto cit = tokenizer.begin(); cit != tokenizer.end(); ++cit) {
             const int mbr = std::stoi(*cit);
@@ -183,7 +187,7 @@ private:
     class MBRProcessor {
     public:
         // Construct a new processor.
-        MBRProcessor(size_t mbr_size, int id, DataVector &data,
+        MBRProcessor(size_t mbr_size, int id, const DataVector &data,
                      const File &file) :
                 mbr_size_(mbr_size),
                 id_(id),
@@ -254,7 +258,7 @@ private:
 
         const size_t mbr_size_;
         const int id_;
-        DataVector &data_;
+        const DataVector &data_;
         File file_;
         std::thread thr_;
     };
@@ -306,6 +310,9 @@ int main(int argc, char **argv) {
     if (FLAGS_seq_size % FLAGS_coeff != 0) {
         throw std::invalid_argument("Sequence size must be divisible by the "
                 "number of coefficients!");
+    }
+    if (FLAGS_port < 0 || FLAGS_port > 65535) {
+        throw std::invalid_argument("Port must be from 0 to 65535!");
     }
     if (argc < 3) {
         throw std::invalid_argument("Array or attribute are not specified!");
