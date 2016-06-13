@@ -114,8 +114,14 @@ public:
             // Assume (id, tick)
             assert(pos[0] == id && pos[1] >= 0 &&
                    pos[1] - FLAGS_low_tick < data.size());
-            data[pos[1] - FLAGS_low_tick] =
-                    scidb::ValueToDouble(attr_type, iter->getItem());
+            const scidb::Value &v = iter->getItem();
+            // Treat NULLs and NaNs as 0
+            if (!v.isNull()) {
+                const double d = scidb::ValueToDouble(attr_type, v);
+                if (!std::isnan(d)) {
+                    data[pos[1] - FLAGS_low_tick] = d;
+                }
+            }
             ++(*iter);
         }
         std::cout << "Finished reading waveform\n";
