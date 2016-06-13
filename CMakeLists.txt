@@ -21,6 +21,7 @@ find_package(Boost REQUIRED)    # we need only headers because of SciDb
 find_package(GFlags REQUIRED)   # needed by or-tools
 find_package(Coin REQUIRED)     # needed by or-tools
 find_package(FFTW REQUIRED)
+find_package(Threads REQUIRED)
 
 # includes and libraries
 include_directories(${SCIDB_INCLUDE_DIRS})

@@ -52,3 +52,9 @@ install(TARGETS searchlight_udo searchlight_udfs searchlight_sw
 add_executable(dft_sampler utils/dft_sampler.cpp)
 target_link_libraries(dft_sampler ${FFTW_LIBRARIES})
 set_target_properties(dft_sampler PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+add_executable(paa_sampler utils/paa_sampler.cpp)
+target_link_libraries(paa_sampler ${SCIDB_LIBRARIES})
+target_link_libraries(paa_sampler ${GFLAGS_LIBRARIES})
+target_link_libraries(paa_sampler ${CMAKE_THREAD_LIBS_INIT})
+set_target_properties(paa_sampler PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
