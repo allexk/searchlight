@@ -206,6 +206,15 @@ public:
         return features_num_;
     }
 
+    /**
+     * Return this synopsis type.
+     *
+     * @return this synopsis type
+     */
+    Type GetType() const {
+        return type_;
+    }
+
 private:
     /*
      * Memory required to store each cell.
@@ -441,6 +450,12 @@ private:
      */
     static void ComputeDFTs(const DoubleVector &seq, size_t ss_size,
     		size_t dft_num, DoubleVector &res);
+
+    /*
+     * Compute PAA for the specified sequence.
+     */
+    static void ComputePAA(const DoubleVector &seq, size_t ss_size,
+                           size_t feat_num, DoubleVector &res);
 
     // Synopses catalog (attr. name --> list of synopsis)
     std::unordered_map<std::string,std::vector<ArrayPtr>> array_synopses_;

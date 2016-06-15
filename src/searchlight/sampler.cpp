@@ -1098,6 +1098,27 @@ void Sampler::ComputeDFTs(const DoubleVector &seq, size_t ss_size,
 	fftw_free(out);
 }
 
+void Sampler::ComputePAA(const DoubleVector &seq, size_t ss_size,
+                         size_t feat_num, DoubleVector &res) {
+    assert(ss_size % feat_num);
+    assert(seq.size() >= ss_size);
+    const size_t win_size = ss_size / feat_num;
+    res.reserve(seq.size() / ss_size * feat_num);
+    for (size_t first = 0, last = first + ss_size - 1; last < seq.size();
+            first += ss_size, last += ss_size) {
+        for (size_t f = 0; f < feat_num; ++f) {
+            double avg = 0.0;
+            const size_t win_start = first + f * win_size;
+            const size_t win_end = win_start + win_size - 1;
+            for (size_t j = win_start; j <= win_end; ++j) {
+                avg += seq[j];
+            }
+            avg /= ss_size;
+            res.push_back(avg);
+        }
+    }
+}
+
 void Sampler::RegisterQuerySequence(AttributeID attr, size_t seq_id,
 		const DoubleVector &seq) {
     const auto ins = seq_cache_.emplace(seq_id,
@@ -1107,7 +1128,11 @@ void Sampler::RegisterQuerySequence(AttributeID attr, size_t seq_id,
 	for (const auto &seq_syn: synopses_[attr].seq_synopses_) {
 		const size_t ss_size = seq_syn->GetSubsequenceSize();
 		const size_t feat_num = seq_syn->GetFeaturesNum();
-		ComputeDFTs(seq, ss_size, feat_num, seq_info.sequence_[ss_size]);
+		if (seq_syn->GetType() == SeqSynopsis::Type::PAA) {
+		    ComputePAA(seq, ss_size, feat_num, seq_info.sequence_[ss_size]);
+		} else {
+		    ComputeDFTs(seq, ss_size, feat_num, seq_info.sequence_[ss_size]);
+		}
 	}
 }
 
