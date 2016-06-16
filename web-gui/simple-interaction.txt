@@ -1,0 +1,32 @@
+New query request:
+curl -v -H "Content-Type: application/json" -X POST -d '{"query":"SEARCHLIGHT({\"query\": {\"mimic.signal\":\"ABP\", \"mimic.len_l\":1000, \"mimic.len_u\":1000, \"mimic.avg_l\":10, \"mimic.avg_u\":50, \"mimic.l_time\":0, \"mimic.u_time\":23000000, \"mimic.step_time\":100, \"mimic.neighborhood.l_size\":1000, \"mimic.neighborhood.r_size\":1000, \"mimic.neighborhood.left_max_diff\":10, \"mimic.neighborhood.right_max_diff\":10}})"}
+
+The server returns the query id and the URL to interact with the results (next, cancel query). The result URL might not be accessible from the user host. It is supposed to be used with the BigDawg relay mechanism:
+{"status":"ok","result_url":"http:\/\/localhost:5000","query_id":"2"}
+
+------------------------------
+
+Then the user can make further requests to get the next result:
+curl -v -H "Content-Type: application/json" -X POST -d '{"query": null,"query_id":"2", "RelayURL":"http://localhost:5000/result"}' http://localhost:5000/bigdawg/from
+
+A possible result is:
+{"eof": false, "result": {"id": 0, "len": 1000, "time": 498200}, "status": "ok"}
+
+-----------------------------
+
+The query can be canceled:
+curl -v -H "Content-Type: application/json" -X POST -d '{"query": null,"query_id":"2", "RelayURL":"http://localhost:5000/cancel"}' http://localhost:5000/bigdawg/from
+
+The response should be: {"status": "ok"}. The user, however, must make another /result request to confirm:
+curl -v -H "Content-Type: application/json" -X POST -d '{"query": null,"query_id":"2", "RelayURL":"http://localhost:5000/cancel"}' http://localhost:5000/bigdawg/from
+
+The result should be:
+{"eof": true}
+
+------------------------
+
+Additionally, the user can ask for the waveform data to visualize a result:
+curl -v -H "Content-Type: application/json" -X POST -d '{"query":{"signal":"ABP","id":7,"time":11539900,"len":1000},"query_id":"2","RelayURL":"http://localhost:5000/waveform"}' http://localhost:5000/bigdawg/from
+
+The result should be:
+{"status": "ok", "waveform": [<array of y coordinates>]}
