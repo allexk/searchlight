@@ -613,6 +613,7 @@ IntervalValue SeqSynopsis::SqDist(const Coordinates &low,
                         valid_cell = true;
                     }
                 }
+                ++it;
             }
             if (!valid_cell) {
                 // Only empty cells for the subsequence or NaN
