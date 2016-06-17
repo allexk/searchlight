@@ -1132,7 +1132,7 @@ void Sampler::ComputeDFTs(const DoubleVector &seq, size_t ss_size,
 
 void Sampler::ComputePAA(const DoubleVector &seq, size_t ss_size,
                          size_t feat_num, DoubleVector &res) {
-    assert(ss_size % feat_num);
+    assert(ss_size % feat_num == 0);
     assert(seq.size() >= ss_size);
     const size_t win_size = ss_size / feat_num;
     res.reserve(seq.size() / ss_size * feat_num);
