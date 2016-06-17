@@ -508,6 +508,20 @@ SeqSynopsis::SeqSynopsis(const ArrayDesc &data_desc,
     // The remaining parameters are derived from the descriptor
     mbr_size_ = cell_size_.back();
     features_num_ = synopsis_desc.getDimensions().back().getLength();
+    // Correct cell_nums_ for the MBR dimension (-2 since the last is "coord")
+    const size_t mbr_dim_index = synopsis_desc.getDimensions().size() - 2;
+    const DimensionDesc &mbr_dim = synopsis_desc.getDimensions()[mbr_dim_index];
+    const size_t mbr_dim_len = (synopsis_end_[mbr_dim_index] - subseq_size_ + 1)
+            - synopsis_origin_[mbr_dim_index] + 1;
+    cell_nums_[mbr_dim_index] = (mbr_dim_len - 1) / mbr_size_ + 1;
+    if (mbr_dim.getCurrEnd() + 1 < cell_nums_[mbr_dim_index]) { // StartMin() == 0
+        std::ostringstream err_msg;
+        err_msg << "Synopsis must have at least "
+                << cell_nums_[mbr_dim_index] << " cells"
+                << " in the dimension " << mbr_dim.getBaseName();
+        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
+    }
 
     // Check if we have the required attributes
     if (!attributes_.count("low") || !attributes_.count("high")) {
@@ -651,8 +665,25 @@ IntervalValue SeqSynopsis::SqDist(const Coordinates &low,
 }
 
 AggSynopsis::AggSynopsis(const ArrayDesc &data_desc,
-        const ArrayPtr &array) :
+                         const ArrayPtr &array) :
         Base{data_desc, array, array->getArrayDesc().getDimensions().size()} {
+    /*
+     * Additional check on the number of cells.
+     */
+    const ArrayDesc &synopsis_desc = array->getArrayDesc();
+    const size_t dims = synopsis_desc.getDimensions().size();
+    for (size_t i = 0; i < dims; ++i) {
+        const DimensionDesc &syn_dim = synopsis_desc.getDimensions()[i];
+        if (syn_dim.getCurrEnd() + 1 < cell_nums_[i]) { // StartMin() == 0
+            std::ostringstream err_msg;
+            err_msg << "Synopsis must have at least "
+                    << cell_nums_[i] << " cells"
+                    << " in the dimension " << syn_dim.getBaseName();
+            throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+                    SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
+        }
+    }
+
     /*
      * Check if we have the required attributes.
      */

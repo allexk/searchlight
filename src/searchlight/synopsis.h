@@ -376,14 +376,6 @@ public:
                         SCIDB_LE_ILLEGAL_OPERATION)
                         << "Synopsis coordinates must start from 0";
             }
-            if (syn_dim.getCurrEnd() + 1 < cell_nums_[i]) { // StartMin() == 0
-                std::ostringstream err_msg;
-                err_msg << "Synopsis must have at least "
-                        << cell_nums_[i] << "cells"
-                        << " in the dimension " << syn_dim.getBaseName();
-                throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
-                        SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
-            }
             // Synopsis chunks info
             chunk_sizes_[i] = syn_dim.getChunkInterval();
             chunk_nums_[i] = syn_dim.getCurrEnd() / chunk_sizes_[i] + 1;
