@@ -271,20 +271,19 @@ bool SqDistFuncExpr::CheckSupport(const std::vector<ParameterVar> &vars) const {
     if (!state_.min_max_init_) {
         return false;
     }
-
     /*
      * The support is valid if the variable intervals are the same.
      *
      * Strictly speaking this is not true, since the domains might have changed.
      * For example, the heuristic might have removed a value from the middle.
-     * Min value is still value in this case, though, but possibly not as tight
+     * Min value is still valid in this case, though, but possibly not as tight
      * as it could be.
      */
     for (size_t i = 0; i < dims_; i++) {
-    	if (Coordinate(vars[i].Min()) != state_.min_support_low_[i] ||
-    			Coordinate(vars[i].Max()) != state_.min_support_high_[i]) {
-    		return false;
-    	}
+        if (Coordinate(vars[i].Min()) > state_.min_support_low_[i] ||
+                Coordinate(vars[i].Max()) < state_.min_support_high_[i]) {
+            return false;
+        }
     }
     return true;
 }
