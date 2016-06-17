@@ -293,7 +293,7 @@ public:
      * @return true, if points to end; false, otherwise
      */
     bool end() const {
-        return valid_;
+        return !valid_;
     }
 
     /**
