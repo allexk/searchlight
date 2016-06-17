@@ -1145,7 +1145,7 @@ void Sampler::ComputePAA(const DoubleVector &seq, size_t ss_size,
             for (size_t j = win_start; j <= win_end; ++j) {
                 avg += seq[j];
             }
-            avg /= ss_size;
+            avg /= win_size;
             res.push_back(avg);
         }
     }
