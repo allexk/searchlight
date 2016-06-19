@@ -1176,6 +1176,7 @@ void ValidatorQueue::FillInRebalanceTransfer(size_t cands,
                 forwards.push_back(std::move(ca));
                 forwards_zones.push_back(zone);
             }
+            zone_cands.pop();
             --cands;
         }
         if (!cands) break;
