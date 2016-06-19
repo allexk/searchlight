@@ -881,7 +881,7 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
     // Set cache type and preload aggregate synopses
     if (!attribute_synopses.agg_synopses_.empty()) {
 		const size_t memory_limit_mb =
-				sl_config_.get("searchlight.sampler.memory_per_attr", 1024);
+		        sl_config_.get("searchlight.sampler.memory_per_attr", 0UL);
     	PrepareSynopses(attribute_synopses.agg_synopses_, cache_type,
     	        preload_syns, memory_limit_mb, attr_name, attr_search_id);
     }
@@ -889,7 +889,7 @@ void Sampler::LoadSampleForAttribute(const std::string &attr_name,
     // Set cache type and preload for DFT synopses
     if (!attribute_synopses.seq_synopses_.empty()) {
 		const size_t memory_limit_mb =
-				sl_config_.get("searchlight.sampler.memory_per_attr_dft", 1024);
+				sl_config_.get("searchlight.sampler.memory_per_attr_seq", 0UL);
     	PrepareSynopses(attribute_synopses.seq_synopses_, cache_type,
     	        preload_syns, memory_limit_mb, attr_name, attr_search_id);
     }

@@ -403,10 +403,12 @@ private:
         });
 
         // Then set cache type and preload
+        LOG4CXX_INFO(logger_, "Caching synopses with memory limit " <<
+                     mem_limit << "MB");
         for (size_t i = 0; i < synopses.size(); ++i) {
             const auto &syn = synopses[i];
             const size_t syn_mem_mb = syn->MemorySize() / 1024 / 1024; // in MB
-            if (syn_mem_mb <= mem_limit) {
+            if (!mem_limit || syn_mem_mb <= mem_limit) {
                 if (syn->GetCachingType() == CachingType::NONE) {
                     // Cache the synopsis
                     syn->SetCacheType(cache_type);
@@ -414,9 +416,17 @@ private:
                     if (preload) {
                         syn->Preload();
                     }
+                } else {
+                    LOG4CXX_WARN(logger_, "Synopsis " << syn->GetName() <<
+                            " has already been cached. Skipping.");
                 }
-                mem_limit -= syn_mem_mb;
+                if (mem_limit) {
+                    mem_limit -= syn_mem_mb;
+                }
             } else {
+                LOG4CXX_WARN(logger_, "Cannot cache synopsis " <<
+                        syn->GetName() << ". Memory is exhausted: left=" <<
+                        mem_limit << "MB");
                 break;
             }
         }
