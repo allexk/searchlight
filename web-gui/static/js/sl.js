@@ -67,8 +67,8 @@ $.searchlight.sl_next_result = function sl_next_result() {
                 $.searchlight.sl_in_query(false);
             } else {
                 var result = data["result"];
-                $("#records").DataTable().row.add([result["id"], result["time"],
-                    result["len"]]).draw();
+                $("#records").DataTable().row.add([result["sid"], result["id"], result["pretty_time"],
+                                                  result["time"], result["len"]]).draw();
                 sl_next_result();
             }
         },
@@ -114,8 +114,27 @@ $.searchlight.sl_display_waveform = function sl_display_waveform(
 
 // $(document).ready
 $(function() {
-    // Prepare table
-    var records_table = $("#records").DataTable();
+    // Prepare table (hide tick and record columns, which are used only for waveform retrieval)
+    var records_table = $("#records").DataTable({
+        "columnDefs": [
+        {
+            "targets": [4],
+            "render": function(data, type, row) {
+                return data / 125; // Convert from ticks to seconds
+            }
+        },
+        {
+            "targets": [1],
+            "visible": false,
+            "searchable": false
+        },
+        {
+            "targets": [3],
+            "visible": false,
+            "searchable": false
+        }
+        ]
+    });
 
     // Toggle neighborhood elements
     $("#neighborhood").click(function() {
@@ -133,8 +152,8 @@ $(function() {
     // Table result click --- draw the waveform
     $("#records tbody").on("click", "tr", function() {
         var record = records_table.row(this).data();
-        var waveform_params = {"signal": $("#signal").val(), "id": record[0],
-                               "time": record[1], "len": record[2]};
+        var waveform_params = {"signal": $("#signal").val(), "id": record[1],
+                               "time": record[3], "len": record[4]};
         $.searchlight.sl_get_waveform(waveform_params);
     });
 
