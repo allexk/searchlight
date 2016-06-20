@@ -1,7 +1,7 @@
 {
     "searchlight": {
         "sl": {
-            "max_probes": 50,
+            "max_probes": 10,
             "probes_percentage": 0.1,
             "splits": 100,
             "probe_submit": 0,
@@ -22,18 +22,19 @@
         "validator": {
             "max_validations": 1000000,
             "restart_period": 1024,
-            "send_info_period": 1000,
+            "send_info_period": 100,
             "max_helpers": 0,
-            "helper_workload": 100,
+            "helper_workload": 10,
             "zones": 2,
-            "low_watermark": 500,
-            "high_watermark": 1000,
-            "rebal_watermark": 10000
+            "low_watermark": 200,
+            "high_watermark": 400,
+            "rebal_watermark": 1000,
+            "sort": "rd"
         },
 
         "sampler": {
             "preload": 0,
-            "memory_per_attr": 50000,
+            "memory_per_attr": 0,
             "cell_thr": 0.75,
             "mbr_thr": 0.75,
             "cell_limit": 1000,
@@ -48,7 +49,7 @@
         "solver_balance": 1,
         "validator_balance": "stripes",
         "map_update_frequency": 0,
-        "general_low": 0.1,
+        "general_low": 0.05,
         "general_high": 0.5,
         "slices_number": 100,
         "load_slices": 1
@@ -61,18 +62,24 @@
 
     "relax": {
         "on": 0,
-        "card": 1
+        "card": 10,
+        "heur": "replay",
+        "replay": "viol",
+        "replay_rd": 0.3,
+        "sort": "best",
+        "save_udfs": 1,
+        "spec": 0
     },
 
     "mimic": {
         "l_id": 0,
-        "u_id": 7,
+        "u_id": 99,
         "l_time": 0,
-        "u_time": 23000000,
+        "u_time": 50000000,
         "avg_l": 10,
-        "avg_relax_l": 10,
+        "avg_relax_l": 0,
         "avg_u": 50,
-        "avg_relax_u": 50,
+        "avg_relax_u": 500,
         "len_l": 1000,
         "len_u": 1000,
         "step_len": 100,
@@ -83,11 +90,13 @@
         "neighborhood": {
             "l_size": 1000,
             "r_size": 1000,
-            "left_max_diff": 10,
-            "right_max_diff": 10
+            "left_max_diff": 500,
+            "left_relax_diff": 10,
+            "right_max_diff": 500,
+            "right_relax_diff": 10
         },
 
-        "db": "sl",
+        "db": "split",
         "time_limit": 3600
     }
 }
