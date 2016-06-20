@@ -17,6 +17,10 @@ $.searchlight = new Object();
 $.searchlight.query_id = null;
 // Searchlight URL
 $.searchlight.SL_URL = "http://hades:5000";
+// Last displayed waveform
+$.searchlight.last_wave = null;
+// Waveform selection
+$.searchlight.last_select = null;
 
 // Resets state depending on the query status
 $.searchlight.sl_in_query = function sl_in_query(state) {
@@ -106,9 +110,11 @@ $.searchlight.sl_display_waveform = function sl_display_waveform(
     for (var i = 0; i < data.length; i++) {
         plot_data.push([i, data[i]]);
     }
+    $.searchlight.last_wave = plot_data;
     $.plot("#waveform-chart", [{label: plot_label, data: plot_data}], {
         yaxis: {show: false},
-        grid: {borderColor: '#ccc'}
+        grid: {borderColor: '#ccc'},
+        selection: {mode: "x"}
     });
 };
 
@@ -155,6 +161,19 @@ $(function() {
         var waveform_params = {"signal": $("#signal").val(), "id": record[1],
                                "time": record[3], "len": record[4]};
         $.searchlight.sl_get_waveform(waveform_params);
+    });
+
+    // Waveform select event
+    $("#waveform-chart").on("plotselected", function (event, ranges) {
+        var li = Math.floor(ranges.xaxis.from);
+        var ri = Math.ceil(ranges.xaxis.to);
+        $.searchlight.last_select = [li, ri];
+        alert("Selected: from=" + li + ", to=" + ri);
+    });
+
+    // Waveform unselect
+    $("#waveform-chart").on("plotunselected", function (event) {
+        $.searchlight.last_select = null;
     });
 
     // Submit: create JSON and send to server
