@@ -21,6 +21,8 @@ $.searchlight.SL_URL = "http://hades:5000";
 $.searchlight.last_wave = null;
 // Waveform selection
 $.searchlight.last_select = null;
+// Current query type
+$.searchlight.current_query = "avg";
 
 // Resets state depending on the query status
 $.searchlight.sl_in_query = function sl_in_query(state) {
@@ -30,6 +32,22 @@ $.searchlight.sl_in_query = function sl_in_query(state) {
     if (state) {
         $.searchlight.query_id = null;
     }
+};
+
+// Switches query controls
+$.searchlight.switch_query_controls = function switch_query_controls() {
+    var to_show, to_hide;
+    if ($.searchlight.current_query === "avg") {
+        $.searchlight.current_query = "sim";
+        to_show = $(".mimic-sim");
+        to_hide = $(".mimic-avg");
+    } else {
+        $.searchlight.current_query = "avg";
+        to_show = $(".mimic-avg");
+        to_hide = $(".mimic-sim");
+    }
+    to_show.each(function (i, o) {$(o).show();});
+    to_hide.each(function (i, o) {$(o).hide();});
 };
 
 // Create JSON for a SL request
@@ -120,6 +138,9 @@ $.searchlight.sl_display_waveform = function sl_display_waveform(
 
 // $(document).ready
 $(function() {
+    // Hide similarity controls
+    $(".mimic-sim").each(function (i, o) {$(o).hide();});
+
     // Prepare table (hide tick and record columns, which are used only for waveform retrieval)
     var records_table = $("#records").DataTable({
         "columnDefs": [
@@ -175,6 +196,9 @@ $(function() {
     $("#waveform-chart").on("plotunselected", function (event) {
         $.searchlight.last_select = null;
     });
+
+    // Switch queries
+    $("#switch_query").click(function() {$.searchlight.switch_query_controls();});
 
     // Submit: create JSON and send to server
     $("form").submit(function(event) {

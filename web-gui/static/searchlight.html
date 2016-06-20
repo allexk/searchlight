@@ -40,11 +40,12 @@
     <div class="col-sm-2">
     <div class="container-fluid">
     <form class="form-horizontal" role="form">
+        <!-- Data -->
         <div class="panel panel-info">
-            <div class="panel-heading">Query Parameters</div>
-            <div class="panel-body">
+            <div class="panel-heading" role="button" data-toggle="collapse" data-target="#data-params">Data</div>
+            <div class="panel-body collapse" id="data-params">
                 <div class="form-group">
-                    <label class="control-label col-sm-4" for="query">Query:</label>
+                    <label class="control-label col-sm-4" for="query">DB:</label>
                     <div class="col-sm-8">
                         <select class="form-control" id="query">
                             <option value="mimic">mimic</option>
@@ -59,44 +60,58 @@
                         </select>
                     </div>
                 </div>
-                <div class="form-group">
-                    <label class="control-label col-sm-4" for="len_l">Length:</label>
-                    <div class="col-sm-8">
-                        <input type="number" class="form-control" id="len_l" name="mimic.len_l" value="1000"/>
-                        <input type="number" class="form-control" id="len_u" name="mimic.len_u" value="1000"/>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label class="control-label col-sm-4" for="avg_l">Average:</label>
-                    <div class="col-sm-8">
-                        <input type="number" class="form-control" id="avg_l" name="mimic.avg_l" value="10"/>
-                        <input type="number" class="form-control" id="avg_u" name="mimic.avg_u" value="50"/>
-                    </div>
-                </div>
             </div>
         </div>
+        <!-- Search area -->
         <div class="panel panel-info">
-            <div class="panel-heading">Search Parameters</div>
-            <div class="panel-body">
+            <div class="panel-heading" role="button" data-toggle="collapse" data-target="#area-params">Search Area</div>
+            <div class="panel-body collapse" id="area-params">
                 <div class="form-group">
-                    <label class="control-label col-sm-4" for="l_time">Interval:</label>
+                    <label class="control-label col-sm-4" for="l_id">IDs:</label>
                     <div class="col-sm-8">
-                        <input type="number" class="form-control" id="l_time" name="mimic.l_time" value="0"/>
-                        <input type="number" class="form-control" id="u_time" name="mimic.u_time" value="23000000"/>
+                        <input type="number" class="form-control" id="l_id" name="mimic.l_id" value="0"/>
+                        <input type="number" class="form-control" id="u_id" name="mimic.u_id" value="99"/>
                     </div>
                 </div>
                 <div class="form-group">
-                    <label class="control-label col-sm-6" for="sres">Resolution (ms):</label>
+                    <label class="control-label col-sm-4" for="l_time">Time (ticks):</label>
+                    <div class="col-sm-8">
+                        <input type="number" class="form-control" id="l_time" name="mimic.l_time" value="0"/>
+                        <input type="number" class="form-control" id="u_time" name="mimic.u_time" value="50000000"/>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-sm-6" for="sres">Resolution (ticks):</label>
                     <div class="col-sm-6">
                         <input type="number" class="form-control" id="sres" name="mimic.step_time" value="10"/>
                     </div>
                 </div>
             </div>
         </div>
+        <!-- Query params -->
+        <div class="panel panel-info mimic-avg">
+            <div class="panel-heading" role="button" data-toggle="collapse" data-target="#query-params">Query Parameters</div>
+            <div class="panel-body collapse in" id="query-params">
+                <div class="form-group">
+                    <label class="control-label col-sm-4" for="len_l">Length:</label>
+                    <div class="col-sm-8">
+                        <input type="number" class="form-control" id="len_l" name="mimic.len_l" value="500"/>
+                        <input type="number" class="form-control" id="len_u" name="mimic.len_u" value="500"/>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-sm-4" for="avg_l">Average:</label>
+                    <div class="col-sm-8">
+                        <input type="number" class="form-control" id="avg_l" name="mimic.avg_l" value="10"/>
+                        <input type="number" class="form-control" id="avg_u" name="mimic.avg_u" value="200"/>
+                    </div>
+                </div>
+            </div>
+        </div>
         <!-- Neigborhood -->
-        <div class="panel panel-info">
-            <div class="panel-heading">Neighborhood Parameters</div>
-            <div class="panel-body">
+        <div class="panel panel-info mimic-avg">
+            <div class="panel-heading" role="button" data-toggle="collapse" data-target="#neigh-params">Neighborhood Parameters</div>
+            <div class="panel-body collapse in" id="neigh-params">
                 <div class="form-group">
                     <div class="col-sm-offset-2 col-sm-10">
                             <div class="checkbox">
@@ -110,13 +125,13 @@
                 <div class="form-group">
                     <label class="control-label col-sm-6" for="l_n_size">Left size:</label>
                     <div class="col-sm-6">
-                        <input type="number" class="form-control neighb" id="l_n_size" name="mimic.neighborhood.l_size" value="1000"/>
+                        <input type="number" class="form-control neighb" id="l_n_size" name="mimic.neighborhood.l_size" value="500"/>
                     </div>
                 </div>
                 <div class="form-group">
                     <label class="control-label col-sm-6" for="r_n_size">Right size:</label>
                     <div class="col-sm-6">
-                        <input type="number" class="form-control neighb" id="r_n_size" name="mimic.neighborhood.r_size" value="1000"/>
+                        <input type="number" class="form-control neighb" id="r_n_size" name="mimic.neighborhood.r_size" value="500"/>
                     </div>
                 </div>
                 <div class="form-group">
@@ -133,6 +148,26 @@
                 </div>
             </div>
         </div>
+        <!-- Similarity params -->
+        <div class="panel panel-info mimic-sim">
+            <div class="panel-heading" role="button" data-toggle="collapse" data-target="#sim-params">Similarity</div>
+            <div class="panel-body collapse in" id="sim-params">
+                <div class="form-group">
+                    <label class="control-label col-sm-4" for="wave_li">Waveform interval:</label>
+                    <div class="col-sm-8">
+                        <input type="number" class="form-control" id="wave_li" value="0"/>
+                        <input type="number" class="form-control" id="wave_ui" value="0"/>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="control-label col-sm-4" for="dist">Distance:</label>
+                    <div class="col-sm-8">
+                        <input type="number" class="form-control" id="dist" name="mimic.dist" value="100"/>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- Submit button -->
         <div class="form-group">
             <div class="col-sm-12">
                 <button type="submit" class="btn btn-default btn-block" id="start_query">Query</button>
@@ -140,6 +175,7 @@
         </div>
     </form>
     <button class="btn btn-default btn-block" id="cancel_query" disabled="">Cancel</button>
+    <button class="btn btn-default btn-block" id="switch_query">Switch</button>
     </div>
     </div>
     <!-- Results table -->
