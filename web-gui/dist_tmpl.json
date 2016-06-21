@@ -1,0 +1,90 @@
+{
+    "searchlight": {
+        "sl": {
+            "max_probes": 10,
+            "probes_percentage": 0.1,
+            "splits": 100,
+            "probe_submit": 0,
+            "interval_penalty": 0.5,
+
+            "time_strategy": "fin",
+            "time_interval": 300,
+            "restarts": 0,
+
+            "luby_scale": 0,
+
+            "fails_restart_probes": 1000,
+            "fails_restart_thr": -1,
+
+            "val_sync": 0
+        },
+
+        "validator": {
+            "max_validations": 1000000,
+            "restart_period": 1024,
+            "send_info_period": 100,
+            "max_helpers": 0,
+            "helper_workload": 10,
+            "zones": 1,
+            "low_watermark": 100,
+            "high_watermark": 200,
+            "rebal_watermark": 1000,
+            "sort": "sort"
+        },
+
+        "sampler": {
+            "preload": 0,
+            "cache": "lazy",
+            "memory_per_attr": 0,
+            "memory_per_attr_seq": 0,
+            "cell_thr": 0.75,
+            "mbr_thr": 0.75,
+            "cell_limit": 1000
+        },
+
+        "load_aux_samples": 0,
+        "dynamic_scheduling": 1
+    },
+
+    "balance": {
+        "solver_balance": 1,
+        "validator_balance": "stripes",
+        "map_update_frequency": 0,
+        "general_low": 0.05,
+        "general_high": 0.5,
+        "slices_number": 100,
+        "load_slices": 1
+    },
+
+    "setup": {
+        "solvers": {"0": 2, "1": 2, "2": 2, "3": 2},
+        "validators": [0, 1, 2, 3]
+    },
+
+     "relax": {
+            "on": 0,
+            "heur": "guess",
+            "card": 10,
+            "replay": "viol",
+            "sort": "best",
+            "save_udfs": 1,
+            "replay_rd": 1.0,
+            "spec": 1
+        },
+
+        "dist": {
+            "l_id": 0,
+            "u_id": 99,
+            "l_time": 0,
+            "u_time": 50000000,
+            "dist": 100,
+            "dist_relax": 200,
+            "query": "fill-in",
+            "step_time": 10,
+
+            "signal": "ABP",
+
+            "db": "split",
+            "time_limit": 3600
+        }
+}
