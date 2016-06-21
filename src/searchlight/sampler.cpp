@@ -514,14 +514,19 @@ SeqSynopsis::SeqSynopsis(const ArrayDesc &data_desc,
     const size_t mbr_dim_len = (synopsis_end_[mbr_dim_index] - subseq_size_ + 1)
             - synopsis_origin_[mbr_dim_index] + 1;
     cell_nums_[mbr_dim_index] = (mbr_dim_len - 1) / mbr_size_ + 1;
-    if (mbr_dim.getCurrEnd() + 1 < cell_nums_[mbr_dim_index]) { // StartMin() == 0
-        std::ostringstream err_msg;
-        err_msg << "Synopsis must have at least "
-                << cell_nums_[mbr_dim_index] << " cells"
-                << " in the dimension " << mbr_dim.getBaseName();
-        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
-                SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
-    }
+    /*
+     * Turning off this check temporarily (?) since synopsis might cover only
+     * a part of the original array. This is perfectly legal, but might get
+     * the user into trouble, if she doesn't know this...
+     */
+//    if (mbr_dim.getCurrEnd() + 1 < cell_nums_[mbr_dim_index]) { // StartMin() == 0
+//        std::ostringstream err_msg;
+//        err_msg << "Synopsis must have at least "
+//                << cell_nums_[mbr_dim_index] << " cells"
+//                << " in the dimension " << mbr_dim.getBaseName();
+//        throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR,
+//                SCIDB_LE_ILLEGAL_OPERATION) << err_msg.str();
+//    }
 
     // Check if we have the required attributes
     if (!attributes_.count("low") || !attributes_.count("high")) {
