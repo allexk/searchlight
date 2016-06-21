@@ -11,10 +11,10 @@ import shutil
 import threading
 import subprocess
 
-# Hackish way to use pickled mimic index
+# Hackish way to use pickled mimic index ("unused" imports are needed for unpickling!)
 from mimic import MIMICWaveformData, Patient, PatientRecord
 import mimic_index
-MIMIC_CACHE=mimic_index.MIMICIndex("mimic.cache")
+MIMIC_CACHE = mimic_index.MIMICIndex("mimic.cache")
 
 # Flask application
 import flask
@@ -43,10 +43,17 @@ del logger_stream_handler
 # http_client.HTTPConnection.debuglevel = 1
 
 # Some default params (TODO: put them as params)
-SYNOPSIS_RESOLUTIONS = ['1x1000', '1x100']
 TASK_ARRAY = "mimic"
-TASK_LIB = 'searchlight_mimic'
-TASK_FUN = 'MimicAvg'
+SIM_SYNOPSIS_PREFIX = "paa_128"
+
+AVG_SYNOPSIS_RESOLUTIONS = ['1x1000', '1x100']
+SIM_SYNOPSIS_RESOLUTIONS = ['1x200']
+
+AVG_TASK_LIB = 'searchlight_mimic'
+SIM_TASK_LIB = 'searchlight_dist'
+
+AVG_TASK_FUN = 'MimicAvg'
+SIM_TASK_FUN = 'Dist'
 
 
 class SearchlightError(RuntimeError):
@@ -106,6 +113,28 @@ class SciDBQueryOnline(SciDBConnectionConfig):
                                    'task_params_file': task_params_file
                                    }
 
+    def upload_file(self, filename):
+        self.logger.info('Uploading file %s to all nodes...' % filename)
+        if self.shared_dir:
+            # copy locally
+            shutil.copy(filename, self.shared_dir)
+            # and remotely
+            if len(self.shared_nodes):
+                scp_args = ['scp', filename]
+                for node in self.shared_nodes:
+                    self.logger.info("copying file to '%s'..." % node)
+                    print subprocess.check_output(scp_args + ['%s:%s' % (node, self.shared_dir)],
+                                                  stderr=subprocess.STDOUT)
+            new_filename = os.path.join(self.shared_dir, os.path.basename(filename))
+        else:
+            self.logger.info('connecting to %s:%d' % (self.host, self.http_port))
+            # We need to connect only if we need to upload files via HTTP
+            self.scidb.connect()
+            # remote copy (curl via scidb shim)
+            new_filename = self.scidb.upload(filename)
+        self.logger.info('upload finished: ' + new_filename)
+        return new_filename
+
     def start_query(self):
         if not self.scidb_query_params:
             self.logger.error('run_query() is called before prepare_query()')
@@ -114,26 +143,7 @@ class SciDBQueryOnline(SciDBConnectionConfig):
         try:
             # upload the query file
             task_params_file = self.scidb_query_params['task_params_file']
-            self.logger.info('uploading task file ' + task_params_file)
-            if self.shared_dir:
-                # copy locally
-                shutil.copy(task_params_file, self.shared_dir)
-                # and remotely
-                if len(self.shared_nodes):
-                    scp_args = ['scp', task_params_file]
-                    for node in self.shared_nodes:
-                        print "copying task file to '%s'..." % node
-                        print subprocess.check_output(scp_args + ['%s:%s' % (node, self.shared_dir)], stderr=subprocess.STDOUT)
-                scidb_task_file = os.path.join(self.shared_dir,
-                                               os.path.basename(
-                                                   task_params_file))
-            else:
-                self.logger.info('connecting to %s:%d' % (self.host, self.http_port))
-                # We need to connect only if we need to upload files via HTTP
-                self.scidb.connect()
-                # remote copy (curl via scidb shim)
-                scidb_task_file = self.scidb.upload(task_params_file)
-            self.logger.info('upload finished: ' + scidb_task_file)
+            scidb_task_file = self.upload_file(task_params_file)
             # create the query
             sample_arrays_str = ', '.join(
                 ['depart(%s)' % x
@@ -338,6 +348,10 @@ class QueryJSONParamsHandler(object):
                       separators=(',', ': '))
         return name
 
+    def __str__(self):
+        """String representation."""
+        return str(self.query_json)
+
 
 class SciDBWaveformQuery(SciDBConnectionConfig):
     def __init__(self, config_path):
@@ -438,7 +452,15 @@ def parse_json_request(request):
     except KeyError:
         # No query_id field or null
         query_id = None
-    return query_id, query_json
+    # and aux_data
+    try:
+        query_data = data_json["aux_data"]
+        if query_data:
+            logger.info("Got aux_data of length %d" % len(query_data))
+    except KeyError:
+        # No aux data for the query or null
+        query_data = None
+    return query_id, query_json, query_data
 
 
 def json_try_int(js):
@@ -449,6 +471,18 @@ def json_try_int(js):
             js[key] = val_i
         except ValueError:
             pass
+
+
+def json_transform(js, keep_keys, prefix_rename):
+    """Go through the JSON, keep some keys and rename prefixes"""
+    new_js = {}
+    for key in js.keys():
+        if keep_keys is None or key in keep_keys:
+            new_key = key
+            if prefix_rename is not None and key.startswith(prefix_rename[0]):
+                new_key = key.replace(prefix_rename[0], prefix_rename[1], 1)
+            new_js[new_key] = js[key]
+    return new_js
 
 
 @app.errorhandler(SearchlightError)
@@ -493,11 +527,54 @@ def start_query():
     sl_query = SciDBQueryOnline("config.ini")
     synopsis_arrays = ['_'.join([TASK_ARRAY,
                                  query_handler.get_param("mimic.signal"),
-                                 syn_res]) for syn_res in SYNOPSIS_RESOLUTIONS]
-    sl_query.prepare_query(TASK_ARRAY, synopsis_arrays, TASK_LIB, TASK_FUN,
+                                 syn_res]) for syn_res in AVG_SYNOPSIS_RESOLUTIONS]
+    sl_query.prepare_query(TASK_ARRAY, synopsis_arrays, AVG_TASK_LIB, AVG_TASK_FUN,
                            query_file)
     sl_query.start_query()
 
+    # response
+    if not sl_query.error:
+        query_id = global_query_handler.set_query(sl_query)
+        return flask.jsonify({"status": "ok", "query_id": query_id})
+    else:
+        raise SearchlightError("Exception when running the query")
+
+
+@app.route("/sim", methods=['POST'])
+def start_sim_query():
+    # parse JSON request
+    _, query_json, query_data = parse_json_request(flask.request)
+    if query_json is None or query_data is None:
+        raise SearchlightError("Invalid sim request")
+    # transform for the dist query
+    dist_keys = {"mimic.l_id", "mimic.u_id", "mimic.l_time", "mimic.u_time", "mimic.dist", "mimic.step_time",
+                 "mimic.signal"}
+    query_json = json_transform(query_json, dist_keys, ("mimic.", "dist."))
+    logger.debug("Transformed query: %s" % str(query_json))
+    # create SciDB query
+    sl_query = SciDBQueryOnline("config.ini")
+    # upload the sequence
+    (data_fd, data_name) = tempfile.mkstemp(dir="tmp")
+    os.fchmod(data_fd, stat.S_IRUSR | stat.S_IWUSR | stat.S_IROTH)
+    with os.fdopen(data_fd, 'wb') as f:
+        f.write(str(len(query_data)))
+        for x in query_data:
+            f.write(" %f" % x)
+    query_json["dist.query"] = sl_query.upload_file(data_name)
+    # prepare query
+    with open("dist_tmpl.json", "rb") as f:
+        query_handler = QueryJSONParamsHandler(f)
+    query_handler.set_params(query_json)
+    query_file = query_handler.dump_to_temp()
+    logger.debug("Final query: %s" % str(query_handler))
+    # create SciDB query
+    synopsis_arrays = ['_'.join([SIM_SYNOPSIS_PREFIX, TASK_ARRAY,
+                                 query_handler.get_param("dist.signal"),
+                                 syn_res]) for syn_res in SIM_SYNOPSIS_RESOLUTIONS]
+    logger.debug("Synopsis arrays will use: %s" % str(synopsis_arrays))
+    sl_query.prepare_query(TASK_ARRAY, synopsis_arrays, SIM_TASK_LIB, SIM_TASK_FUN,
+                           query_file)
+    sl_query.start_query()
     # response
     if not sl_query.error:
         query_id = global_query_handler.set_query(sl_query)
@@ -527,7 +604,7 @@ def next_result():
         record_id = int(res_dict["id"])
         start_tick = int(res_dict["time"])
         patient_id, record_name, pretty_time = MIMIC_CACHE.find_segment(record_id, start_tick)
-        patient_id=int(patient_id[1:]) # assuming sxxx format (e.g., s00124)
+        patient_id = int(patient_id[1:])  # assuming sxxx format (e.g., s00124)
         res_dict["sid"] = patient_id
         res_dict["pretty_time"] = pretty_time
         res_dict = {"status": "ok", "result": res_dict, "eof": False}
