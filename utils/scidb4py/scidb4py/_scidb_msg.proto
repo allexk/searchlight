@@ -58,6 +58,8 @@ message Fetch
     optional bool position_only = 3;
     optional uint32 obj_type = 4; // 0 - for remote array; 1 - for merged array. Should be copy to Chunk message field.
     optional string array_name = 5; // a name of mapping array to fetch: result array or mapping array
+    optional uint32 prefetch_size = 6; // the number of chunks/items the sender is willing to accept in response
+    optional uint64 fetch_id = 7; // this message id
 }
 
 /**
@@ -78,10 +80,9 @@ message Chunk
 	optional uint32 obj_type = 11; // 0 - for remote array; 1 - for merged array. Should be copy from Fetch message field.
     optional uint32 count  = 12;
     optional bool tombstone = 13 [default = false]; 
-
-    //used when cloning chunk from array A to array B: ID of array A and attID
-    optional uint64 source_array_id = 14;
-    optional uint64 source_attribute_id = 15;
+    optional uint64 dest_instance = 14;
+    optional uint64 next_dest_instance = 15;
+    optional uint64 fetch_id = 16; // last fetch_id received by the sender
 
     message Warning
     {
@@ -94,7 +95,7 @@ message Chunk
         required string strings_namespace = 7;
     }
 
-    repeated Warning warnings = 16;//warnings posted during execution
+    repeated Warning warnings = 17;//warnings posted during execution
 }
 
 /**
@@ -120,13 +121,8 @@ message QueryResult
             required int64 curr_start = 3;
             required int64 curr_end = 4;
             required int64 end_max = 5;
-            required uint32 chunk_interval = 6;
-            required uint32 chunk_overlap = 7;
-            required string type_id = 8;
-            required int32 flags = 9;
-            required string mapping_array_name = 10;
-            optional int64 coordinates_mapping_size = 11;
-            optional bytes coordinates_mapping = 12;
+            required int64 chunk_interval = 6;
+            required int64 chunk_overlap = 7;
 	}
 
     message Warning
@@ -170,6 +166,7 @@ message PhysicalPlan
         }
         required InstanceList dead_list = 4;
         required InstanceList live_list = 5;
+        required string cluster_uuid = 6;
 } 
 
 /**
@@ -201,6 +198,7 @@ message Error
     }
     
     optional ParsingContext parsing_context = 11;
+    optional string cluster_uuid = 12;
 }
 
 /**
@@ -211,7 +209,8 @@ message Error
  message DummyQuery
  {
     optional uint64  payload_id = 2;
- }
+     optional string cluster_uuid = 3;
+}
 
 
 /**

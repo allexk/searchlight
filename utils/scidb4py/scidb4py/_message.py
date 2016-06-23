@@ -54,7 +54,7 @@ class Header(object):
     _headerSize = calcsize(_fmt)
 
     def __init__(self, message_type=0, record_size=0, binary_size=0, query_id=0):
-        self._protocol_version = 3
+        self._protocol_version = 4
         self._source_instance_id = ~0 & 0xFFFFFFFFFFFFFFFF  # equivalent of uint64_t sourceInstanceID = ~0
         self._message_type = message_type
         self._record_size = record_size

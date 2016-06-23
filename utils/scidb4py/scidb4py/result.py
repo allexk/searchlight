@@ -36,14 +36,9 @@ class Result(object):
                 dimensions.append(
                     Dimension(
                         d.name,
-                        d.type_id,
-                        d.flags,
                         d.start_min,
                         d.end_max,
-                        d.chunk_interval,
-                        d.mapping_array_name,
-                        d.coordinates_mapping_size,
-                        d.coordinates_mapping
+                        d.chunk_interval
                     )
                 )
             self._schema = Schema(array_name, attributes, dimensions)

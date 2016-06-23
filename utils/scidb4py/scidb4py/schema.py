@@ -15,6 +15,7 @@ Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 Copyright (c) 2013, Artyom Smirnov <artyom_smirnov@icloud.com>
 """
 
+from types import TID_INT64
 
 class Attribute(object):
     def __init__(self, att_id, name, type_id, flags):
@@ -74,21 +75,15 @@ class Attribute(object):
 
 
 class Dimension(object):
-    def __init__(self, name, type_id, flags, start, end, chunk_interval,
-                 mapping_array_name=None, coordinates_mapping_size=0, coordinates_mapping=None):
+    def __init__(self, name, start, end, chunk_interval):
         """
         :param name: Dimension name
         :param type_id: Dimension type
         """
         self._name = name
-        self._type_id = type_id
-        self._flags = flags
         self._start = start
         self._end = end
         self._chunk_interval = chunk_interval
-        self._mapping_array_name = mapping_array_name
-        self._coordinates_mapping_size = coordinates_mapping_size
-        self._coordinates_mapping = coordinates_mapping
 
     @property
     def name(self):
@@ -108,11 +103,7 @@ class Dimension(object):
         :rtype : str
         :return: dimension type
         """
-        return self._type_id
-
-    @property
-    def flags(self):
-        return self._flags
+        return TID_INT64
 
     @property
     def start(self):
@@ -125,18 +116,6 @@ class Dimension(object):
     @property
     def chunk_interval(self):
         return self._chunk_interval
-
-    @property
-    def mapping_array_name(self):
-        return self._mapping_array_name
-
-    @property
-    def coordinates_mapping_size(self):
-        return self._coordinates_mapping_size
-
-    @property
-    def coordinates_mapping(self):
-        return self._coordinates_mapping
 
     def __str__(self):
         return self.name + '(' + self.type + ')'

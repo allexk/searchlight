@@ -43,7 +43,7 @@ def make_chunk(chunk_msg, array):
     sparse = rec.sparse
     compression_method = rec.compression_method
     chunk_data = chunk_msg.binary
-    rle = rec.rle
+    rle = True
 
     if compression_method != NO_COMPRESSION and len(chunk_data) != rec.decompressed_size:
         chunk_data = decompress(compression_method, chunk_data)
