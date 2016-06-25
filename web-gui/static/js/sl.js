@@ -215,6 +215,12 @@ $(function() {
         });
     });
 
+    // Control speculation via relaxation
+    $("#relax").click(function() {
+        var checked = this.checked;
+        $("#spec").prop("disabled", !checked);
+    });
+
     // Cancel query button
     $("#cancel_query").click($.searchlight.sl_cancel_query);
 
@@ -258,6 +264,13 @@ $(function() {
         if (!$("#neighborhood").prop("checked")) {
             form_data_json["mimic.neighborhood.l_size"] = 0;
             form_data_json["mimic.neighborhood.r_size"] = 0;
+        }
+        // Control relaxation
+        if ($("#relax").prop("checked")) {
+            form_data_json["relax.on"] = 1;
+            if ($("#spec").prop("checked")) {
+                form_data_json["relax.spec"] = 1;
+            }
         }
         var query_aux_data = null;
         if ($.searchlight.current_query === "sim") {

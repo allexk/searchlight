@@ -88,12 +88,12 @@
         "signal": "ABP",
 
         "neighborhood": {
-            "l_size": 1000,
-            "r_size": 1000,
-            "left_max_diff": 500,
-            "left_relax_diff": 10,
-            "right_max_diff": 500,
-            "right_relax_diff": 10
+            "l_size": 500,
+            "r_size": 500,
+            "left_max_diff": 10,
+            "left_relax_diff": -30,
+            "right_max_diff": 10,
+            "right_relax_diff": -30
         },
 
         "db": "split",

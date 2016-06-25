@@ -68,17 +68,17 @@
             "replay": "viol",
             "sort": "best",
             "save_udfs": 1,
-            "replay_rd": 1.0,
-            "spec": 1
+            "replay_rd": 0.3,
+            "spec": 0
         },
 
         "dist": {
             "l_id": 0,
             "u_id": 99,
             "l_time": 0,
-            "u_time": 50000000,
+            "u_time": 20000000,
             "dist": 100,
-            "dist_relax": 200,
+            "dist_relax": 300000,
             "query": "fill-in",
             "step_time": 10,
 

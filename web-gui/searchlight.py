@@ -77,6 +77,7 @@ class SciDBConnectionConfig(object):
         self.user = config.get('scidb', 'user')
         self.http_port = int(config.get('scidb', 'http_port'))
         self.scidb_port = int(config.get('scidb', 'scidb_port'))
+        self.limit = int(config.get('scidb', 'limit'))
         try:
             self.shared_dir = config.get('scidb', 'shared_dir')
             # assume list of nodes
@@ -168,8 +169,8 @@ class SciDBQueryOnline(SciDBConnectionConfig):
             self.error = RuntimeError("query not started")
             return None
         try:
-            if self.cancelled:
-                self.logger.info('query cancelled by user')
+            if self.cancelled or len(self.results) >= self.limit:
+                self.logger.info('query cancelled by user or limit reached (%d)' % self.limit)
                 try:
                     self.scidb.cancel_query()
                 except:
@@ -548,7 +549,7 @@ def start_sim_query():
         raise SearchlightError("Invalid sim request")
     # transform for the dist query
     dist_keys = {"mimic.l_id", "mimic.u_id", "mimic.l_time", "mimic.u_time", "mimic.dist", "mimic.step_time",
-                 "mimic.signal"}
+                 "mimic.signal", "relax.on", "relax.spec"}
     query_json = json_transform(query_json, dist_keys, ("mimic.", "dist."))
     logger.debug("Transformed query: %s" % str(query_json))
     # create SciDB query
