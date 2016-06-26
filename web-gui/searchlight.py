@@ -399,11 +399,11 @@ class QueryHandler(object):
         self._id = 0
         self._queries = {}
 
-    def set_query(self, query):
+    def set_query(self, query, aux=None):
         with self._lock:
             qid = str(self._id)
             self._id += 1
-            self._queries[qid] = query
+            self._queries[qid] = (query, aux)
         logger.info("query registered: " + str(qid))
         return qid
 
@@ -581,7 +581,7 @@ def start_sim_query():
     sl_query.start_query()
     # response
     if not sl_query.error:
-        query_id = global_query_handler.set_query(sl_query)
+        query_id = global_query_handler.set_query(sl_query, {'len': len(query_data)})
         return flask.jsonify({"status": "ok", "query_id": query_id})
     else:
         raise SearchlightError("Exception when running the query")
@@ -595,7 +595,7 @@ def next_result():
         raise SearchlightError("query_id is not specified")
 
     # get the next result (might block for a while)
-    sl_query = global_query_handler.get_query(query_id)
+    sl_query, aux_info = global_query_handler.get_query(query_id)
     res_dict = sl_query.next_result()
     if not res_dict:
         cleanup_query(query_id)
@@ -609,6 +609,9 @@ def next_result():
         start_tick = int(res_dict["time"])
         patient_id, record_name, pretty_time = MIMIC_CACHE.find_segment(record_id, start_tick)
         patient_id = int(patient_id[1:])  # assuming sxxx format (e.g., s00124)
+        # parameters override for sim queries
+        if aux_info is not None and 'len' in aux_info:
+            res_dict['len'] = aux_info['len']
         res_dict["sid"] = patient_id
         res_dict["pretty_time"] = pretty_time
         res_dict = {"status": "ok", "result": res_dict, "eof": False}
@@ -644,7 +647,7 @@ def cancel_query():
 
     # cancel and return immediately
     try:
-        sl_query = global_query_handler.get_query(query_id)
+        sl_query = global_query_handler.get_query(query_id)[0]
         sl_query.cancel_query()
     except SearchlightError:
         # ignore, nothing fatal here
