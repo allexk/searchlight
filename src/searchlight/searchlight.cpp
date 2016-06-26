@@ -454,6 +454,9 @@ void SearchlightSolver::PrepareHelper(CandidateVector &load) {
 }
 
 bool SearchlightSolver::SolverHasWork() const {
+    if (status_ == Status::TERMINATED) {
+        return false;
+    }
     switch (solver_type_) {
         case SolverType::MAIN:
             /*
@@ -848,6 +851,12 @@ void SearchlightSolver::HandleHelper(uint64_t id) {
     } else if (!solver_balancing_enabled_) {
         RejectHelpers(true);
     }
+}
+
+void SearchlightSolver::HandleTerminate() {
+    std::lock_guard<std::mutex> lock{mtx_};
+    status_ = Status::TERMINATED;
+    wait_cond_.notify_one();
 }
 
 void SearchlightSolver::RejectHelpers(bool hard) {

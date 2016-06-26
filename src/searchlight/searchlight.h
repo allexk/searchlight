@@ -554,11 +554,7 @@ public:
     /**
      * Terminates the solver.
      */
-    void HandleTerminate() {
-        std::lock_guard<std::mutex> lock{mtx_};
-        status_ = Status::TERMINATED;
-        wait_cond_.notify_one();
-    }
+    void HandleTerminate();
 
     /**
      * Starts the solver loop.
@@ -1010,6 +1006,8 @@ public:
      */
     void Terminate() {
         status_ = Status::TERMINATED;
+        spec_exec_.TurnOffRelax();
+        spec_exec_.ClearSpecSolvers();
         for (auto &s: solvers_) {
             s->HandleTerminate();
         }
@@ -1240,6 +1238,13 @@ private:
             while (SpecActive_NL()) {
                 main_wait_.wait(lock);
             }
+        }
+
+        // Clear spec solvers (abnormal behaviour, actually)
+        void ClearSpecSolvers() {
+            std::lock_guard<std::mutex> lock{mtx_};
+            active_.clear();
+            main_wait_.notify_all();
         }
 
     private:
