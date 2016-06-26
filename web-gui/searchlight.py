@@ -213,7 +213,10 @@ class SciDBQueryOnline(SciDBConnectionConfig):
         res = {}
         for r in res_str.strip().split(', '):
             (name, val) = r.split('=')
-            res[name] = int(val)
+            try:
+                res[name] = int(val)
+            except ValueError:
+                res[name] = float(val)
         return res
 
     def __del__(self):
