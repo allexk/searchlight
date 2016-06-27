@@ -907,9 +907,10 @@ void SearchlightTask::BroadcastRD(double rd) const {
 
 void SearchlightTask::HandleSearchlightError(
         const scidb::Exception::Pointer &error) {
-    std::lock_guard<std::mutex> lock{mtx_};
+    std::unique_lock<std::mutex> lock{mtx_};
     if (!sl_error_) {
         sl_error_ = error;
+        lock.unlock();
         Terminate();
         try {
             // We should try to notify the query

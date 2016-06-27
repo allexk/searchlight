@@ -94,8 +94,10 @@ public:
      * the status, and they will pick it up from there.
      */
     void Terminate() {
+        std::lock_guard<std::mutex> lock{mtx_};
         if (InstanceActive(my_instance_id_) &&
-                searchlight_.GetStatus() != Searchlight::Status::COMMITTED) {
+                searchlight_.GetStatus() != Searchlight::Status::COMMITTED &&
+                searchlight_.GetStatus() != Searchlight::Status::TERMINATED) {
             searchlight_.Terminate();
         }
     }
