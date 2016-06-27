@@ -449,6 +449,8 @@ bool SearchlightMessenger::RequestChunk(const boost::shared_ptr<Query> &query,
 
         // Check for error
         if (msg_slot.error_) {
+            LOG4CXX_ERROR(logger,
+                    "Request chunk aborted: possible query cancel.");
             ReturnMessageSlot(slot_num, query_ctx);
             throw SYSTEM_EXCEPTION(SCIDB_SE_OPERATOR, SCIDB_LE_ILLEGAL_OPERATION)
                     << "Error during chunk request, possible query abort";

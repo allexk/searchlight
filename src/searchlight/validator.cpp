@@ -993,6 +993,8 @@ void Validator::operator()() {
         // Might catch an exception from SearchlightTask
         LOG4CXX_ERROR(logger, "Validator caught an exception");
         sl_task_.HandleSearchlightError(ex.copy());
+        // Handle possible waiters
+        GetNextAssignments();
     }
 
     // Check if Solve() ended because of the false model
