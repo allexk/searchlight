@@ -244,6 +244,17 @@ public:
     void BroadcastRD(const boost::shared_ptr<Query> &query, double rd) const;
 
     /**
+     * Broadcast new rank/solution.
+     *
+     * @param query query context
+     * @param sol solution
+     * @param rank rank
+     */
+    void BroadcastRankSol(const boost::shared_ptr<Query> &query,
+                          const std::vector<int64_t> &sol,
+                          double rank) const;
+
+    /**
      * Sends search commit control message to all instances.
      *
      * @param query the current query

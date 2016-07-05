@@ -635,6 +635,20 @@ void SearchlightTask::HandleBalanceMessage(InstanceID inst,
                 relaxator->ReportResult(balance_msg->lrd());
             }
             break;
+        case SearchlightBalance::RANK_SOL:
+            assert(balance_msg->has_lrd());
+            if (Relaxator *relaxator = searchlight_.GetRelaxator()) {
+                // Relaxator might be NULL if we don't run anything here
+                std::vector<int64_t> sol;
+                if (balance_msg->load_size()) {
+                    assert(balance_msg->load_size() == 1);
+                    SearchlightMessenger::UnpackAssignment(balance_msg->load(0),
+                                                           sol,
+                                                           sol /* dummy */);
+                }
+                relaxator->ReportRankSol(sol, balance_msg->lrd());
+            }
+            break;
         case SearchlightBalance::VALIDATOR_INFO:
             assert(balance_msg->id_size());
             assert(std::find(active_validators_.begin(),
@@ -903,6 +917,12 @@ void SearchlightTask::BroadcastValidatorInfo(size_t cands_num) const {
 void SearchlightTask::BroadcastRD(double rd) const {
     const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
     SearchlightMessenger::getInstance()->BroadcastRD(query, rd);
+}
+
+void SearchlightTask::BroadcastRankSol(const std::vector<int64_t> &sol,
+                                       double rank) const {
+    const boost::shared_ptr<Query> query = Query::getValidQueryPtr(query_);
+    SearchlightMessenger::getInstance()->BroadcastRankSol(query, sol, rank);
 }
 
 void SearchlightTask::HandleSearchlightError(

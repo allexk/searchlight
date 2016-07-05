@@ -505,6 +505,106 @@ private:
 	int64 min_, max_;
 };
 
+/**
+ * Results contractor.
+ */
+class Contractor {
+public:
+    /**
+     * Ctor.
+     *
+     * @param relaxator relaxator
+     * @param card cardinality
+     * @param constrs constraints to contract
+     */
+    Contractor(Relaxator &relaxator, size_t card,
+               const std::vector<size_t> &constrs) :
+                   relaxator_(relaxator),
+                   card_req_(card),
+                   contr_constrs_(constrs) {}
+    /**
+     * Dtor.
+     */
+    virtual ~Contractor() {}
+
+    /**
+     * Check if the solution is valid.
+     *
+     * @param sol solution
+     * @param update true, if we can update the results; false, just check
+     * @return true, if valid
+     */
+    virtual bool CheckSolution(const LiteVarAssignment &sol, bool update) = 0;
+
+    /**
+     * Register new solution.
+     *
+     * @param sol solution
+     * @param rank rank
+     */
+    virtual void RegisterSolution(const std::vector<int64_t> &sol,
+                                  double rank) = 0;
+
+protected:
+    // Relaxator
+    Relaxator &relaxator_;
+    // Cardinality reqs
+    size_t card_req_;
+    // Constraints we contract
+    std::vector<size_t> contr_constrs_;
+    // Mutex
+    std::mutex mtx_;
+};
+
+class SkylineContractor : public Contractor {
+public:
+    SkylineContractor(Relaxator &relaxator, size_t card,
+               const std::vector<size_t> &constrs) :
+                   Contractor(relaxator, card, constrs) {}
+
+    virtual bool CheckSolution(const LiteVarAssignment &sol,
+                               bool update) override {
+
+    }
+
+    virtual void RegisterSolution(const std::vector<int64_t> &sol,
+                                  double rank) override {
+
+    }
+private:
+    // Dominating solutions
+    std::list<std::vector<int64_t>> sols_;
+};
+
+class RankContractor : public Contractor {
+public:
+    RankContractor(Relaxator &relaxator, size_t card,
+               const std::vector<size_t> &constrs,
+               const std::vector<bool> &spec) :
+                   Contractor(relaxator, card, constrs),
+                   spec_(spec) {
+        // Checking
+        assert(constrs.size() == spec.size());
+    }
+
+    virtual bool CheckSolution(const LiteVarAssignment &sol,
+                               bool update) const override {
+
+    }
+
+    virtual void RegisterSolution(const std::vector<int64_t> &sol,
+                                  double rank) override {
+
+    }
+
+private:
+    // true/false maximize for each constraint
+    std::vector<bool> spec_;
+    // Rank priority queue
+    std::priority_queue<double, std::vector<double>, std::greater<double>> ranks_;
+    // Current top lower bound rank
+    std::atomic<double> lr_{0.0};
+};
 
 /**
  * Relaxator is responsible for all the query relaxation logic.
@@ -646,6 +746,16 @@ public:
 	void ReportResult(double rd);
 
 	/**
+	 * Report a new solution/rank.
+	 *
+	 * @param sol solution
+	 * @param rank rank
+	 */
+	void ReportRankSol(const std::vector<int64_t> &sol, double rank) const {
+	    contractor_->RegisterSolution(sol, rank);
+	}
+
+	/**
 	 * Check if there are any fail replays left
 	 *
 	 * @return true, if replays left; false, otherwise
@@ -766,6 +876,9 @@ private:
 		// Maximum relaxation
 		const int64 max_l_, max_h_;
 
+		// Normalization interval for this function values
+		const int64 min_norm_, max_norm_, max_norm_dist_;
+
         // Pointers to solver constraints
 		std::vector<RelaxableConstraint *> solver_const_;
 
@@ -775,6 +888,9 @@ private:
 			int_{constr},
 			max_l_{max_l},
 			max_h_{max_h},
+			min_norm_{constr.Min() == kint64min ? max_l : constr.Min()},
+            max_norm_{constr.Max() == kint64max ? max_h : constr.Max()},
+            max_norm_dist_{max_norm_ - min_norm_},
 			solver_const_(solver_num) {}
 
 		// True, if we can relax up to dist to the required direction
@@ -785,13 +901,13 @@ private:
 		// Return maximum relaxation distance to the left or right
 		int64 MaxRelaxDist(bool left) const {
 			if (left) {
-				if (max_l_ == kint64min) {
+				if (int_.Min() == kint64min || max_l_ == kint64min) {
 					return kint64max;
 				} else {
 					return int_.Min() - max_l_;
 				}
 			} else {
-				if (max_h_ == kint64max) {
+				if (int_.Max() == kint64max || max_h_ == kint64max) {
 					return kint64max;
 				} else {
 					return max_h_ - int_.Max();
@@ -856,6 +972,31 @@ private:
                 return double(imin - h) / MaxRelaxDist(true);
             } else {
                 return 0;
+            }
+		}
+
+		// Compute rank of the point.
+		double PointRank(int64 p, bool maximize) const {
+		    if (p > max_norm_) {
+		        p = max_norm_;
+		    } else if (p < min_norm_) {
+		        p = min_norm_;
+		    }
+		    double res = double(max_norm_ - p) / max_norm_dist_;
+		    assert(res >= 0.0 && res <= 1.0);
+		    if (maximize) {
+		        res = 1.0 - res;
+		    }
+		    return res;
+		}
+
+		// Compute interval ranks
+		void IntervalRank(int64 l, int64 h, bool maximize, double &minr,
+		                   double &maxr) const {
+		    minr = PointRank(l, maximize);
+            maxr = PointRank(h, maximize);
+            if (!maximize) {
+                std::swap(minr, maxr);
             }
 		}
 	};
@@ -1047,11 +1188,15 @@ private:
     // Replay sort method
     ReplaySortMethod sort_method_;
 
+    // Contractor
+    std::unique_ptr<Contractor> contractor_;
+
 	// For concurrency control
 	mutable std::mutex mtx_;
 };
 
 class SearchlightSolver;
+
 
 /**
  * This search monitor catches fails and calls relaxator to record them for

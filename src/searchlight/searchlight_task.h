@@ -237,6 +237,14 @@ public:
     void BroadcastRD(double rd) const;
 
     /**
+     * Broadcast new rank/solution.
+     *
+     * @param sol solution
+     * @param rank rank
+     */
+    void BroadcastRankSol(const std::vector<int64_t> &sol, double rank) const;
+
+    /**
      * Returns query context of this task.
      *
      * @return task's query context

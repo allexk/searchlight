@@ -46,6 +46,7 @@ message SearchlightBalance {
         VALIDATOR_INFO       = 8; // Info about the validator's load
         LRD                  = 9; // LRD changes
         REQ_HELP             = 10;// Request help
+        RANK_SOL             = 11;// New rank/solution for contraction
     }
 
     required Type type          = 1; // Type of the message

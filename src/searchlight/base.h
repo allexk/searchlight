@@ -114,6 +114,15 @@ struct LiteVarAssignment {
     }
 
     /**
+     * Check if the assignment is empty.
+     *
+     * @return true, if empty
+     */
+    bool empty() const {
+        return mins_.empty();
+    }
+
+    /**
      * Adds a value pair to the vector.
      *
      * @param val_min minimum value

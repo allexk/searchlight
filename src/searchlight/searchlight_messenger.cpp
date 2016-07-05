@@ -1096,6 +1096,32 @@ void SearchlightMessenger::BroadcastRD(const boost::shared_ptr<Query> &query,
     network_manager->broadcastLogical(msg);
 }
 
+void SearchlightMessenger::BroadcastRankSol(
+                      const boost::shared_ptr<Query> &query,
+                      const std::vector<int64_t> &sol,
+                      double rank) const {
+    // prepare the message
+    boost::shared_ptr<scidb::MessageDesc> msg =
+            PrepareMessage(query->getQueryID(), mtSLBalance);
+    boost::shared_ptr<SearchlightBalance> record =
+            msg->getRecord<SearchlightBalance>();
+
+    // fill the record
+    record->set_type(SearchlightBalance::RANK_SOL);
+    if (!sol.empty()) {
+        VarAssignment *asgn = record->add_load();
+        PackAssignment(sol, {}, *asgn);
+    }
+    record->set_lrd(rank);
+
+    // log
+    LOG4CXX_TRACE(logger, "Broadcasting new rank: " << rank);
+
+    // send
+    NetworkManager *network_manager = NetworkManager::getInstance();
+    network_manager->broadcastLogical(msg);
+}
+
 void SearchlightMessenger::BroadcastCommit(
         const boost::shared_ptr<Query> &query) const {
     // prepare the message

@@ -190,10 +190,8 @@ void Relaxator::RegisterConstraint(const std::string &name, size_t solver_id,
 		IntervalConstraint::ConstraintType constr_type;
 		if (h == kint64max) {
 			constr_type = IntervalConstraint::ConstraintType::GEQ;
-			max_h = kint64max;
 		} else if (l == kint64min) {
 			constr_type = IntervalConstraint::ConstraintType::LEQ;
-			max_l = kint64min;
 		} else {
 			constr_type = IntervalConstraint::ConstraintType::BET;
 		}
@@ -201,11 +199,16 @@ void Relaxator::RegisterConstraint(const std::string &name, size_t solver_id,
 		 *  Adjust max_l and max_h to avoid negative distances. In this case,
 		 *  however, the relaxation along the corresponding bound won't be
 		 *  possible.
+		 *
+		 *  However, for certain constraints domain values (max_ ones) might be
+		 *  more restrictive. This is used for tightening.
 		 */
-		if (max_l > l) {
+		if (max_l > l &&
+		        constr_type != IntervalConstraint::ConstraintType::LEQ) {
 			max_l = l;
 		}
-		if (max_h < h) {
+		if (max_h < h &&
+		        constr_type != IntervalConstraint::ConstraintType::GEQ) {
 			max_h = h;
 		}
 		/*
