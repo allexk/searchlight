@@ -314,6 +314,12 @@ void SearchlightSolver::Prepare(Validator &validator) {
                 LOG4CXX_INFO(logger, "Found " << model_udfs_.size() <<
                     " UDFs in the model");
             }
+            // Contraction monitor
+            if (relaxator->ContractingEnabled()) {
+                SearchMonitor *cm = solver_.RevAlloc(
+                        new ContractionMonitor(solver_, *this, *relaxator));
+                search_monitors_.aux_monitors_.push_back(cm);
+            }
         }
 
         // Determine the worload; it will be assigned at Solve()
@@ -609,6 +615,22 @@ Relaxator *SearchlightSolver::GetRelaxator() const {
     return sl_.GetRelaxator();
 }
 
+void SearchlightSolver::EnableContraction(const SizeVector &constrs,
+                                      const BoolVector &maxim,
+                                      Relaxator::ContractionType type) const {
+    if (Relaxator *rel = GetRelaxator()) {
+        std::ostringstream str;
+        str << "Enabling contraction: constrs(";
+        std::copy(constrs.begin(), constrs.end(),
+                  std::ostream_iterator<size_t>(str, ", "));
+        str << "), maxim: " << std::boolalpha;
+        std::copy(maxim.begin(), maxim.end(),
+                  std::ostream_iterator<bool>(str, ", "));
+        str << "), type " << type;
+        LOG4CXX_INFO(logger, str.str());
+        rel->EnableContraction(constrs, maxim, type);
+    }
+}
 
 void SearchlightSolver::Solve() {
     // Enter the search

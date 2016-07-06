@@ -71,6 +71,11 @@ using operations_research::ACMRandom;
 typedef std::vector<IntVar *> IntVarVector;
 
 /**
+ * A vector of Int Expressions.
+ */
+typedef std::vector<IntExpr *> IntExprVector;
+
+/**
  * Pointer to a full assignment.
  */
 typedef std::unique_ptr<Assignment> AssignmentPtr;

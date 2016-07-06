@@ -887,16 +887,7 @@ bool Validator::CheckRelaxation(const LiteVarAssignment &relax_asgn, double &rd,
         // Not relaxing; check always passes
         return true;
     }
-    const double old_lrd = relaxator_->GetLRD();
-    rd = relaxator_->ComputeResultRelaxationDegree(relax_asgn.mins_);
-    const bool passes_lrd = rd <= old_lrd;
-    if (passes_lrd && report_rd) {
-        // Report to the local relaxator and...
-        relaxator_->ReportResult(rd);
-        // tell the rest
-        sl_task_.BroadcastRD(rd);
-    }
-    return passes_lrd;
+    return relaxator_->CheckResult(relax_asgn, report_rd);
 }
 
 bool Validator::CheckCandidateRD(const CandidateAssignment &ca) const {

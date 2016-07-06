@@ -91,6 +91,11 @@ typedef std::vector<size_t> SizeVector;
 typedef std::vector<double> DoubleVector;
 
 /**
+ * Bool vector.
+ */
+typedef std::vector<bool> BoolVector;
+
+/**
  * Check for domination.
  *
  * @param v1 first vector

@@ -308,6 +308,7 @@ bool Relaxator::ComputeCurrentVCAndRD(size_t sid, double &rd,
     }
     assert(vc.size() % 3 == 0);
     const size_t viol_consts = vc.size() / 3;
+    rd = 0.0;
     if (viol_consts) {
         const double max_relax = MaxUnitRelaxDistance(viol_consts);
         for (size_t i = 0; i < vc.size(); i += 3) {
@@ -567,6 +568,24 @@ Int64Vector Relaxator::GetMaximumRelaxationVCSpec(size_t viol_num) const {
     return res;
 }
 
+bool Relaxator::CheckResult(const LiteVarAssignment &res, bool update) {
+    // Check from the relaxation perspective
+    const double old_lrd = lrd_.load(std::memory_order_relaxed);
+    const double rd = ComputeResultRelaxationDegree(res.mins_);
+    bool accept_res = rd <= old_lrd;
+    if (old_lrd != 0.0 && accept_res && update) {
+        // Report to the local relaxator and...
+        ReportResult(rd);
+        // tell the rest
+        sl_.GetTask().BroadcastRD(rd);
+    }
+    // Check from the contractor perspective
+    if (rd == 0.0 && contractor_) {
+        accept_res = contractor_->CheckSolution(res, update);
+    }
+    return accept_res;
+}
+
 FailCollectorMonitor::FailCollectorMonitor(Solver &solver,
         const SearchlightSolver &sl_solver,
         Relaxator &rel) :
@@ -578,6 +597,28 @@ FailCollectorMonitor::FailCollectorMonitor(Solver &solver,
 void FailCollectorMonitor::BeginFail() {
     if (!sl_solver_.LastFailCustom()) {
         relaxator_.RegisterFail(solver_id_, !init_propagation_finished_);
+    }
+}
+
+void ContractionMonitor::AfterDecision(Decision* const d, bool apply) {
+    /*
+     * Checking makes sense only when we're not relaxing anymore. Only
+     * then we can prune some parts of the search tree.
+     */
+    if (!relaxator_.Relaxing()) {
+        // Get expressions
+        LiteVarAssignment asgn;
+        asgn.mins_.resize(rel_exprs_.size());
+        asgn.maxs_.resize(rel_exprs_.size());
+        for (size_t i = 0; i < rel_exprs_.size(); ++i) {
+            asgn.mins_[i] = rel_exprs_[i]->Min();
+            asgn.maxs_[i] = rel_exprs_[i]->Max();
+        }
+        if (!relaxator_.CheckContraction(asgn)) {
+            LOG4CXX_DEBUG(logger, "Contraction pruning!");
+            sl_solver_.BeginCustomFail();
+            solver()->Fail();
+        }
     }
 }
 
@@ -661,7 +702,7 @@ bool RankContractor::CheckSolution(const LiteVarAssignment &sol,
     assert(sol.mins_.size() == constrs.size());
     double rank = 0.0;
     const size_t const_num = contr_constrs_.size();
-    const bool is_range = !sol.maxs_.empty();
+    const bool is_range = sol.IsRange();
     for (size_t i = 0; i < const_num; ++i) {
         const size_t const_i = contr_constrs_[i];
         const auto &orig_c = constrs[const_i];

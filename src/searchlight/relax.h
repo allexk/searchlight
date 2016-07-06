@@ -536,6 +536,14 @@ public:
         ALL       ///!< ALL Relax all constraints.
     };
 
+    /**
+     * Contraction type.
+     */
+    enum class ContractionType {
+        SKYLINE,//!< SKYLINE domination based
+        RANK    //!< RANK rank based
+    };
+
 public:
 	/**
 	 * Create a new relaxator instance.
@@ -727,6 +735,82 @@ public:
 	    assert(solver_info_[solver_id].in_replay_);
 	    solver_info_[solver_id].in_replay_ = false;
 	    solver_info_[solver_id].replay_.failed_consts_.clear();
+	}
+
+	/**
+	 * Check if we are currently relaxing.
+	 *
+	 * @return true, if relaxing; false, if not
+	 */
+	bool Relaxing() const {
+	    return lrd_.load(std::memory_order_relaxed) != 0.0;
+	}
+
+	/**
+	 * Check if the result is valid.
+	 *
+	 * "Valid" means the result passes relaxation degree check and the
+	 * contractor check.
+	 *
+	 * @param res result (mins_ member only needed)
+	 * @param update true, if we can update results; false, just check
+	 * @return true, if the result is  valid; false, otherwise
+	 */
+	bool CheckResult(const LiteVarAssignment &res, bool update);
+
+	/**
+	 * Check if the assignment satisfies contractor.
+	 *
+	 * @param asgn assignment to check (range is possible)
+	 * @return true, if the contractor is satisied; false, otherwise
+	 */
+	bool CheckContraction(const LiteVarAssignment &asgn) const {
+	    if (contractor_) {
+	        return contractor_->CheckSolution(asgn, false);
+	    }
+	    return true;
+	}
+
+	/**
+	 * Fill in relaxable constraint expressions.
+	 *
+	 * @param solver_id solver id
+	 * @param exprs vector to fill (out)
+	 */
+	void FillInRelaxableAssignment(size_t solver_id,
+	                               IntExprVector &exprs) const {
+	    exprs.reserve(orig_consts_.size());
+	    for (const auto &oc: orig_consts_) {
+	        exprs.push_back(oc.solver_const_[solver_id]->GetExpr());
+	    }
+	}
+
+	/**
+	 * Enable contraction mode.
+	 *
+	 * @param constraints constraint numbers to contract
+	 * @param maxim maximize specialization
+	 * @param type contraction type
+	 */
+	void EnableContraction(const SizeVector &constrs, const BoolVector &maxim,
+	                       ContractionType type) {
+	    assert(constrs.size() == maxim.size());
+	    if (type == ContractionType::RANK) {
+	        contractor_.reset(new RankContractor(
+	                *this, res_num_, constrs, maxim));
+	    } else if (type == ContractionType::SKYLINE) {
+            contractor_.reset(new SkylineContractor(
+                    *this, res_num_, constrs, maxim));
+	    }
+	}
+
+	/**
+	 * Check if contracting is enabled.
+	 *
+	 * @return true, if contracting is enabled; false, otherwise
+	 */
+	bool ContractingEnabled() const {
+	    return contractor_;
 	}
 
 private:
@@ -1228,6 +1312,50 @@ private:
     std::priority_queue<double, std::vector<double>, std::greater<double>> ranks_;
     // Current top lower bound rank
     std::atomic<double> lr_{0.0};
+};
+
+
+/**
+ * This monitor tracks the search process and checks id the search node
+ * satisfies contraction restrictions.
+ */
+class ContractionMonitor : public SearchMonitor {
+public:
+    /**
+     * Constructor.
+     *
+     * @param solver CP Solver
+     * @param sl_solver SL solver
+     * @param relaxator relaxator
+     */
+    ContractionMonitor(Solver &solver, SearchlightSolver &sl_solver,
+                       Relaxator &relaxator) :
+            SearchMonitor(&solver),
+            solver_id_(sl_solver.GetLocalID()),
+            relaxator_(relaxator),
+            sl_solver_(sl_solver) {
+
+        assert(relaxator_.ContractingEnabled());
+        relaxator.FillInRelaxableAssignment(solver_id_, rel_exprs_);
+    }
+
+    /**
+     * Called after the applied decision.
+     *
+     * @param d decision
+     * @param apply true, if apply; false, if refute
+     */
+    virtual void AfterDecision(Decision* const d, bool apply) override;
+
+private:
+    // SL solver id
+    const size_t solver_id_;
+    // Relaxator
+    Relaxator &relaxator_;
+    // Relaxable functions vector
+    IntExprVector &rel_exprs_;
+    // Searchlight solver
+    SearchlightSolver &sl_solver_;
 };
 
 /**

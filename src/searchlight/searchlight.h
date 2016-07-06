@@ -684,6 +684,16 @@ public:
      */
     Relaxator *GetRelaxator() const;
 
+    /**
+     * Enable contraction mode.
+     *
+     * @param constraints constraint numbers to contract
+     * @param maxim maximize specialization
+     * @param type contraction type
+     */
+    void EnableContraction(const SizeVector &constrs, const BoolVector &maxim,
+                           Relaxator::ContractionType type) const;
+
 private:
     // Reject/release helpers
     void RejectHelpers(bool hard);
