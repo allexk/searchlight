@@ -224,12 +224,17 @@ public:
                     LiteVarAssignment lite_asgn;
                     FullAssignmentToLite(relax_asgn_, lite_asgn);
                     double asgn_rd = -1;
-                    if (validator_.CheckRelaxation(lite_asgn, asgn_rd, true)) {
+                    double asgn_rank = -1;
+                    if (validator_.CheckRelaxation(lite_asgn, asgn_rd,
+                                                   asgn_rank, true)) {
                         lite_asgn.clear();
                         FullAssignmentToLite(track_vars_asgn_, lite_asgn);
                         if (asgn_rd != -1) {
-                            // multiply by 100, since we don't accept doubles
-                            lite_asgn.add_val(asgn_rd * 100, 0);
+                            // multiply by 1000, since we don't accept doubles
+                            lite_asgn.add_val(asgn_rd * 1000, 0);
+                            if (asgn_rank != -1) {
+                                lite_asgn.add_val(asgn_rank * 1000, 0);
+                            }
                         }
                         validator_.sl_task_.ReportSolution(
                                 asgns_.back().var_asgn_.mins_,
@@ -247,9 +252,10 @@ public:
                 LiteVarAssignment lite_asgn;
                 FullAssignmentToLite(relax_asgn_, lite_asgn);
                 double asgn_rd = -1;
+                double asgn_rank = -1;
                 if (action_succeeded_) {
                     const bool lrd_check = validator_.CheckRelaxation(
-                            lite_asgn, asgn_rd, true);
+                            lite_asgn, asgn_rd, asgn_rank, true);
                     if (!lrd_check) {
                         validator_.stats_.relax_post_filtered_.fetch_add(
                                 1, std::memory_order_relaxed);
@@ -260,8 +266,11 @@ public:
                     lite_asgn.clear();
                 	FullAssignmentToLite(track_vars_asgn_, lite_asgn);
                 	if (asgn_rd != -1) {
-                        // multiply by 100, since we don't accept doubles
-                        lite_asgn.add_val(asgn_rd * 100, 0);
+                        // multiply by 1000, since we don't accept doubles
+                        lite_asgn.add_val(asgn_rd * 1000, 0);
+                        if (asgn_rank != -1) {
+                            lite_asgn.add_val(asgn_rank * 1000, 0);
+                        }
                 	}
                 }
                 validator_.SendForwardResult(last_action_.forward_id_,
@@ -882,12 +891,12 @@ bool Validator::CheckForward(const CoordinateSet &chunks,
 }
 
 bool Validator::CheckRelaxation(const LiteVarAssignment &relax_asgn, double &rd,
-                                bool report_rd) const {
+                                double &rank, bool report_rd) const {
     if (!relaxator_) {
         // Not relaxing; check always passes
         return true;
     }
-    return relaxator_->CheckResult(relax_asgn, report_rd);
+    return relaxator_->CheckResult(relax_asgn, report_rd, rd, rank);
 }
 
 bool Validator::CheckCandidateRD(const CandidateAssignment &ca) const {

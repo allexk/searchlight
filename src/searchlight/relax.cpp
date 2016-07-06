@@ -8,6 +8,7 @@
 #include "relax.h"
 #include "searchlight_udfs.h"
 #include "searchlight.h"
+#include "searchlight_task.h"
 
 namespace searchlight {
 
@@ -176,7 +177,7 @@ bool Relaxator::GetFailReplay(size_t solver_id,
     return false;
 }
 
-void Relaxator::RegisterConstraint(const std::string &name, size_t solver_id,
+size_t Relaxator::RegisterConstraint(const std::string &name, size_t solver_id,
 		RelaxableConstraint *constr, int64 max_l, int64 max_h) {
 	assert(constr && solver_id < solvers_num_);
 
@@ -241,6 +242,7 @@ void Relaxator::RegisterConstraint(const std::string &name, size_t solver_id,
 	LOG4CXX_INFO(logger, " Registered constraint (" << name << ") for solver="
 	    << solver_id <<" with relaxation interval (" << max_l << ','
 	    << max_h << "}, id=" << const_id);
+	return const_id;
 }
 
 bool Relaxator::ComputeNewReplayInterval(FailReplay &replay,
@@ -568,10 +570,11 @@ Int64Vector Relaxator::GetMaximumRelaxationVCSpec(size_t viol_num) const {
     return res;
 }
 
-bool Relaxator::CheckResult(const LiteVarAssignment &res, bool update) {
+bool Relaxator::CheckResult(const LiteVarAssignment &res, bool update,
+                            double &rd, double &rank) {
     // Check from the relaxation perspective
     const double old_lrd = lrd_.load(std::memory_order_relaxed);
-    const double rd = ComputeResultRelaxationDegree(res.mins_);
+    rd = ComputeResultRelaxationDegree(res.mins_);
     bool accept_res = rd <= old_lrd;
     if (old_lrd != 0.0 && accept_res && update) {
         // Report to the local relaxator and...
@@ -581,9 +584,13 @@ bool Relaxator::CheckResult(const LiteVarAssignment &res, bool update) {
     }
     // Check from the contractor perspective
     if (rd == 0.0 && contractor_) {
-        accept_res = contractor_->CheckSolution(res, update);
+        accept_res = contractor_->CheckSolution(res, update, rank);
     }
     return accept_res;
+}
+
+const SearchlightTask &Contractor::GetTask() const {
+    return relaxator_.sl_.GetTask();
 }
 
 FailCollectorMonitor::FailCollectorMonitor(Solver &solver,
@@ -598,6 +605,18 @@ void FailCollectorMonitor::BeginFail() {
     if (!sl_solver_.LastFailCustom()) {
         relaxator_.RegisterFail(solver_id_, !init_propagation_finished_);
     }
+}
+
+ContractionMonitor::ContractionMonitor(Solver &solver,
+                                       SearchlightSolver &sl_solver,
+                                       Relaxator &relaxator) :
+            SearchMonitor(&solver),
+            solver_id_(sl_solver.GetLocalID()),
+            relaxator_(relaxator),
+            sl_solver_(sl_solver) {
+
+    assert(relaxator_.ContractingEnabled());
+    relaxator.FillInRelaxableAssignment(solver_id_, rel_exprs_);
 }
 
 void ContractionMonitor::AfterDecision(Decision* const d, bool apply) {
@@ -623,15 +642,30 @@ void ContractionMonitor::AfterDecision(Decision* const d, bool apply) {
 }
 
 bool SkylineContractor::CheckSolution(const LiteVarAssignment &sol,
-                                      bool update) {
+                                      bool update, double &rank) {
     assert(!sol.empty());
+    // Obtain contraction vector
+    LiteVarAssignment contr_sol;
+    const bool sol_is_range = sol.IsRange();
+    contr_sol.mins_.reserve(contr_constrs_.size());
+    if (sol_is_range) {
+        contr_sol.maxs_.reserve(contr_constrs_.size());
+    }
+    for (size_t i = 0; i < contr_constrs_.size(); ++i) {
+        const size_t const_i = contr_constrs_[i];
+        contr_sol.mins_.push_back(sol.mins_[const_i]);
+        if (sol_is_range) {
+            contr_sol.maxs_.push_back(sol.maxs_[const_i]);
+        }
+    }
+    // Check
     std::lock_guard<std::mutex> lock{mtx_};
     auto curr = sols_.begin();
     const auto last = sols_.end();
     while (curr != last) {
         auto next = curr;
         ++next;
-        const int rel = sol.Relate(*curr, spec_);
+        const int rel = contr_sol.Relate(*curr, spec_);
         if (rel == -1) {
             // sol is dominated
             return false;
@@ -643,9 +677,9 @@ bool SkylineContractor::CheckSolution(const LiteVarAssignment &sol,
         curr = next;
     }
     if (update) {
-        assert(!sol.IsRange());
-        sols_.push_back(sol.mins_);
-        GetTask().BroadcastRankSol(sol.mins_, 0.0 /* dummy */);
+        assert(!sol_is_range);
+        sols_.push_back(contr_sol.mins_);
+        GetTask().BroadcastRankSol(contr_sol.mins_, 0.0 /* dummy */);
     }
     return true;
 }
@@ -696,11 +730,11 @@ void RankContractor::RegisterSolution(const std::vector<int64_t> &sol,
 }
 
 bool RankContractor::CheckSolution(const LiteVarAssignment &sol,
-                                   bool update) {
+                                   bool update, double &rank) {
     // Have to compute the rank first
-    const auto &constrs = GetOriginalConstrs();
+    const auto &constrs = relaxator_.orig_consts_;
     assert(sol.mins_.size() == constrs.size());
-    double rank = 0.0;
+    rank = 0.0;
     const size_t const_num = contr_constrs_.size();
     const bool is_range = sol.IsRange();
     for (size_t i = 0; i < const_num; ++i) {
@@ -724,5 +758,21 @@ bool RankContractor::CheckSolution(const LiteVarAssignment &sol,
         GetTask().BroadcastRankSol({}, rank);
     }
     return res;
+}
+
+std::ostream &operator<<(std::ostream &os, Relaxator::ContractionType t) {
+    switch (t) {
+        case Relaxator::ContractionType::SKYLINE:
+            os << "skyline";
+            break;
+        case Relaxator::ContractionType::RANK:
+            os << "rank";
+            break;
+        default:
+            // cannot happen
+            assert(false);
+            os.setstate(std::ios_base::failbit);
+    }
+    return os;
 }
 } /* namespace searchlight */

@@ -105,6 +105,10 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
     std::vector<IntVar *> coords(2);
     std::vector<IntVar *> lens(2);
 
+    // contraction info
+    SizeVector contr_constraints;
+    BoolVector contr_spec;
+
     // coords
     coords[0] = MakeIntVarWithName(solver, start_id, end_id, 1, "id");
     coords[1] = MakeIntVarWithName(solver, start_time, end_time, step_time,
@@ -141,8 +145,13 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
         RelaxableConstraint *avg_bt = solver.RevAlloc(
                 new searchlight::BetweenCt(
                     &solver, avg, avg_l, avg_u));
-        sl->RegisterConstraint("avg_const", id, avg_bt, avg_relax_l,
-                avg_relax_u);
+        const size_t cid = sl->RegisterConstraint("avg_const", id, avg_bt,
+                                                  avg_relax_l, avg_relax_u);
+        const int c_spec = config.get("mimic.avg_contr", 0);
+        if (c_spec != 0) {
+            contr_constraints.push_back(cid);
+            contr_spec.push_back(c_spec == 1 ? true : false);
+        }
         solver.AddConstraint(avg_bt);
     } else {
         solver.AddConstraint(solver.MakeBetweenCt(avg, avg_l, avg_u));
@@ -188,8 +197,15 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
                 RelaxableConstraint *l_diff_gt = solver.RevAlloc(
                         new searchlight::GreaterEqExprCst(
                             &solver, rl_max_diff, left_max_diff));
-                sl->RegisterConstraint("left_diff_const", id, l_diff_gt,
-                        left_relax_diff, left_relax_diff);
+                const size_t cid = sl->RegisterConstraint("left_diff_const", id,
+                                                          l_diff_gt,
+                                                          left_relax_diff,
+                                                          left_relax_diff);
+                const int c_spec = config.get("mimic.left_contr", 0);
+                if (c_spec != 0) {
+                    contr_constraints.push_back(cid);
+                    contr_spec.push_back(c_spec == 1 ? true : false);
+                }
                 solver.AddConstraint(l_diff_gt);
             } else {
                 solver.AddConstraint(solver.MakeGreater(rl_max_diff,
@@ -225,14 +241,30 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
                 RelaxableConstraint *r_diff_gt = solver.RevAlloc(
                         new searchlight::GreaterEqExprCst(
                             &solver, rr_max_diff, right_max_diff));
-                sl->RegisterConstraint("right_diff_const", id, r_diff_gt,
-                        right_relax_diff, right_relax_diff);
+                const size_t cid = sl->RegisterConstraint("right_diff_const",
+                                                          id, r_diff_gt,
+                                                          right_relax_diff,
+                                                          right_relax_diff);
+                const int c_spec = config.get("mimic.right_contr", 0);
+                if (c_spec != 0) {
+                    contr_constraints.push_back(cid);
+                    contr_spec.push_back(c_spec == 1 ? true : false);
+                }
                 solver.AddConstraint(r_diff_gt);
             } else {
                 solver.AddConstraint(solver.MakeGreater(rr_max_diff,
                         right_max_diff));
             }
         }
+    }
+
+    // Enable contraction
+    const int contr_type = config.get("relax.contr_type", 0);
+    if (!contr_constraints.empty() && contr_type) {
+        Relaxator::ContractionType type;
+        type = contr_type == 2 ? Relaxator::ContractionType::SKYLINE :
+                Relaxator::ContractionType::RANK;
+        sl_solver.EnableContraction(contr_constraints, contr_spec, type);
     }
 
     // create the search phase

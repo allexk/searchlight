@@ -505,6 +505,136 @@ private:
 	int64 min_, max_;
 };
 
+class Relaxator;
+class SearchlightTask;
+
+/**
+ * Results contractor.
+ */
+class Contractor {
+public:
+    /**
+     * Ctor.
+     *
+     * @param relaxator relaxator
+     * @param card cardinality
+     * @param constrs constraints to contract
+     * @param spec true/false maximize spec
+     */
+    Contractor(Relaxator &relaxator, size_t card,
+               const std::vector<size_t> &constrs,
+               const std::vector<bool> &spec) :
+                   card_req_(card),
+                   contr_constrs_(constrs),
+                   spec_(spec),
+                   relaxator_(relaxator) {}
+    /**
+     * Dtor.
+     */
+    virtual ~Contractor() {}
+
+    /**
+     * Check if the solution is valid.
+     *
+     * @param sol solution
+     * @param update true, if we can update the results; false, just check
+     * @param rank solution rank (out)
+     * @return true, if valid
+     */
+    virtual bool CheckSolution(const LiteVarAssignment &sol, bool update,
+                               double &rank) = 0;
+
+    /**
+     * Register new solution.
+     *
+     * @param sol solution
+     * @param rank rank
+     */
+    virtual void RegisterSolution(const std::vector<int64_t> &sol,
+                                  double rank) = 0;
+
+protected:
+    // Get searchlight task
+    const SearchlightTask &GetTask() const;
+
+    // Cardinality reqs
+    size_t card_req_;
+    // Constraints we contract
+    std::vector<size_t> contr_constrs_;
+    // true/false maximize for each constraint
+    std::vector<bool> spec_;
+    // Mutex
+    std::mutex mtx_;
+    // Relaxator
+    Relaxator &relaxator_;
+};
+
+class SkylineContractor : public Contractor {
+public:
+    SkylineContractor(Relaxator &relaxator, size_t card,
+               const std::vector<size_t> &constrs,
+               const std::vector<bool> &spec) :
+                   Contractor(relaxator, card, constrs, spec) {}
+
+    /**
+     * Check if solution is valid.
+     *
+     * @param sol solution
+     * @param update true, if can update
+     * @param rank solution rank (out)
+     * @return true, if solution is valid
+     */
+    virtual bool CheckSolution(const LiteVarAssignment &sol,
+                               bool update, double &rank) override;
+
+    /**
+     * Register a new solution.
+     *
+     * @param sol solution
+     * @param rank rank
+     */
+    virtual void RegisterSolution(const std::vector<int64_t> &sol,
+                                  double rank) override;
+private:
+    // Dominating solutions
+    std::list<Int64Vector> sols_;
+};
+
+class RankContractor : public Contractor {
+public:
+    RankContractor(Relaxator &relaxator, size_t card,
+               const std::vector<size_t> &constrs,
+               const std::vector<bool> &spec) :
+                   Contractor(relaxator, card, constrs, spec) {}
+
+    /**
+     * Check if solution is valid.
+     *
+     * @param sol solution
+     * @param update can update results
+     * @param rank solution rank (out)
+     * @return true, if valid
+     */
+    virtual bool CheckSolution(const LiteVarAssignment &sol,
+                               bool update, double &rank) override;
+
+    /**
+     * Register solution.
+     *
+     * @param sol solution
+     * @param rank rank
+     */
+    virtual void RegisterSolution(const std::vector<int64_t> &sol,
+                                  double rank) override;
+
+private:
+    // Rank priority queue
+    std::priority_queue<double, std::vector<double>,
+            std::greater<double>> ranks_;
+    // Current top lower bound rank
+    std::atomic<double> lr_{0.0};
+};
+
 /**
  * Relaxator is responsible for all the query relaxation logic.
  *
@@ -568,8 +698,9 @@ public:
 	 * @param constr constraint object
 	 * @param max_l maximum relaxation for low bound
 	 * @param max_h maximum relaxation for high bound
+	 * @return constraint id
 	 */
-	void RegisterConstraint(const std::string &name, size_t solver_id,
+	size_t RegisterConstraint(const std::string &name, size_t solver_id,
 			RelaxableConstraint *constr, int64 max_l, int64 max_h);
 
 	/**
@@ -754,9 +885,12 @@ public:
 	 *
 	 * @param res result (mins_ member only needed)
 	 * @param update true, if we can update results; false, just check
+	 * @param rd relaxation distance
+	 * @param rank result rank
 	 * @return true, if the result is  valid; false, otherwise
 	 */
-	bool CheckResult(const LiteVarAssignment &res, bool update);
+	bool CheckResult(const LiteVarAssignment &res, bool update,
+	                 double &rd, double &rank);
 
 	/**
 	 * Check if the assignment satisfies contractor.
@@ -766,7 +900,8 @@ public:
 	 */
 	bool CheckContraction(const LiteVarAssignment &asgn) const {
 	    if (contractor_) {
-	        return contractor_->CheckSolution(asgn, false);
+	        double dummy_rank;
+	        return contractor_->CheckSolution(asgn, false, dummy_rank);
 	    }
 	    return true;
 	}
@@ -795,12 +930,14 @@ public:
 	void EnableContraction(const SizeVector &constrs, const BoolVector &maxim,
 	                       ContractionType type) {
 	    assert(constrs.size() == maxim.size());
-	    if (type == ContractionType::RANK) {
-	        contractor_.reset(new RankContractor(
-	                *this, res_num_, constrs, maxim));
-	    } else if (type == ContractionType::SKYLINE) {
-            contractor_.reset(new SkylineContractor(
-                    *this, res_num_, constrs, maxim));
+	    if (!contractor_) {
+            if (type == ContractionType::RANK) {
+                contractor_.reset(new RankContractor(
+                        *this, res_num_, constrs, maxim));
+            } else if (type == ContractionType::SKYLINE) {
+                contractor_.reset(new SkylineContractor(
+                        *this, res_num_, constrs, maxim));
+            }
 	    }
 	}
 
@@ -810,12 +947,13 @@ public:
 	 * @return true, if contracting is enabled; false, otherwise
 	 */
 	bool ContractingEnabled() const {
-	    return contractor_;
+	    return contractor_ ? true : false;
 	}
 
 private:
 	// For constraint info access
 	friend class Contractor;
+    friend class RankContractor;
 
 	/**
 	 * Replay sorting method.
@@ -1181,139 +1319,10 @@ private:
 	mutable std::mutex mtx_;
 };
 
+// To output contraction types
+std::ostream &operator<<(std::ostream &os, Relaxator::ContractionType t);
+
 class SearchlightSolver;
-
-/**
- * Results contractor.
- */
-class Contractor {
-public:
-    /**
-     * Ctor.
-     *
-     * @param relaxator relaxator
-     * @param card cardinality
-     * @param constrs constraints to contract
-     * @param spec true/false maximize spec
-     */
-    Contractor(Relaxator &relaxator, size_t card,
-               const std::vector<size_t> &constrs,
-               const std::vector<bool> &spec) :
-                   relaxator_(relaxator),
-                   card_req_(card),
-                   contr_constrs_(constrs),
-                   spec_(spec) {}
-    /**
-     * Dtor.
-     */
-    virtual ~Contractor() {}
-
-    /**
-     * Check if the solution is valid.
-     *
-     * @param sol solution
-     * @param update true, if we can update the results; false, just check
-     * @return true, if valid
-     */
-    virtual bool CheckSolution(const LiteVarAssignment &sol, bool update) = 0;
-
-    /**
-     * Register new solution.
-     *
-     * @param sol solution
-     * @param rank rank
-     */
-    virtual void RegisterSolution(const std::vector<int64_t> &sol,
-                                  double rank) = 0;
-
-protected:
-    // Get original constraints
-    const std::vector<Relaxator::ConstraintInfo> &GetOriginalConstrs() const {
-        return relaxator_.orig_consts_;
-    }
-
-    // Get searchlight task
-    const SearchlightTask &GetTask() const {
-        return relaxator_.sl_.GetTask();
-    }
-
-    // Cardinality reqs
-    size_t card_req_;
-    // Constraints we contract
-    std::vector<size_t> contr_constrs_;
-    // true/false maximize for each constraint
-    std::vector<bool> spec_;
-    // Mutex
-    std::mutex mtx_;
-
-private:
-    // Relaxator
-    Relaxator &relaxator_;
-};
-
-class SkylineContractor : public Contractor {
-public:
-    SkylineContractor(Relaxator &relaxator, size_t card,
-               const std::vector<size_t> &constrs,
-               const std::vector<bool> &spec) :
-                   Contractor(relaxator, card, constrs, spec) {}
-
-    /**
-     * Check if solution is valid.
-     *
-     * @param sol solution
-     * @param update true, if can update
-     * @return true, if solution is valid
-     */
-    virtual bool CheckSolution(const LiteVarAssignment &sol,
-                               bool update) override;
-
-    /**
-     * Register a new solution.
-     *
-     * @param sol solution
-     * @param rank rank
-     */
-    virtual void RegisterSolution(const std::vector<int64_t> &sol,
-                                  double rank) override;
-private:
-    // Dominating solutions
-    std::list<Int64Vector> sols_;
-};
-
-class RankContractor : public Contractor {
-public:
-    RankContractor(Relaxator &relaxator, size_t card,
-               const std::vector<size_t> &constrs,
-               const std::vector<bool> &spec) :
-                   Contractor(relaxator, card, constrs, spec) {}
-
-    /**
-     * Check if solution is valid.
-     *
-     * @param sol solution
-     * @param update can update results
-     * @return true, if valid
-     */
-    virtual bool CheckSolution(const LiteVarAssignment &sol,
-                               bool update) override;
-
-    /**
-     * Register solution.
-     *
-     * @param sol solution
-     * @param rank rank
-     */
-    virtual void RegisterSolution(const std::vector<int64_t> &sol,
-                                  double rank) override;
-
-private:
-    // Rank priority queue
-    std::priority_queue<double, std::vector<double>, std::greater<double>> ranks_;
-    // Current top lower bound rank
-    std::atomic<double> lr_{0.0};
-};
-
 
 /**
  * This monitor tracks the search process and checks id the search node
@@ -1329,15 +1338,7 @@ public:
      * @param relaxator relaxator
      */
     ContractionMonitor(Solver &solver, SearchlightSolver &sl_solver,
-                       Relaxator &relaxator) :
-            SearchMonitor(&solver),
-            solver_id_(sl_solver.GetLocalID()),
-            relaxator_(relaxator),
-            sl_solver_(sl_solver) {
-
-        assert(relaxator_.ContractingEnabled());
-        relaxator.FillInRelaxableAssignment(solver_id_, rel_exprs_);
-    }
+                       Relaxator &relaxator);
 
     /**
      * Called after the applied decision.
@@ -1353,7 +1354,7 @@ private:
     // Relaxator
     Relaxator &relaxator_;
     // Relaxable functions vector
-    IntExprVector &rel_exprs_;
+    IntExprVector rel_exprs_;
     // Searchlight solver
     SearchlightSolver &sl_solver_;
 };

@@ -878,13 +878,15 @@ public:
      * @param constr constraint object
      * @param max_l maximum relaxation to the left
      * @param max_h maximum relaxation to the right
+     * @return constraint id
      */
-    void RegisterConstraint(const std::string &name, size_t solver_id,
+    size_t RegisterConstraint(const std::string &name, size_t solver_id,
             RelaxableConstraint *constr, int64 max_l, int64 max_h) {
         if (relaxator_) {
-            relaxator_->RegisterConstraint(name, solver_id, constr, max_l,
-                    max_h);
+            return relaxator_->RegisterConstraint(name, solver_id, constr,
+                                                  max_l, max_h);
         }
+        return size_t(-1);
     }
 
 

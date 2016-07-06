@@ -626,7 +626,7 @@ void SearchlightSolver::EnableContraction(const SizeVector &constrs,
         str << "), maxim: " << std::boolalpha;
         std::copy(maxim.begin(), maxim.end(),
                   std::ostream_iterator<bool>(str, ", "));
-        str << "), type " << type;
+        str << "), type: " << type;
         LOG4CXX_INFO(logger, str.str());
         rel->EnableContraction(constrs, maxim, type);
     }
@@ -932,8 +932,15 @@ std::string Searchlight::SolutionToString(
     // If we're relaxing, we have RD as well...
     if (relaxator_) {
         assert(add_vals_ind < add_vals.size());
-        sol_string << ", " << "rd=" << std::setprecision(3) <<
-            double(add_vals[add_vals_ind]) / 100;
+        const double rd = double(add_vals[add_vals_ind]) / 1000;
+        sol_string << ", " << "rd=" << std::setprecision(3) << rd;
+        add_vals_ind++;
+        // Might have the rank as well
+        if (rd == 0.0 && add_vals_ind < add_vals.size()) {
+            // 0.0 comparison is fine, by design
+            const double rank = double(add_vals[add_vals_ind]) / 1000;
+            sol_string << ", " << "rank=" << std::setprecision(3) << rank;
+        }
     }
     return sol_string.str();
 }

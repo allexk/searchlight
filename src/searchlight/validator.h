@@ -621,7 +621,7 @@ private:
 
     // Update relaxator (if needed) and check if the result passes LRD
     bool CheckRelaxation(const LiteVarAssignment &relax_asgn, double &rd,
-                         bool report_rd) const;
+                         double &rank, bool report_rd) const;
 
     // Check if the candidate passes LRD.
     bool CheckCandidateRD(const CandidateAssignment &ca) const;
