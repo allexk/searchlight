@@ -581,4 +581,107 @@ void FailCollectorMonitor::BeginFail() {
     }
 }
 
+bool SkylineContractor::CheckSolution(const LiteVarAssignment &sol,
+                                      bool update) {
+    assert(!sol.empty());
+    std::lock_guard<std::mutex> lock{mtx_};
+    auto curr = sols_.begin();
+    const auto last = sols_.end();
+    while (curr != last) {
+        auto next = curr;
+        ++next;
+        const int rel = sol.Relate(*curr, spec_);
+        if (rel == -1) {
+            // sol is dominated
+            return false;
+        }
+        if (rel == 1 && update) {
+            // The candidate dominates
+            sols_.erase(curr);
+        }
+        curr = next;
+    }
+    if (update) {
+        assert(!sol.IsRange());
+        sols_.push_back(sol.mins_);
+        GetTask().BroadcastRankSol(sol.mins_, 0.0 /* dummy */);
+    }
+    return true;
+}
+
+void SkylineContractor::RegisterSolution(const std::vector<int64_t> &sol,
+                                         double rank) {
+    assert(!sol.empty());
+    std::lock_guard<std::mutex> lock{mtx_};
+    auto curr = sols_.begin();
+    const auto last = sols_.end();
+    while (curr != last) {
+        auto next = curr;
+        ++next;
+        const int rel = RelateVectors(*curr, sol, spec_);
+        if (rel == -1) {
+            // Get rid of dominated result
+            sols_.erase(curr);
+        } else if (rel == 1) {
+            // The new solution is dominated
+            return;
+        }
+        curr = next;
+    }
+    sols_.push_back(sol);
+}
+
+void RankContractor::RegisterSolution(const std::vector<int64_t> &sol,
+                              double rank) {
+    assert(sol.empty());
+    std::lock_guard<std::mutex> lock{mtx_};
+    bool rank_might_change = false;
+    if (ranks_.size() < card_req_) {
+        ranks_.push(rank);
+        rank_might_change = ranks_.size() == card_req_;
+    } else if (ranks_.top() < rank) {
+        ranks_.pop();
+        ranks_.push(rank);
+        rank_might_change = true;
+    }
+    if (rank_might_change) {
+        const double min_rank = ranks_.top();
+        if (min_rank - 0.001 > lr_.load(std::memory_order_relaxed)) {
+            // change LRD (use some EPSILON to avoid near close changes)
+            lr_.store(min_rank, std::memory_order_relaxed);
+            LOG4CXX_DEBUG(logger, "Contraction rank changed to " << min_rank);
+        }
+    }
+}
+
+bool RankContractor::CheckSolution(const LiteVarAssignment &sol,
+                                   bool update) {
+    // Have to compute the rank first
+    const auto &constrs = GetOriginalConstrs();
+    assert(sol.mins_.size() == constrs.size());
+    double rank = 0.0;
+    const size_t const_num = contr_constrs_.size();
+    const bool is_range = !sol.maxs_.empty();
+    for (size_t i = 0; i < const_num; ++i) {
+        const size_t const_i = contr_constrs_[i];
+        const auto &orig_c = constrs[const_i];
+        if (is_range) {
+            double minr, maxr;
+            orig_c.IntervalRank(sol.mins_[const_i], sol.maxs_[const_i],
+                                spec_[i], minr, maxr);
+            rank += maxr;
+        } else {
+            rank += orig_c.PointRank(sol.mins_[const_i], spec_[i]);
+        }
+    }
+    rank /= const_num;
+    // Check the rank
+    const double lr = lr_.load(std::memory_order_relaxed);
+    const bool res = rank >= lr;
+    if (res && update) {
+        RegisterSolution({}, rank);
+        GetTask().BroadcastRankSol({}, rank);
+    }
+    return res;
+}
 } /* namespace searchlight */

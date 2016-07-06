@@ -91,6 +91,17 @@ typedef std::vector<size_t> SizeVector;
 typedef std::vector<double> DoubleVector;
 
 /**
+ * Check for domination.
+ *
+ * @param v1 first vector
+ * @param v2 second vector
+ * @param maxim true, if the component is ascending; false, otherwise
+ * @return 1, v1 dominates v2; -1, is dominated; 0 cannot say
+ */
+int RelateVectors(const Int64Vector &v1, const Int64Vector &v2,
+                  const std::vector<bool> &maxim);
+
+/**
  * An assignment to a variable.
  *
  * It is called "lite" to contrast the full-feature or-tools Assignment,
@@ -104,6 +115,52 @@ struct LiteVarAssignment {
      * Min/max values.
      */
     Int64Vector mins_, maxs_;
+
+    /**
+     * Check if this is a range.
+     *
+     * @return true, if range; false, otherwise
+     */
+    bool IsRange() const {
+        return !maxs_.empty();
+    }
+
+    /**
+     * Check for domination.
+     *
+     * @param v vector to check
+     * @param maxim true, if the component is ascending; false, otherwise
+     * @return 1, this assignment dominates v; -1, is dominated; 0 cannot say
+     */
+    int Relate(const Int64Vector &v, const std::vector<bool> &maxim) const {
+        assert(v.size() == mins_.size() == maxim.size());
+        if (!IsRange()) {
+            return RelateVectors(mins_, v, maxim);
+        }
+        // Range case
+        int res = 0;
+        for (size_t i = 0; i < v.size(); ++i) {
+            int c_res = 0;
+            if (v[i] > maxs_[i] || v[i] < mins_[i]) {
+                c_res = mins_[i] > v[i] ? 1 : -1;
+                // Invert if we're minimizing
+                if (!maxim[i]) {
+                    c_res = 0 - c_res;
+                }
+            } else {
+                // For ranges, if v[i] is within the interval, we cannot say
+                return 0;
+            }
+            // If expected and component are different, cannot say
+            if (res && c_res && res != c_res) {
+                return 0;
+            }
+            if (!res) {
+                res = c_res;
+            }
+        }
+        return res;
+    }
 
     /**
      * Clears the entire assignment.

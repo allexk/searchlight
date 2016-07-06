@@ -506,107 +506,6 @@ private:
 };
 
 /**
- * Results contractor.
- */
-class Contractor {
-public:
-    /**
-     * Ctor.
-     *
-     * @param relaxator relaxator
-     * @param card cardinality
-     * @param constrs constraints to contract
-     */
-    Contractor(Relaxator &relaxator, size_t card,
-               const std::vector<size_t> &constrs) :
-                   relaxator_(relaxator),
-                   card_req_(card),
-                   contr_constrs_(constrs) {}
-    /**
-     * Dtor.
-     */
-    virtual ~Contractor() {}
-
-    /**
-     * Check if the solution is valid.
-     *
-     * @param sol solution
-     * @param update true, if we can update the results; false, just check
-     * @return true, if valid
-     */
-    virtual bool CheckSolution(const LiteVarAssignment &sol, bool update) = 0;
-
-    /**
-     * Register new solution.
-     *
-     * @param sol solution
-     * @param rank rank
-     */
-    virtual void RegisterSolution(const std::vector<int64_t> &sol,
-                                  double rank) = 0;
-
-protected:
-    // Relaxator
-    Relaxator &relaxator_;
-    // Cardinality reqs
-    size_t card_req_;
-    // Constraints we contract
-    std::vector<size_t> contr_constrs_;
-    // Mutex
-    std::mutex mtx_;
-};
-
-class SkylineContractor : public Contractor {
-public:
-    SkylineContractor(Relaxator &relaxator, size_t card,
-               const std::vector<size_t> &constrs) :
-                   Contractor(relaxator, card, constrs) {}
-
-    virtual bool CheckSolution(const LiteVarAssignment &sol,
-                               bool update) override {
-
-    }
-
-    virtual void RegisterSolution(const std::vector<int64_t> &sol,
-                                  double rank) override {
-
-    }
-private:
-    // Dominating solutions
-    std::list<std::vector<int64_t>> sols_;
-};
-
-class RankContractor : public Contractor {
-public:
-    RankContractor(Relaxator &relaxator, size_t card,
-               const std::vector<size_t> &constrs,
-               const std::vector<bool> &spec) :
-                   Contractor(relaxator, card, constrs),
-                   spec_(spec) {
-        // Checking
-        assert(constrs.size() == spec.size());
-    }
-
-    virtual bool CheckSolution(const LiteVarAssignment &sol,
-                               bool update) const override {
-
-    }
-
-    virtual void RegisterSolution(const std::vector<int64_t> &sol,
-                                  double rank) override {
-
-    }
-
-private:
-    // true/false maximize for each constraint
-    std::vector<bool> spec_;
-    // Rank priority queue
-    std::priority_queue<double, std::vector<double>, std::greater<double>> ranks_;
-    // Current top lower bound rank
-    std::atomic<double> lr_{0.0};
-};
-
-/**
  * Relaxator is responsible for all the query relaxation logic.
  *
  * Each constraint is supposed to be some expression f(x) constrained over
@@ -831,6 +730,9 @@ public:
 	}
 
 private:
+	// For constraint info access
+	friend class Contractor;
+
 	/**
 	 * Replay sorting method.
 	 *
@@ -1197,6 +1099,136 @@ private:
 
 class SearchlightSolver;
 
+/**
+ * Results contractor.
+ */
+class Contractor {
+public:
+    /**
+     * Ctor.
+     *
+     * @param relaxator relaxator
+     * @param card cardinality
+     * @param constrs constraints to contract
+     * @param spec true/false maximize spec
+     */
+    Contractor(Relaxator &relaxator, size_t card,
+               const std::vector<size_t> &constrs,
+               const std::vector<bool> &spec) :
+                   relaxator_(relaxator),
+                   card_req_(card),
+                   contr_constrs_(constrs),
+                   spec_(spec) {}
+    /**
+     * Dtor.
+     */
+    virtual ~Contractor() {}
+
+    /**
+     * Check if the solution is valid.
+     *
+     * @param sol solution
+     * @param update true, if we can update the results; false, just check
+     * @return true, if valid
+     */
+    virtual bool CheckSolution(const LiteVarAssignment &sol, bool update) = 0;
+
+    /**
+     * Register new solution.
+     *
+     * @param sol solution
+     * @param rank rank
+     */
+    virtual void RegisterSolution(const std::vector<int64_t> &sol,
+                                  double rank) = 0;
+
+protected:
+    // Get original constraints
+    const std::vector<Relaxator::ConstraintInfo> &GetOriginalConstrs() const {
+        return relaxator_.orig_consts_;
+    }
+
+    // Get searchlight task
+    const SearchlightTask &GetTask() const {
+        return relaxator_.sl_.GetTask();
+    }
+
+    // Cardinality reqs
+    size_t card_req_;
+    // Constraints we contract
+    std::vector<size_t> contr_constrs_;
+    // true/false maximize for each constraint
+    std::vector<bool> spec_;
+    // Mutex
+    std::mutex mtx_;
+
+private:
+    // Relaxator
+    Relaxator &relaxator_;
+};
+
+class SkylineContractor : public Contractor {
+public:
+    SkylineContractor(Relaxator &relaxator, size_t card,
+               const std::vector<size_t> &constrs,
+               const std::vector<bool> &spec) :
+                   Contractor(relaxator, card, constrs, spec) {}
+
+    /**
+     * Check if solution is valid.
+     *
+     * @param sol solution
+     * @param update true, if can update
+     * @return true, if solution is valid
+     */
+    virtual bool CheckSolution(const LiteVarAssignment &sol,
+                               bool update) override;
+
+    /**
+     * Register a new solution.
+     *
+     * @param sol solution
+     * @param rank rank
+     */
+    virtual void RegisterSolution(const std::vector<int64_t> &sol,
+                                  double rank) override;
+private:
+    // Dominating solutions
+    std::list<Int64Vector> sols_;
+};
+
+class RankContractor : public Contractor {
+public:
+    RankContractor(Relaxator &relaxator, size_t card,
+               const std::vector<size_t> &constrs,
+               const std::vector<bool> &spec) :
+                   Contractor(relaxator, card, constrs, spec) {}
+
+    /**
+     * Check if solution is valid.
+     *
+     * @param sol solution
+     * @param update can update results
+     * @return true, if valid
+     */
+    virtual bool CheckSolution(const LiteVarAssignment &sol,
+                               bool update) override;
+
+    /**
+     * Register solution.
+     *
+     * @param sol solution
+     * @param rank rank
+     */
+    virtual void RegisterSolution(const std::vector<int64_t> &sol,
+                                  double rank) override;
+
+private:
+    // Rank priority queue
+    std::priority_queue<double, std::vector<double>, std::greater<double>> ranks_;
+    // Current top lower bound rank
+    std::atomic<double> lr_{0.0};
+};
 
 /**
  * This search monitor catches fails and calls relaxator to record them for

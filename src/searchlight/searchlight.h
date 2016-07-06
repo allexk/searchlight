@@ -1189,6 +1189,11 @@ public:
         return relaxator_.get();
     }
 
+    /**
+     * Notify Searhlight about an event
+     *
+     * @param event event to notify about
+     */
     void EventNotify(SearchlightEvent event) const {
         switch (event) {
             case SearchlightEvent::VALIDATOR_IDLE:
@@ -1196,6 +1201,15 @@ public:
                 spec_exec_.WakeUpASpec();
                 break;
         }
+    }
+
+    /**
+     * Return searchlight task.
+     *
+     * @return searchlight task
+     */
+    const SearchlightTask &GetTask() const {
+        return sl_task_;
     }
 
 private:

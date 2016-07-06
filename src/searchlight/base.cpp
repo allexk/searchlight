@@ -32,6 +32,30 @@
 
 namespace searchlight {
 
+int RelateVectors(const Int64Vector &v1, const Int64Vector &v2,
+                  const std::vector<bool> &maxim) {
+    assert(v1.size() == v2.size() == maxim.size());
+    int res = 0;
+    for (size_t i = 0; i < v1.size(); ++i) {
+        int c_res = 0;
+        if (v1[i] != v2[i]) {
+            c_res = v1[i] > v2[i] ? 1 : -1;
+            // Invert if we're minimizing
+            if (!maxim[i]) {
+                c_res = 0 - c_res;
+            }
+        }
+        // If expected and component are different, cannot say
+        if (res && c_res && res != c_res) {
+            return 0;
+        }
+        if (!res) {
+            res = c_res;
+        }
+    }
+    return res;
+}
+
 std::ostream &operator<<(std::ostream &os, const IntervalValue &iv) {
     if (iv.state_ == IntervalValue::NUL) {
         os << "(NULL)";
