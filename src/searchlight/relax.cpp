@@ -637,6 +637,11 @@ ContractionMonitor::ContractionMonitor(Solver &solver,
     relaxator.FillInRelaxableAssignment(solver_id_, rel_exprs_);
 }
 
+ContractionMonitor::~ContractionMonitor() {
+    LOG4CXX_INFO(logger, "Contractor stats: checks= " << checks_ <<
+            ", pruned=" << pruns_);
+}
+
 void ContractionMonitor::AfterDecision(Decision* const d, bool apply) {
     /*
      * Checking makes sense only when we're not relaxing anymore. Only
@@ -651,8 +656,10 @@ void ContractionMonitor::AfterDecision(Decision* const d, bool apply) {
             asgn.mins_[i] = rel_exprs_[i]->Min();
             asgn.maxs_[i] = rel_exprs_[i]->Max();
         }
+        checks_++;
         if (!relaxator_.CheckContraction(asgn)) {
-            LOG4CXX_DEBUG(logger, "Contraction pruning!");
+            LOG4CXX_TRACE(logger, "Contraction pruning!");
+            pruns_++;
             sl_solver_.BeginCustomFail();
             solver()->Fail();
         }

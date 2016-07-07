@@ -1396,6 +1396,11 @@ public:
                        Relaxator &relaxator);
 
     /**
+     * Dtor.
+     */
+    virtual ~ContractionMonitor();
+
+    /**
      * Called after the applied decision.
      *
      * @param d decision
@@ -1412,6 +1417,8 @@ private:
     IntExprVector rel_exprs_;
     // Searchlight solver
     SearchlightSolver &sl_solver_;
+    // Stats for number of prunings and checks
+    size_t checks_ = 0, pruns_ = 0;
 };
 
 /**
