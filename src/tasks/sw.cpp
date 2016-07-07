@@ -216,6 +216,8 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
         const int32 max_diff  = config.get("sw.neighborhood.max_diff", 0);
         const int32 max_relax_diff  = config.get(
                 "sw.neighborhood.max_relax_diff", max_diff);
+        const int32 max_diff_high  = config.get(
+                "sw.neighborhood.max_diff_high", max_diff + 1000);
         if (max_diff) {
             // max of the region
             IntExpr * const rmax = solver.RevAlloc(max_fab(&solver, adapter,
@@ -229,8 +231,9 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
                 const size_t cid = sl->RegisterConstraint("max_diff_const", id,
                                                           max_diff_gt,
                                                           max_relax_diff,
-                                                          max_relax_diff);
-                const int c_spec = config.get("sw.max_diff_contr", 0);
+                                                          max_diff_high);
+                const int c_spec = config.get("sw.neighborhood.max_diff_contr",
+                                              0);
                 if (c_spec != 0) {
                     contr_constraints.push_back(cid);
                     contr_spec.push_back(c_spec == 1 ? true : false);
@@ -244,6 +247,8 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
         const int32 min_diff  = config.get("sw.neighborhood.min_diff", 0);
         const int32 min_relax_diff  = config.get(
                 "sw.neighborhood.min_relax_diff", min_diff);
+        const int32 min_diff_high  = config.get(
+                "sw.neighborhood.min_diff_high", min_diff + 1000);
         if (min_diff) {
             // min of the region
             IntExpr * const rmin = solver.RevAlloc(min_fab(&solver, adapter,
@@ -257,8 +262,9 @@ void SemWindowsAvg(Searchlight *sl, uint32_t id) {
                 const size_t cid = sl->RegisterConstraint("min_diff_const", id,
                                                           min_diff_gt,
                                                           min_relax_diff,
-                                                          min_relax_diff);
-                const int c_spec = config.get("sw.min_diff_contr", 0);
+                                                          min_diff_high);
+                const int c_spec = config.get("sw.neighborhood.min_diff_contr",
+                                              0);
                 if (c_spec != 0) {
                     contr_constraints.push_back(cid);
                     contr_spec.push_back(c_spec == 1 ? true : false);

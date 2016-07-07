@@ -1193,7 +1193,13 @@ void SearchlightMessenger::UnpackAssignment(const VarAssignment &msg,
             asgn.relaxed_constrs_[i] = msg.rel_const(i);
         }
         asgn.best_rd_ = msg.rd();
+    } else {
+        asgn.best_rd_ = 0.0;
+    }
+    if (msg.has_rank()) {
         asgn.best_rank_ = msg.rank();
+    } else {
+        asgn.best_rank_ = 1.0;
     }
 }
 

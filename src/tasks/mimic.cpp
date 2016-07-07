@@ -187,6 +187,8 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
                     "mimic.neighborhood.left_max_diff", 0);
             const int32 left_relax_diff  = config.get(
                     "mimic.neighborhood.left_relax_diff", left_max_diff);
+            const int32 left_diff_high  = config.get(
+                    "mimic.neighborhood.left_diff_high", left_max_diff + 1000);
             // expressions
             IntVar * const left_max = solver.RevAlloc(max_fab(&solver,
                     adapter, parts, udf_params))->Var();
@@ -200,8 +202,9 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
                 const size_t cid = sl->RegisterConstraint("left_diff_const", id,
                                                           l_diff_gt,
                                                           left_relax_diff,
-                                                          left_relax_diff);
-                const int c_spec = config.get("mimic.left_contr", 0);
+                                                          left_diff_high);
+                const int c_spec = config.get("mimic.neighborhood.left_contr",
+                        0);
                 if (c_spec != 0) {
                     contr_constraints.push_back(cid);
                     contr_spec.push_back(c_spec == 1 ? true : false);
@@ -231,6 +234,9 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
                     "mimic.neighborhood.right_max_diff", 0);
             const int32 right_relax_diff  = config.get(
                     "mimic.neighborhood.right_relax_diff", right_max_diff);
+            const int32 right_diff_high  = config.get(
+                    "mimic.neighborhood.right_diff_high",
+                    right_max_diff + 1000);
             // expressions
             IntVar * const right_max = solver.RevAlloc(max_fab(&solver,
                     adapter, parts, udf_params))->Var();
@@ -244,8 +250,9 @@ void MimicAvg(Searchlight *sl, uint32_t id) {
                 const size_t cid = sl->RegisterConstraint("right_diff_const",
                                                           id, r_diff_gt,
                                                           right_relax_diff,
-                                                          right_relax_diff);
-                const int c_spec = config.get("mimic.right_contr", 0);
+                                                          right_diff_high);
+                const int c_spec = config.get("mimic.neighborhood.right_contr",
+                        0);
                 if (c_spec != 0) {
                     contr_constraints.push_back(cid);
                     contr_spec.push_back(c_spec == 1 ? true : false);
