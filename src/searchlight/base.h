@@ -152,7 +152,7 @@ struct LiteVarAssignment {
                 if (!maxim[i]) {
                     c_res = 0 - c_res;
                 }
-            } else {
+            } else if (mins_[i] != maxs_[i]) { // Really an interval
                 // For ranges, if v[i] is within the interval, we cannot say
                 return 0;
             }

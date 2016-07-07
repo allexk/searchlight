@@ -702,7 +702,6 @@ bool SkylineContractor::CheckSolution(const LiteVarAssignment &sol,
         curr = next;
     }
     if (update) {
-        assert(!sol_is_range);
         sols_.push_back(contr_sol.mins_);
         GetTask().BroadcastRankSol(contr_sol.mins_, 0.0 /* dummy */);
     }

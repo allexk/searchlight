@@ -50,6 +50,8 @@ void LiteToFullAssignment(Assignment &asgn,
         var.SetMin(lite_asgn.mins_[i]);
         if (lite_is_range) {
             var.SetMax(lite_asgn.maxs_[i]);
+        } else {
+            var.SetMax(lite_asgn.mins_[i]);
         }
     }
 }
