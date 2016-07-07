@@ -807,10 +807,11 @@ bool ValidatorMonitor::AtSolution() {
     const Relaxator *relaxator = sl_solver_.GetRelaxator();
     bool will_validate = true;
     double rd;
+    double rank = 1.0;
     Int64Vector vc;
     if (relaxator) {
         will_validate = relaxator->ComputeCurrentVCAndRD(
-                sl_solver_.GetLocalID(), rd, vc);
+                sl_solver_.GetLocalID(), rd, vc, rank);
     }
     if (will_validate) {
         // Should submit
@@ -818,6 +819,7 @@ bool ValidatorMonitor::AtSolution() {
         FullAssignmentToLite(*asgn, cas.var_asgn_);
         cas.relaxed_constrs_ = std::move(vc);
         cas.best_rd_ = rd;
+        cas.best_rank_ = rank;
         validator_.AddSolution(std::move(cas));
     } else {
         LOG4CXX_TRACE(logger, "Ignoring the leaf due to high RD: " << rd);

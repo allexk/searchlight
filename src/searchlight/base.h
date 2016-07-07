@@ -138,7 +138,7 @@ struct LiteVarAssignment {
      * @return 1, this assignment dominates v; -1, is dominated; 0 cannot say
      */
     int Relate(const Int64Vector &v, const std::vector<bool> &maxim) const {
-        assert(v.size() == mins_.size() == maxim.size());
+        assert(v.size() == mins_.size() && mins_.size() == maxim.size());
         if (!IsRange()) {
             return RelateVectors(mins_, v, maxim);
         }
@@ -227,6 +227,13 @@ struct CandidateAssignment {
      * Best relaxation degree possible for the assignment.
      */
     double best_rd_;
+
+    /**
+     * Best rank possible.
+     *
+     * Makes sense only if best_rd is 0.0.
+     */
+    double best_rank_;
 };
 std::ostream &operator<<(std::ostream &os, const CandidateAssignment &ca);
 

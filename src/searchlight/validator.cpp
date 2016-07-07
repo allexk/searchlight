@@ -901,8 +901,15 @@ bool Validator::CheckRelaxation(const LiteVarAssignment &relax_asgn, double &rd,
 
 bool Validator::CheckCandidateRD(const CandidateAssignment &ca) const {
     assert(ca.relaxed_constrs_.empty() || relaxator_);
-    return !relaxator_ || ca.relaxed_constrs_.empty() ||
+    if (!relaxator_) return true;
+    // First check the relaxing
+    bool res = ca.relaxed_constrs_.empty() ||
             ca.best_rd_ <= relaxator_->GetLRD();
+    // Check the contractor if we're not relaxing anymore
+    if (!relaxator_->Relaxing()) {
+        res = relaxator_->CheckContractionRank(ca.best_rank_);
+    }
+    return res;
 }
 
 void Validator::GetMaximumRelaxationVC(Int64Vector &vc) const {

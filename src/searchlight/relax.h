@@ -553,6 +553,26 @@ public:
     virtual void RegisterSolution(const std::vector<int64_t> &sol,
                                   double rank) = 0;
 
+    /**
+     * Compute the assignment's rank.
+     *
+     * @param asgn assignment
+     * @return rank
+     */
+    virtual double ComputeRank(const LiteVarAssignment &asgn) const {
+        return 0.0;
+    }
+
+    /**
+     * Check if the rank is acceptable.
+     *
+     * @param rank rank to check
+     * @return true, if the rank passes the check; false, otherwise
+     */
+    virtual bool CheckRank(double rank) const {
+        return true;
+    }
+
 protected:
     // Get searchlight task
     const SearchlightTask &GetTask() const;
@@ -626,6 +646,25 @@ public:
      */
     virtual void RegisterSolution(const std::vector<int64_t> &sol,
                                   double rank) override;
+
+    /**
+     * Compute the assignment's rank.
+     *
+     * @param asgn assignment
+     * @return rank
+     */
+    virtual double ComputeRank(const LiteVarAssignment &asgn) const override;
+
+
+    /**
+     * Check if the rank is acceptable.
+     *
+     * @param rank rank to check
+     * @return true, if the rank passes the check; false, otherwise
+     */
+    virtual bool CheckRank(double rank) const override {
+        return rank >= lr_.load(std::memory_order_relaxed);
+    }
 
 private:
     // Rank priority queue
@@ -730,9 +769,11 @@ public:
 	 * @param sid local solver id
 	 * @param rd best relaxation degree (out)
 	 * @param vc VC-specification (out)
+	 * @param rank contraction rank (out)
 	 * @return true, if the current state is relaxable; fals, otherwise
 	 */
-	bool ComputeCurrentVCAndRD(size_t sid, double &rd, Int64Vector &vc) const;
+	bool ComputeCurrentVCAndRD(size_t sid, double &rd, Int64Vector &vc,
+	                           double &rank) const;
 
 	/**
 	 * Return current LRD.
@@ -875,6 +916,20 @@ public:
 	 */
 	bool Relaxing() const {
 	    return lrd_.load(std::memory_order_relaxed) != 0.0;
+	}
+
+	/**
+	 * Check if the rank passes the contraction.
+	 *
+	 * @param rank rank to check
+	 * @return true, if passes; false, otherwise
+	 */
+	bool CheckContractionRank(double rank) const {
+	    if (contractor_) {
+	        return contractor_->CheckRank(rank);
+	    } else {
+	        return true;
+	    }
 	}
 
 	/**

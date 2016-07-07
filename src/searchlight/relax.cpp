@@ -294,7 +294,8 @@ void Relaxator::UpdateTimeStats(RelaxatorStats &stats,
 }
 
 bool Relaxator::ComputeCurrentVCAndRD(size_t sid, double &rd,
-                                      Int64Vector &vc) const {
+                                      Int64Vector &vc,
+                                      double &rank) const {
     vc.reserve(orig_consts_.size() * 3);
     for (size_t i = 0; i < orig_consts_.size(); ++i) {
         const ConstraintInfo &ci = orig_consts_[i];
@@ -319,7 +320,24 @@ bool Relaxator::ComputeCurrentVCAndRD(size_t sid, double &rd,
         }
         rd = ComputeViolSpecBestRelaxationDegree(vc);
     }
-    return vc.empty() || rd <= lrd_.load(std::memory_order_relaxed);
+    bool res_valid = vc.empty() || rd <= lrd_.load(std::memory_order_relaxed);
+    if (res_valid && rd == 0.0 && contractor_) {
+        LiteVarAssignment full_assgn;
+        full_assgn.mins_.reserve(orig_consts_.size());
+        full_assgn.maxs_.reserve(orig_consts_.size());
+        for (size_t i = 0; i < orig_consts_.size(); ++i) {
+            const IntExpr *c_expr =
+                    orig_consts_[i].solver_const_[sid]->GetExpr();
+            const int64_t cmin = int64_t(c_expr->Min());
+            const int64_t cmax = int64_t(c_expr->Max());
+            // if cmin > cmax, that means the constraint cannot be fulfilled ever
+            assert(cmin <= cmax);
+            full_assgn.mins_.push_back(cmin);
+            full_assgn.maxs_.push_back(cmax);
+        }
+        rank = contractor_->ComputeRank(full_assgn);
+    }
+    return res_valid;
 }
 
 void Relaxator::RegisterFail(size_t solver_id, RegisterHeuristic rh,
@@ -729,27 +747,32 @@ void RankContractor::RegisterSolution(const std::vector<int64_t> &sol,
     }
 }
 
-bool RankContractor::CheckSolution(const LiteVarAssignment &sol,
-                                   bool update, double &rank) {
-    // Have to compute the rank first
+double RankContractor::ComputeRank(const LiteVarAssignment &asgn) const {
+    double rank = 0.0;
     const auto &constrs = relaxator_.orig_consts_;
-    assert(sol.mins_.size() == constrs.size());
-    rank = 0.0;
+    assert(asgn.mins_.size() == constrs.size());
     const size_t const_num = contr_constrs_.size();
-    const bool is_range = sol.IsRange();
+    const bool is_range = asgn.IsRange();
     for (size_t i = 0; i < const_num; ++i) {
         const size_t const_i = contr_constrs_[i];
         const auto &orig_c = constrs[const_i];
         if (is_range) {
             double minr, maxr;
-            orig_c.IntervalRank(sol.mins_[const_i], sol.maxs_[const_i],
+            orig_c.IntervalRank(asgn.mins_[const_i], asgn.maxs_[const_i],
                                 spec_[i], minr, maxr);
             rank += maxr;
         } else {
-            rank += orig_c.PointRank(sol.mins_[const_i], spec_[i]);
+            rank += orig_c.PointRank(asgn.mins_[const_i], spec_[i]);
         }
     }
     rank /= const_num;
+    return rank;
+}
+
+bool RankContractor::CheckSolution(const LiteVarAssignment &sol,
+                                   bool update, double &rank) {
+    // Have to compute the rank first
+    rank = RankContractor::ComputeRank(sol);
     // Check the rank
     const double lr = lr_.load(std::memory_order_relaxed);
     const bool res = rank >= lr;

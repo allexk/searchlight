@@ -34,7 +34,7 @@ namespace searchlight {
 
 int RelateVectors(const Int64Vector &v1, const Int64Vector &v2,
                   const std::vector<bool> &maxim) {
-    assert(v1.size() == v2.size() == maxim.size());
+    assert(v1.size() == v2.size() && v2.size() == maxim.size());
     int res = 0;
     for (size_t i = 0; i < v1.size(); ++i) {
         int c_res = 0;

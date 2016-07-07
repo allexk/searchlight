@@ -1193,6 +1193,7 @@ void SearchlightMessenger::UnpackAssignment(const VarAssignment &msg,
             asgn.relaxed_constrs_[i] = msg.rel_const(i);
         }
         asgn.best_rd_ = msg.rd();
+        asgn.best_rank_ = msg.rank();
     }
 }
 
@@ -1208,8 +1209,9 @@ void SearchlightMessenger::PackAssignment(const CandidateAssignment &asgn,
     for (const auto x: asgn.relaxed_constrs_) {
         msg.add_rel_const(x);
     }
-    // Best RD
+    // Best RD/Rank
     msg.set_rd(asgn.best_rd_);
+    msg.set_rank(asgn.best_rank_);
 }
 
 void SearchlightMessenger::FillBalanceMessage(SearchlightBalance &msg,
