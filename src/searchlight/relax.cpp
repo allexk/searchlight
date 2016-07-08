@@ -295,7 +295,8 @@ void Relaxator::UpdateTimeStats(RelaxatorStats &stats,
 
 bool Relaxator::ComputeCurrentVCAndRD(size_t sid, double &rd,
                                       Int64Vector &vc,
-                                      double &rank) const {
+                                      double &rank,
+                                      LiteVarAssignment &rc_vals) const {
     vc.reserve(orig_consts_.size() * 3);
     for (size_t i = 0; i < orig_consts_.size(); ++i) {
         const ConstraintInfo &ci = orig_consts_[i];
@@ -322,9 +323,8 @@ bool Relaxator::ComputeCurrentVCAndRD(size_t sid, double &rd,
     }
     bool res_valid = vc.empty() || rd <= lrd_.load(std::memory_order_relaxed);
     if (res_valid && rd == 0.0 && contractor_) {
-        LiteVarAssignment full_assgn;
-        full_assgn.mins_.reserve(orig_consts_.size());
-        full_assgn.maxs_.reserve(orig_consts_.size());
+        rc_vals.mins_.reserve(orig_consts_.size());
+        rc_vals.maxs_.reserve(orig_consts_.size());
         for (size_t i = 0; i < orig_consts_.size(); ++i) {
             const IntExpr *c_expr =
                     orig_consts_[i].solver_const_[sid]->GetExpr();
@@ -332,10 +332,10 @@ bool Relaxator::ComputeCurrentVCAndRD(size_t sid, double &rd,
             const int64_t cmax = int64_t(c_expr->Max());
             // if cmin > cmax, that means the constraint cannot be fulfilled ever
             assert(cmin <= cmax);
-            full_assgn.mins_.push_back(cmin);
-            full_assgn.maxs_.push_back(cmax);
+            rc_vals.mins_.push_back(cmin);
+            rc_vals.maxs_.push_back(cmax);
         }
-        rank = contractor_->ComputeRank(full_assgn);
+        rank = contractor_->ComputeRank(rc_vals);
     }
     return res_valid;
 }

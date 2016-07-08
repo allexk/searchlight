@@ -15,6 +15,7 @@ message VarAssignment {
     repeated int64  rel_const = 4 [packed=true]; // relaxed constraints info
     optional double rd        = 5; // relaxation distance
     optional double rank      = 6; // Rank for candidate
+    repeated int64  rel_vals  = 7 [packed=true]; // Rel constraints values
 }
 
 message SearchlightSolution {

@@ -710,7 +710,8 @@ public:
      */
     enum class ContractionType {
         SKYLINE,//!< SKYLINE domination based
-        RANK    //!< RANK rank based
+        RANK,   //!< RANK rank based
+        NONE    //!< NONE no contraction
     };
 
 public:
@@ -770,10 +771,12 @@ public:
 	 * @param rd best relaxation degree (out)
 	 * @param vc VC-specification (out)
 	 * @param rank contraction rank (out)
-	 * @return true, if the current state is relaxable; fals, otherwise
+	 * @param rc_vals relaxation function values (out)
+	 * @return true, if the current state is relaxable; false, otherwise
 	 */
 	bool ComputeCurrentVCAndRD(size_t sid, double &rd, Int64Vector &vc,
-	                           double &rank) const;
+	                           double &rank,
+	                           LiteVarAssignment &rc_vals) const;
 
 	/**
 	 * Return current LRD.
@@ -986,6 +989,7 @@ public:
 	                       ContractionType type) {
 	    assert(constrs.size() == maxim.size());
 	    if (!contractor_) {
+	        contr_type_ = type;
             if (type == ContractionType::RANK) {
                 contractor_.reset(new RankContractor(
                         *this, res_num_, constrs, maxim));
@@ -1003,6 +1007,15 @@ public:
 	 */
 	bool ContractingEnabled() const {
 	    return contractor_ ? true : false;
+	}
+
+	/**
+	 * Check if the contraction is rank-based.
+	 *
+	 * @return true, if contraction is rank-based; false, otherwise
+	 */
+	bool ContractionRankBased() const {
+	    return contr_type_ == ContractionType::RANK;
 	}
 
 private:
@@ -1369,6 +1382,9 @@ private:
 
     // Contractor
     std::unique_ptr<Contractor> contractor_;
+
+    // Contraction type
+    ContractionType contr_type_ = ContractionType::NONE;
 
 	// For concurrency control
 	mutable std::mutex mtx_;

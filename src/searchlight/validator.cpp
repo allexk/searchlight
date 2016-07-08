@@ -907,7 +907,11 @@ bool Validator::CheckCandidateRD(const CandidateAssignment &ca) const {
             ca.best_rd_ <= relaxator_->GetLRD();
     // Check the contractor if we're not relaxing anymore
     if (!relaxator_->Relaxing()) {
-        res = relaxator_->CheckContractionRank(ca.best_rank_);
+        if (!ca.rc_vals_.empty()) {
+            res = relaxator_->CheckContraction(ca.rc_vals_);
+        } else {
+            res = relaxator_->CheckContractionRank(ca.best_rank_);
+        }
     }
     return res;
 }

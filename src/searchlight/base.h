@@ -131,6 +131,15 @@ struct LiteVarAssignment {
     }
 
     /**
+     * Return size of the assignment.
+     *
+     * @return assignment size
+     */
+    size_t Size() const {
+        return mins_.size();
+    }
+
+    /**
      * Check for domination.
      *
      * @param v vector to check
@@ -234,6 +243,12 @@ struct CandidateAssignment {
      * Makes sense only if best_rd is 0.0.
      */
     double best_rank_;
+
+    /**
+     * Vector of relaxation constraint values.
+     *
+     */
+    LiteVarAssignment rc_vals_;
 };
 std::ostream &operator<<(std::ostream &os, const CandidateAssignment &ca);
 

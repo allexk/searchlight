@@ -1196,10 +1196,22 @@ void SearchlightMessenger::UnpackAssignment(const VarAssignment &msg,
     } else {
         asgn.best_rd_ = 0.0;
     }
+    // Rank
     if (msg.has_rank()) {
         asgn.best_rank_ = msg.rank();
     } else {
         asgn.best_rank_ = 1.0;
+    }
+    // Rel const values
+    if (msg.rel_vals_size()) {
+        assert(msg.rel_vals_size() % 2 == 0);
+        const int rc_size = msg.rel_vals_size() / 2;
+        asgn.rc_vals_.mins_.resize(rc_size);
+        asgn.rc_vals_.maxs_.resize(rc_size);
+        for (int i = 0; i < rc_size; ++i) {
+            asgn.rc_vals_.mins_[i] = msg.rel_vals(2 * i);
+            asgn.rc_vals_.maxs_[i] = msg.rel_vals(2 * i + 1);
+        }
     }
 }
 
@@ -1218,6 +1230,15 @@ void SearchlightMessenger::PackAssignment(const CandidateAssignment &asgn,
     // Best RD/Rank
     msg.set_rd(asgn.best_rd_);
     msg.set_rank(asgn.best_rank_);
+    // Rel vals
+    if (!asgn.rc_vals_.empty()) {
+        assert(asgn.rc_vals_.IsRange());
+        const size_t rc_size = asgn.rc_vals_.Size();
+        for (size_t i = 0; i < rc_size; ++i) {
+            msg.add_rel_vals(asgn.rc_vals_.mins_[i]);
+            msg.add_rel_vals(asgn.rc_vals_.maxs_[i]);
+        }
+    }
 }
 
 void SearchlightMessenger::FillBalanceMessage(SearchlightBalance &msg,
