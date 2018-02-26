@@ -510,7 +510,7 @@ SeqSynopsis::SeqSynopsis(const ArrayDesc &data_desc,
     features_num_ = synopsis_desc.getDimensions().back().getLength();
     // Correct cell_nums_ for the MBR dimension (-2 since the last is "coord")
     const size_t mbr_dim_index = synopsis_desc.getDimensions().size() - 2;
-    const DimensionDesc &mbr_dim = synopsis_desc.getDimensions()[mbr_dim_index];
+    //const DimensionDesc &mbr_dim = synopsis_desc.getDimensions()[mbr_dim_index];
     const size_t mbr_dim_len = (synopsis_end_[mbr_dim_index] - subseq_size_ + 1)
             - synopsis_origin_[mbr_dim_index] + 1;
     cell_nums_[mbr_dim_index] = (mbr_dim_len - 1) / mbr_size_ + 1;

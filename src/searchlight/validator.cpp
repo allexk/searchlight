@@ -186,7 +186,7 @@ public:
             bool slave)
         : validator_(validator),
           adapter_{adapter},
-          constrs_{rcs},
+          constrs_(rcs),
           asgns_{std::move(asgns)},
           action_succeeded_(false),
           aux_monitor_(*this, s, restart_period),
@@ -733,7 +733,6 @@ void Validator::HandleForwardResult(uint64_t id, bool result,
         std::lock_guard<std::mutex> validate_lock{to_validate_mtx_};
         assert(forwarded_candidates_.find(id) != forwarded_candidates_.end());
         if (result) {
-        	std::vector<int64_t> &sol = forwarded_candidates_[id].mins_;
             sl_task_.ReportSolution(forwarded_candidates_[id].mins_, add_vals);
         }
         forwarded_candidates_.erase(id);

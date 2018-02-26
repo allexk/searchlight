@@ -1075,7 +1075,7 @@ public:
     // Constructor.
     AggCellItemReader(const ArrayPtr &array, const AttributeMap &attrs) :
         array_{array},
-        attributes_{attrs} {}
+        attributes_(attrs) {}
 
     // Reads a cell
     void Read(const Coordinates &pos, AggCell &cell);
@@ -1103,7 +1103,7 @@ public:
     // Constructor.
     SeqCellItemReader(const ArrayPtr &array, const AttributeMap &attrs) :
         array_{array},
-        attributes_{attrs} {}
+        attributes_(attrs) {}
 
     // Reads a cell
     void Read(const Coordinates &pos, SeqCell &cell);
