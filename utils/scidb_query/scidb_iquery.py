@@ -23,17 +23,19 @@ class SciDBConnection(object):
     A SciDB session consists of a series of requests (e.g., queries, file uploads, etc.) defined by the
     methods. All communication with SciDB is made via iquery utility.
     """
-    def __init__(self, scidb_bin_path):
+    def __init__(self, scidb_bin_path, scidb_port):
         """Create a new SciDB session for executing queries.
 
         Params:
             scidb_bin_path -- path to SciDB binaries
+            scidb_port -- SciDB port to connect to
         """
         # connection params
         self._iquery = os.path.join(scidb_bin_path, 'iquery')
         if not os.path.isfile(self._iquery):
             raise ValueError("Cannot find iquery binary in %s" % scidb_bin_path)
         self._query_results = {}
+        self._iquery_port = scidb_port
 
     def session_id(self):
         """Return SciDB session id.
@@ -64,7 +66,7 @@ class SciDBConnection(object):
         Return:
             query_id -- string
         """
-        iquery_args = [self._iquery, '-a']
+        iquery_args = [self._iquery, '-p', str(self._iquery_port), '-a']
         if not need_result:
             iquery_args.append('-n')
         else:

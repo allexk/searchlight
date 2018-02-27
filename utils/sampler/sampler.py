@@ -78,7 +78,7 @@ parser.add_argument('--method', metavar='http/iquery', default='iquery',
                     help='Method to connect.')
 parser.add_argument('--host', metavar='hostname', default='localhost',
                     help='Host to connect to')
-parser.add_argument('--port', metavar='port', type=int, default=8080,
+parser.add_argument('--port', metavar='port', type=int, default=1239,
                     help='Port to connect to')
 parser.add_argument('--user', metavar='name', default='SciDBUser',
                     help='User to connect as')
@@ -114,7 +114,7 @@ if opts.method == 'http':
     connection.connect()
 elif opts.method == 'iquery':
     from scidb_iquery import SciDBConnection
-    connection = SciDBConnection(opts.bindir)
+    connection = SciDBConnection(opts.bindir, opts.port)
 else:
     raise ValueError('Unknown connection method: %s' % opts.method)
 
@@ -264,9 +264,9 @@ with open(script_file_name, 'w') as script_file:
         script_file.write('# Exit on error\nset -e\n\n')
         script_file.write('# Set the proper PATH\n')
         script_file.write("PATH=%s:$PATH\n\n" % opts.bindir)
-        script_file.write("iquery -q 'create array %s%s'\n" %
-                          (sample_array_name, sample_array_schema))
-        script_file.write("iquery -an insert(redimension(input(%s, '%s'"
-                          ", 0, '%s'), %s), %s)\n" %
-                          (raw_array_schema, out_file_name, binary_tuple_schema,
+        script_file.write("iquery -p %d -q \"create array %s%s\"\n" %
+                          (opts.port, sample_array_name, sample_array_schema))
+        script_file.write("iquery -p %d -an -q \"insert(redimension(input(%s, '%s'"
+                          ", 0, '%s'), %s), %s)\"\n" %
+                          (opts.port, raw_array_schema, out_file_name, binary_tuple_schema,
                            sample_array_name, sample_array_name))
